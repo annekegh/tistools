@@ -1,0 +1,65 @@
+#!/usr/bin/env python
+
+"""script to plot histograms with/without the correction factor xi
+that is relevant for [0-'] ensemble
+
+AG, June 2, 2020"""
+
+import argparse
+from retistools import *
+import os
+import glob
+
+ACCFLAGS,REJFLAGS = set_flags_ACC_REJ() # Hard-coded rejection flags found in output files
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser(description='histograms with/without xi')
+    parser.add_argument("-i",dest="inputfile",default="./retis.rst",
+        help="inputfile is file retis.rst or out.rst, where also the 000/, 001/... folders are stored",
+        )
+    parser.add_argument("--dt",dest="dt",default="1.",
+        type=float,
+        help = "time between stored order parameters")
+    parser.add_argument("--dlambda",dest="dlambda",default="0.01",
+        type=float,
+        help = "width of bins in order parameter (lambda) histogram")
+    parser.add_argument("--dlambda-conc",dest="dlambda_conc",default="0.01",
+        type=float,
+        help = "width of bins in histogram of [0-'] used for concentration estimation")
+    parser.add_argument("--lmin",dest="lmin",default=None,
+        type=float,
+        help = "left of the order parameter histogram")
+    parser.add_argument("--lmax",dest="lmax",default=None,
+        type=float,
+        help = "right of the order parameter histogram")
+
+
+    args = parser.parse_args()
+
+    indir, filename = os.path.split(args.inputfile)
+    if len(indir) == 0: indir = "./"
+    print("indir:",indir)
+    print("filename:",filename)
+    #args_dict = vars(parser.parse_args())
+
+    print("folders")
+    folders = glob.glob(indir+"/0[0-9][0-9]")
+    folders = sorted(folders)
+    folders = [fol[-3:] for fol in folders]
+    for fol in folders:
+        print(fol)
+
+    interfaces,zero_left = read_inputfile(filename)
+    #assert len(interfaces) == len(folders)
+    print("zero_left:",zero_left,"(can be None)")
+    if zero_left is not None:
+        interfaces += [zero_left]
+    print("interfaces")
+    print(interfaces)
+
+    create_distrib(indir,folders,interfaces,
+          args.dt, args.dlambda, args.lmin, args.lmax,
+          args.dlambda_conc)
+
+

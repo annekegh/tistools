@@ -1,0 +1,6 @@
+*.png
+*.log
+*.pyc
+*.aux
+*.pdf
+build/
