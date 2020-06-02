@@ -6,7 +6,7 @@ that is relevant for [0-'] ensemble
 AG, June 2, 2020"""
 
 import argparse
-from retistools import *
+from tistools import *
 import os
 import glob
 
