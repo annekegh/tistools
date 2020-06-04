@@ -419,9 +419,10 @@ def print_lmr_000(lmrs,weights):
 def print_concentration_lambda0(ncycle,trajs,cut,dlambda,dt,w_all,xi):
     """Compute density at interface lambda0"""
 
+    print("."*10)
     print("for permeability")
-    print("conc is in 1/[unit-of-dlambda]")
-    print("P/prob is in 1/[unit-of-dlambda/unit-of-dt]")
+    print("conc is in [1/unit-of-dlambda]")
+    print("P/prob is in [1/unit-of-dlambda/unit-of-dt]")
 
     # take last bin of histogram to the left (histL)
     bins = np.arange(cut-30*dlambda,cut+dlambda/10.,dlambda)      # HARD CODED
@@ -462,6 +463,7 @@ def print_concentration_lambda0(ncycle,trajs,cut,dlambda,dt,w_all,xi):
     print("R n/ncycle     ",nR/ncycle)
     print("R c            ",cR)
     print("R P/prob       ",PR)
+    print("."*10)
     #print("Sum/ncycle",len(trajs)/ncycle)  # no, because not weighted TODO
     #print("Sum/ncycle no xi",len(trajs)/ncycle/xi)
 
