@@ -49,6 +49,7 @@ if __name__ == '__main__':
     folders = [fol[-3:] for fol in folders]
     for fol in folders:
         print(fol)
+    assert len(folders)>0
 
     interfaces,zero_left = read_inputfile(filename)
     #assert len(interfaces) == len(folders)

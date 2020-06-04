@@ -9,6 +9,22 @@ def create_distrib(indir,folders,interfaces,dt,dlambda,lmin, lmax,dlambda_conc):
     First figure: only path ensembles 000 and 001
     Second figure: all path ensembles
     """
+
+    # bins: fix the lambda interval
+    if lmin is None:
+        if len(folders)<len(interfaces):
+            zero_left = interfaces[-1]
+            lm = zero_left - 10*dlambda
+        else:
+            lm = interfaces[0]-30*dlambda
+    else:
+        lm = lmin
+    if lmax is None:
+        lM = interfaces[len(folders)-1] + 10*dlambda # not interfaces[-1] because there might be a zero_left
+    else:
+        lM = lmax
+    bins = np.arange(lm,lM+dlambda/10.,dlambda)
+
     import matplotlib.pyplot as plt
     plt.figure(1)
     if len(folders)>2:
@@ -81,21 +97,6 @@ def create_distrib(indir,folders,interfaces,dt,dlambda,lmin, lmax,dlambda_conc):
         # if trajs were not to be flat yet...
         #trajs_flat = [item for subitem in trajs for item in subitem]
         #print(trajs_flat[:30])
-
-        # bins: fix the lambda interval
-        if lmin is None:
-            if len(folders)<len(interfaces):
-                zero_left = interfaces[-1]
-                lm = zero_left - 10*dlambda
-            else:
-                lm = interfaces[0]-30*dlambda
-        else:
-            lm = lmin
-        if lmax is None:
-            lM = interfaces[len(folders)-1] + 10*dlambda # not interfaces[-1] because there might be a zero_left
-        else:
-            lM = lmax
-        bins = np.arange(lm,lM+dlambda/10.,dlambda)
 
         hist,edges = np.histogram(trajs,bins=bins,weights=w_all)
         centers = edges[:-1]+np.diff(edges)/2.
