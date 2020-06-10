@@ -24,7 +24,7 @@ if __name__ == '__main__':
     parser.add_argument("--dlambda",dest="dlambda",default="0.01",
         type=float,
         help = "width of bins in order parameter (lambda) histogram")
-    parser.add_argument("--dlambda-conc",dest="dlambda_conc",default="0.01",
+    parser.add_argument("--dlambda-conc",dest="dlambda_conc",default=None,
         type=float,
         help = "width of bins in histogram of [0-'] used for concentration estimation")
     parser.add_argument("--lmin",dest="lmin",default=None,
@@ -58,6 +58,11 @@ if __name__ == '__main__':
         interfaces += [zero_left]
     print("interfaces")
     print(interfaces)
+
+    # when dlambda is not defined for the concentration:
+    # take the same dlambda for the concentration as for the histogram
+    if args.dlambda_conc is None:
+        args.dlambda_conc = args.dlambda
 
     create_distrib(indir,folders,interfaces,
           args.dt, args.dlambda, args.lmin, args.lmax,
