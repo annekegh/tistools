@@ -421,9 +421,15 @@ def print_concentration_lambda0(ncycle,trajs,cut,dlambda,dt,w_all,xi):
 
     print("."*10)
     print("for permeability")
-    print("conc is in [1/unit-of-dlambda]")
-    print("P/prob is in [1/unit-of-dlambda/unit-of-dt]")
+    print("n         --  count in histogram bin")
+    print("n/ncycle  --  count in histogram bin, per path")
+    print("rho       --  density, unit [1/unit-of-dlambda]")
+    print("P/Pcross  --  permeability/crossing-probability, unit [1/unit-of-dlambda/unit-of-dt]")
 
+    print("dt       ",dt)
+    print("dlambda  ",dlambda)
+
+    print("Get some values around interface")
     # take last bin of histogram to the left (histL)
     bins = np.arange(cut-30*dlambda,cut+dlambda/10.,dlambda)      # HARD CODED
     histL,edgesL = np.histogram(trajs,bins=bins,weights=w_all,)
@@ -436,33 +442,31 @@ def print_concentration_lambda0(ncycle,trajs,cut,dlambda,dt,w_all,xi):
     histR,edgesR = np.histogram(trajs,bins=bins,weights=w_all)
     nR = histR[0]   # because of choice bins
     print("right of cut:","|",histR[0],histR[1])
-    
 
     #ncycle_true = np.sum(weights)  # do not compute again because I have the big reweigth?
     #ncycle can be a little bit more
-    print("dt       ",dt)
-    print("dlambda  ",dlambda)
 
-    cL = nL/dlambda/ncycle
-    PL = 1./dt/cL   # = ncycle / nL * dlambda/dt
-    cR = nR/dlambda/ncycle
-    PR = 1./dt/cR   # = ncycle / nR * dlambda/dt
+    print("Now compute n, rho, P/Pcross; left (L) and right (R) of the interface")
+    rhoL = nL/dlambda/ncycle    # in unit 1/dlambda
+    PL = 1./dt/rhoL   # = P/Pcross = ncycle / nL * dlambda/dt
+    rhoR = nR/dlambda/ncycle
+    PR = 1./dt/rhoR   # = ncycle / nR * dlambda/dt
 
     print("** Left histogram **")
     print("L n            ",nL)
     print("L n/ncycle     ",nL/ncycle)
-    print("L c            ",cL)
-    print("L P/prob       ",PL)
+    print("L rho          ",rhoL)
+    print("L P/Pcross     ",PL)
     print("** Left histogram (xi)**")
     print("L n        (xi)",nL*xi)
     print("L n/ncycle (xi)",nL/ncycle*xi)
-    print("L c        (xi)",cL*xi)
-    print("L P/prob   (xi)",PL/xi)
+    print("L rho      (xi)",rhoL*xi)
+    print("L P/Pcross (xi)",PL/xi)
     print("** Right histogram **")
     print("R n            ",nR)
     print("R n/ncycle     ",nR/ncycle)
-    print("R c            ",cR)
-    print("R P/prob       ",PR)
+    print("R rho          ",rhoR)
+    print("R P/Pcross     ",PR)
     print("."*10)
     #print("Sum/ncycle",len(trajs)/ncycle)  # no, because not weighted TODO
     #print("Sum/ncycle no xi",len(trajs)/ncycle/xi)

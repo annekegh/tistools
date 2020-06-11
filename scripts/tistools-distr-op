@@ -53,7 +53,7 @@ if __name__ == '__main__':
 
     interfaces,zero_left = read_inputfile(filename)
     #assert len(interfaces) == len(folders)
-    print("zero_left:",zero_left,"(can be None)")
+    print("zero_left (can be None):",zero_left)
     if zero_left is not None:
         interfaces += [zero_left]
     print("interfaces")
