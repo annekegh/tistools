@@ -4,7 +4,7 @@ from .analyze_op import *
 
 ACCFLAGS,REJFLAGS = set_flags_ACC_REJ() # Hard-coded rejection flags found in output files
 
-def create_distrib(indir,folders,interfaces,dt,dlambda,lmin, lmax,dlambda_conc):
+def create_distrib(indir,folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc):
     """create figure of distributions of order parameter
     First figure: only path ensembles 000 and 001
     Second figure: all path ensembles
@@ -137,5 +137,4 @@ def create_distrib(indir,folders,interfaces,dt,dlambda,lmin, lmax,dlambda_conc):
     plt.xlim(bins[0],bins[-1])   # always same bins anyways
     plt.tight_layout()
     plt.savefig("hist.01.png")
-
 

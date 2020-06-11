@@ -12,13 +12,22 @@ import numpy as np
 def read_pathdens_fast(filename):
     import pickle
     #fn = "pathdens_fast.pickle"
-    print("Reading file...",fn)
+    print("Reading file...",filename)
     f = open(filename,"rb")
     pic = pickle.load(f,)
     f.close()
     return pic
 
 def get_info_from_pic(pic,doprint=False):
+    """
+    interfaces  --  location of interfaces, such as 0.1, 0.2
+    interf_names  --  interface names, such as [0-]
+    folders  --  folder names, such as 000, 001
+    nfolders  --  number of folders, this is len(folders)
+    ncycle  --  number of Monte Carlo moves (cycles)
+    op  --  list of order parameters of paths in each ensemble
+    weights  -- list of weights of paths in each ensemble
+    """
     if doprint:
         print(pic[0].keys())
         print(pic[1].keys())
@@ -67,3 +76,28 @@ def get_info_from_pic(pic,doprint=False):
         weights.append(w0)
     
     return interfaces,interf_names,folders,nfolders,ncycle,op,weights
+
+#######################################
+
+# TODO
+# if I want to use this function again,
+# I should write something that passes on these arguments
+# to the create_distrib function, just like the tistools-distr-op script in scripts/ directory.
+def create_distrib_pathdens_fast(filename):
+    """
+    fn  --  filename, e.g. "pathdens_fast.pickle"
+
+    Uses:
+        interfaces  --  location of interfaces, such as 0.1, 0.2
+        interf_names  --  interface names, such as [0-]
+        folders  --  folder names, such as 000, 001
+        nfolders  --  number of folders, this is len(folders)
+        ncycle  --  number of Monte Carlo moves (cycles)
+        op  --  list of order parameters of paths in each ensemble
+        weights  -- list of weights of paths in each ensemble
+    """
+
+    pic = read_pathdens_fast(filename)
+    interfaces,interf_names,folders,nfolders,ncycle,x,w = get_info_from_pic(pic,doprint=True)
+    #create_distrib(indir,folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc)
+
