@@ -1,0 +1,36 @@
+#!/usr/bin/env python
+
+"""script to clean the *txt files from pyretis
+
+based on script by Enrico Riccardi
+AG, June 11, 2020"""
+
+import argparse
+from tistools import cleaner
+
+import os
+#import glob
+
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser(description='''clean txt files to avoid loaded path: all paths 
+        until the last load (ld) path included will be omitted; the first path will be the
+        first path obtained from shooting (ACC, sh)''')
+    parser.add_argument("filename",   # nargs = 1,
+        help='''filename from which paths will be deleted, e.g. order.txt,
+        pathensemble.txt, energy.txt''')
+    parser.add_argument("-o","--output",dest="outputfile",default="tmp.tmp",
+        help = "write the cleaned-up version to this filename")
+    parser.add_argument("--overwrite",dest="overwrite",default=False,
+        action = 'store_true',
+        help = "whether the cleaned-up version may overwrite to a file that already exists")
+
+    args = parser.parse_args()
+
+    #print(args.__dict__)
+
+    from tistools import cleaner
+    # script Enrico
+    cleaner(args.filename, args.outputfile, args.overwrite)
+

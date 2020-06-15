@@ -138,6 +138,7 @@ def histogram_lengths(figname,retislengths,retisweights,dtc,above=0,skip=0):
     if above == 0:
         hist,bin_edges = np.histogram(lengths*dtc,bins=bins,weights=weights)
         bin_mids = 0.5*(bin_edges[:-1]+bin_edges[1:])
+        #bin_mids = bin_edges[:-1]+np.diff(bin_edges)/2.
         mean,std = weighted_avg_and_std(lengths*dtc, weights)
         #plot_histogram(figbasename+".all",hist,bin_mids,mean,std,)
 
@@ -146,6 +147,7 @@ def histogram_lengths(figname,retislengths,retisweights,dtc,above=0,skip=0):
         weights2 = weights*(lengths>tooshort)
         hist,bin_edges = np.histogram(lengths*dtc,bins=bins,weights=weights2)
         bin_mids = 0.5*(bin_edges[:-1]+bin_edges[1:])
+        #bin_mids = bin_edges[:-1]+np.diff(bin_edges)/2.
         mean,std = weighted_avg_and_std(lengths*dtc, weights2)
 
     plot_histogram(figname,hist,bin_mids,mean,std)
@@ -154,6 +156,7 @@ def histogram_lengths(figname,retislengths,retisweights,dtc,above=0,skip=0):
 #    weights2 = weights*(lengths>tooshort)
 #    hist,bin_edges = np.histogram(lengths*dtc,bins=bins,weights=weights2)
 #    bin_mids = 0.5*(bin_edges[:-1]+bin_edges[1:])
+#    #bin_mids = bin_edges[:-1]+np.diff(bin_edges)/2.
 #    mean,std = weighted_avg_and_std(lengths*dtc, weights2)
 #    plot_histogram(figbasename+".above%i"%tooshort,hist,bin_mids,mean,std)
 
@@ -200,6 +203,7 @@ def histogram_op(figname,interfaces,data_op,length,weights,skip=0):
 
 
     bin_mids = 0.5*(bins[:-1]+bins[1:])
+    #bin_mids = bin_edges[:-1]+np.diff(bin_edges)/2.
     plt.figure()
     plt.plot(bin_mids,hist,"x",label="w. st/end pts")
     plt.plot(bin_mids,hist2,"x",label="wo. st/end pts")
