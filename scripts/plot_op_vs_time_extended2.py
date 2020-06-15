@@ -3,80 +3,106 @@ as a function of time
 
 AG, Nov 26, 2019
 AG, adapted May, 2020
+AG, made into nice script, June 2020
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
-from functionsanalyzeop import *
-from functionsop import *
+import argparse
+from tistools import *
 
 
 ACCFLAGS,REJFLAGS = set_flags_ACC_REJ() # Hard-coded rejection flags found in output files
 
 
+if __name__ == '__main__':
 
-##############################################3
+    parser = argparse.ArgumentParser(description='histograms and other')
+    parser.add_argument("-i",dest="inputfile",default="./retis.rst",
+        help="inputfile is file retis.rst or out.rst, where also the 000/, 001/... folders are stored",
+        )
+    parser.add_argument("-o",dest="outdir",default="./",
+        help="output directory, where figures are stored",
+        )
+    parser.add_argument("--name",dest="name",default=None,
+        help = "name or label of this simulation, will be used in figure names")
+    parser.add_argument("--dlambda",dest="dlambda",default="0.01",
+        type=float,
+        help = "width of bins in order parameter (lambda) histogram")
+    parser.add_argument("--lmin",dest="lmin",default=None,
+        type=float,
+        help = "left of the order parameter histogram")
+    parser.add_argument("--lmax",dest="lmax",default=None,
+        type=float,
+        help = "right of the order parameter histogram")
+    parser.add_argument("--maxtraj",dest="maxtraj",default=36,
+        help = "number of trajectories to be plotted (default 36)")
+    args = parser.parse_args()
 
-# GLOBAL
-INOUT = False
-#INOUT = True
+    indir, filename = os.path.split(args.inputfile)
+    if len(indir) == 0: indir = "./"
+    print("indir:",indir)
+    print("filename:",filename)
 
+    interfaces,zero_left = read_inputfile(args.inputfile)
 
-#ens = "000"
-#interfaces = [1.]
+    # construct list_ensembles
+    ninterf = len(interfaces)
+    folders = ["{}/{:03d}".format(indir,i) for i in range(ninterf)]
+    print("folders",folders)
 
-#ens = "001"
-#interfaces = [1.,]
+    # construct list_interfaces = [[lambda0],[lambda0],[lambda0,lambda1],...]
+    list_interfaces = [[interfaces[0]]]
+    if zero_left is not None:
+        list_interfaces = [[interfaces[0],zero_left]]
+    list_interfaces += [[interfaces[0]]]
+    for i in range(1,ninterf):
+        list_interfaces += [[interfaces[0],interfaces[i]]]
+    """
+    list_ensembles =["000","001","002","003","004","005"]
+    list_interfaces = [[1],[1.],[1,1.2],[1,1.4],[1,1.6],[1,1.8],]
+    """
 
-#ens = "002"
-#interfaces = [1.,1.2,]
+    # DECAY
+    #----------
+    if args.name is not None:
+        figbasename = "%s/decay.%s"%(args.outdir,name,)
+    else:
+        figbasename = "%s/decay"%(args.outdir,)
+    #decay_path(figbasename,folders)
 
-#ens = "003"
-#interfaces = [1.,1.4,]
+    # HISTOGRAM
+    #------------
+    bins = get_bins(folders,interfaces,args.dlambda,args.lmin,args.lmax)
 
-#ens = "004"
-#interfaces = [1.,1.6,]
+    for folder,interfaces2 in zip(folders,list_interfaces):
+        fol = folder[-3:]
+        if args.name is not None:
+            figbasename = "%s/histogram_op.%s.%s"%(args.outdir,name,fol)
+        else:
+            figbasename = "%s/histogram_op.%s"%(args.outdir,fol)
 
-#ens = "005"
-#interfaces = [1.,1.8]
+        make_histogram_op(figbasename,folder,interfaces2,bins)  # skip=0
+        #for skip in [1000,2000,]: #3000,4000,5000,6000,7000]:
+        #    make_histogram_op(figbasename,folder,interfaces,skip=skip,)
 
-simul = "s.16"
-simul = "s.3"
-simul = "s.1"
-simul = "t"
+        break
 
-FLAT1D = True
-simul = "1dflat"
+    # TRAJECTORIES
+    #---------------
+    for folder,interfaces2 in zip(folders,list_interfaces):
+        fol = folder[-3:]
+        if args.name is not None:
+            figbasename = "%s/traj_op.%s.%s"%(args.outdir,name,fol)
+        else:
+            figbasename = "%s/traj_op.%s"%(args.outdir,fol)
+        make_plot_trajs(figbasename,folder,interfaces2,first=args.maxtraj)
 
-list_ensembles =["000","001","002","003","004","005"]
-list_interfaces = [[1],[1.],[1,1.2],[1,1.4],[1,1.6],[1,1.8],]
-
-list_ensembles =["000","001","002","003"]
-list_interfaces = [[-2.5],[-2.5],[-2.5,-2.3],[-2.5,-2.1],]
-
-# for test
-list_ensembles =["000","001","002"]
-list_interfaces = [[-0.1],[-0.1],[-0.1,0],]
-
-decay_path(simul,list_ensembles)
-
-for ens,interfaces in zip(list_ensembles,list_interfaces):
-    make_histogram_op(simul,ens,interfaces,)  # skip=0
-
-for ens,interfaces in zip(list_ensembles,list_interfaces):
-#    for skip in [1000,2000,3000,4000,5000,6000,7000]:
-#
-        skip = None
-        skip = 0
-        make_histogram_op(simul,ens,interfaces,skip=skip,)
-#
-#        # TODO make this only the first trajs
-#        #make_plot_trajs(simul,ens,interfaces)   # NO do not do this with many trajs
-
-#for ens,interfaces in zip(list_ensembles,list_interfaces):
-#    #for above in [0,20,50,]:
-#    for above in [20]:
-#        for skip in [0,1000]:
-#            analyze_lengths(simul,ens,interfaces,above=above,skip=skip)
+    # TRAJ LENGTH
+    #-------------
+    # TODO clean
+    #for ens,interfaces in zip(folders,list_interfaces):
+    #    #for above in [0,20,50,]:
+    #    for above in [20]:
+    #        for skip in [0,1000]:
+    #            analyze_lengths(simul,ens,interfaces,above=above,skip=skip)
 
 

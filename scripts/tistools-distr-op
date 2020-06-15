@@ -8,6 +8,7 @@ AG, June 2, 2020"""
 import argparse
 from tistools import read_inputfile
 from tistools import create_distrib
+from tistools import set_flags_ACC_REJ
 import os
 import glob
 
@@ -47,7 +48,7 @@ if __name__ == '__main__':
     print("folders")
     folders = glob.glob(indir+"/0[0-9][0-9]")
     folders = sorted(folders)
-    folders = [fol[-3:] for fol in folders]
+    #folders = [fol[-3:] for fol in folders]
     for fol in folders:
         print(fol)
     assert len(folders)>0
@@ -65,7 +66,7 @@ if __name__ == '__main__':
     if args.dlambda_conc is None:
         args.dlambda_conc = args.dlambda
 
-    create_distrib(indir,folders,interfaces,
+    create_distrib(folders,interfaces,
           args.dt, args.dlambda, args.lmin, args.lmax,
           args.dlambda_conc)
 

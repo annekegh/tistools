@@ -185,7 +185,7 @@ def read_order(fn,ostart=0):
                 ntraj_started += 1
                 last_length = 0
 
-                # extract the cyclenumber, flag, generation
+                # extract the time, cyclenumber, flag, generation
                 words = line.split()
                 cyclenumbers.append(int(words[2][:-1]))  # remove the last character, which is a comma
                 flags.append(words[4][:-1])         # remove the last character, which is a comma: ACC,
@@ -291,19 +291,13 @@ def get_weights(flags,ACCFLAGS,REJFLAGS):
 
 #########################################
 
-def get_data_ensemble_consistent(simul,ens,interfaces,):
+def get_data_ensemble_consistent(folder,):
+    """
+    folder -- can be somedir/000, somedir/001, somedir/002, etc
+    """
 
-    # TODO
-    ## previously
-    #fn_op = "inout/%s/order.s.sim1.txt"%ens
-    #fn_path = "inout/%s/pathensemble.s.sim1.txt"%ens
-
-    # now
-    #fn_op = "%s/order.%s.txt"%(ens,simul)
-    #fn_path = "%s/pathensemble.%s.txt"%(ens,simul)
-
-    fn_op = "%s/order.txt"%ens
-    fn_path = "%s/pathensemble.txt"%ens
+    fn_op = "%s/order.txt"%folder
+    fn_path = "%s/pathensemble.txt"%folder
 
     # READ
     op = read_order(fn_op)
@@ -385,7 +379,9 @@ def select_traj(data_op,lengths,i):
         previous_length = np.sum(lengths[:i])
     thislength = lengths[i]
     #I made sure that len(data_op.shape)>1
-    data_sel = data_op[previous_length:previous_length+thislength,:]
+    #I made sure that len(data_sel.shape)>1
+    data_sel = np.zeros((thislength,data_op.shape[1]))
+    data_sel[:,:] = data_op[previous_length:previous_length+thislength,:]
     return data_sel
 
 

@@ -1,16 +1,13 @@
 import numpy as np
 from .reading import *
 from .analyze_op import *
+import matplotlib.pyplot as plt
 
 ACCFLAGS,REJFLAGS = set_flags_ACC_REJ() # Hard-coded rejection flags found in output files
 
-def create_distrib(indir,folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc):
-    """create figure of distributions of order parameter
-    First figure: only path ensembles 000 and 001
-    Second figure: all path ensembles
-    """
 
-    # bins: fix the lambda interval
+def get_bins(folders,interfaces,dlambda,lmin=None,lmax=None):
+    """bins: fix the lambda interval"""
     if lmin is None:
         if len(folders)<len(interfaces):
             zero_left = interfaces[-1]
@@ -24,16 +21,34 @@ def create_distrib(indir,folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc):
     else:
         lM = lmax
     bins = np.arange(lm,lM+dlambda/10.,dlambda)
+    return bins
 
-    import matplotlib.pyplot as plt
+    #What I used to have for make_histogram_op:
+    #bins = np.linspace(-3.6,-2.2,101)
+
+def create_distrib(folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc):
+    """create figure of distributions of order parameter
+    First figure: only path ensembles 000 and 001
+    Second figure: all path ensembles
+
+    folders -- ["somedir/000", "somedir/001", "somedir/002", ...]
+    interfaces -- [lambda0,lambda1,...,lambdaN]
+                    if lambda_-1 exists: [lambda0,lambda1,...,lambdaN, lambda_-1]
+    """
+    bins = get_bins(folders,interfaces,dlambda,lmin,lmax)
+
     plt.figure(1)
     if len(folders)>2:
         plt.figure(2)
 
-    for ifol,fol in enumerate(folders):
+    # folder -- somedir/000, somedir/001, etc
+    # fol  --  000, 001, etc
+    # ifol  --  0, 1, etc
+    for ifol,folder in enumerate(folders):
+        fol = folder[-3:]
         print("-"*20)
         print("folder",fol)
-        ofile = "%s/%s/order.txt" %(indir,fol)
+        ofile = "%s/order.txt" %(folder)
         #ostart = 0
         ostart = -1    # TODO
         op = read_order(ofile,ostart)
@@ -63,7 +78,7 @@ def create_distrib(indir,folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc):
         #------------------------
         xi = 1.
         if fol == "000":
-            ofile = "%s/%s/pathensemble.txt" %(indir,fol)
+            ofile = "%s/pathensemble.txt" %(folder)
             pe = read_pathensemble(ofile)
             lmrs = pe.lmrs
             flags1 = pe.flags
@@ -93,7 +108,7 @@ def create_distrib(indir,folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc):
             # dlambca_conc is the width of the bins
             nL = print_concentration_lambda0(ncycle,trajs,cut,dlambda_conc,dt,w_all,xi)
 
-        print("Histogram")
+        # Creating histogram
         # if trajs were not to be flat yet...
         #trajs_flat = [item for subitem in trajs for item in subitem]
         #print(trajs_flat[:30])
@@ -137,4 +152,79 @@ def create_distrib(indir,folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc):
     plt.xlim(bins[0],bins[-1])   # always same bins anyways
     plt.tight_layout()
     plt.savefig("hist.01.png")
+
+#######################################################################################################
+
+
+def make_histogram_op(figbasename,folder,interfaces,bins,skip=0,):
+    """
+    folder -- can be somedir/000, somedir/001, somedir/002, etc
+    interfaces -- [lambda0], [lambda[0], [lambda0,lambda1], etc...
+    """
+
+    op,ep = get_data_ensemble_consistent(folder)
+
+    weights, ncycle_true = get_weights(op.flags,ACCFLAGS,REJFLAGS)
+
+    if skip > 0:
+        figbasename += ".skip%i"%skip
+
+    histogram_op(figbasename,interfaces,op.ops,op.lengths,weights,bins,skip=skip)
+
+
+def histogram_op(figbasename,interfaces,data_op,length,weights,bins,skip=0):
+    ntraj = len(length)
+    assert len(weights) == len(length)
+
+    index = 0   # column with the order parameter
+
+    hist = np.zeros(len(bins)-1)
+    for i in range(skip,ntraj):
+        if weights[i] > 0:
+            histi,_ = np.histogram(select_traj(data_op,length,i)[:,index],bins=bins)
+            hist   += weights[i]*histi
+
+    # now delete the first and last point
+    hist2 = np.zeros(len(bins)-1)
+    for i in range(skip,ntraj):
+      if weights[i] > 0:
+        histi,_ = np.histogram(select_traj(data_op,length,i)[1:-1,index],bins=bins)
+        hist2   += weights[i]*histi
+
+    # now delete short traj
+    tooshort = 3
+    hist3 = np.zeros(len(bins)-1)
+    for i in range(skip,ntraj):
+      if weights[i] > 0:
+        if length[i] > tooshort:
+            histi,_ = np.histogram(select_traj(data_op,length,i)[:,index],bins=bins)
+            hist3   += weights[i]*histi
+
+
+    bin_mids = 0.5*(bins[:-1]+bins[1:])
+    #bin_mids = bin_edges[:-1]+np.diff(bin_edges)/2.
+    plt.figure()
+    plt.plot(bin_mids,hist,"x",label="w. st/end pts")
+    plt.plot(bin_mids,hist2,"x",label="wo. st/end pts")
+    plt.plot(bin_mids,hist3,"x",label="wo. short trajs")
+    plt.xlabel("lambda")
+    plt.ylabel("count")
+    plt.title("bin width = %.3f" %(bins[1]-bins[0]))
+    # plot line at lambda0
+    lambda0 = interfaces[0]
+    plt.plot([lambda0,lambda0],[0,max(hist)],color='grey',linewidth=2)
+    plt.legend()
+    plt.savefig(figbasename+".png")
+
+    plt.figure()
+    plt.plot(bin_mids,-np.log(hist),"x",label="w. st/end pts")
+    plt.plot(bin_mids,-np.log(hist2),"x",label="wo. st/end pts")
+    plt.plot(bin_mids,-np.log(hist3),"x",label="wo. short trajs")
+    plt.xlabel("lambda")
+    plt.ylabel("-ln(count)")
+    plt.plot([lambda0,lambda0],[0,-np.log(max(hist))],color='grey',linewidth=2)
+    plt.savefig(figbasename+".log.png")
+
+
+
 

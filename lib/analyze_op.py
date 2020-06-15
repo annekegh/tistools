@@ -8,36 +8,43 @@ import numpy as np
 import matplotlib.pyplot as plt
 from .reading import *
 
-FLAT1D = True    # TODO
-INOUT=False
-
 ACCFLAGS,REJFLAGS = set_flags_ACC_REJ() # Hard-coded rejection flags found in output files
 
-def create_figure_trajs(figname,data_op,length,accepted,acc=True,interfaces=None,generation=None):
+
+#---------------------
+# TRAJECTORIES
+#---------------------
+def create_figure_trajs(figbasename,data_op,length,accepted,first,acc=True,interfaces=None,generation=None):
+
+    # TODO I did not use "acc=True"
 
     ntraj,indices = get_ntraj(accepted,acc=acc)
-    ncol = int(np.ceil(np.sqrt(ntraj)))
+    # only take first trajectories:
+    maxtraj = min(first,ntraj)
+    ncol = int(np.ceil(np.sqrt(maxtraj)))
 
     fig = plt.figure(figsize=(ncol*3,ncol*3))  # in inches
     
     for i in range(ncol):
         for j in range(ncol):
             count = i*ncol+j
-            if count>=ntraj: break
+            if count>=maxtraj: break
 
             index = indices[count]
             da = select_traj(data_op,length,index)
+
             plt.subplot(ncol,ncol,count+1)
             if interfaces is not None:
                 # plot interface
                 for val in interfaces:
-                    plt.plot([da[0,0],da[-1,0]],[val,val],color='grey')
+                    plt.plot([0,len(da)-1],[val,val],color='grey')
 
-            # plot order parameter, time is in col=0, op is in col=1
-            plt.plot(da[:,0],da[:,1],lw=3)
-            # plot other particles also, are in col=6,...,col=10
-            for k in range(5,10):
-                plt.plot(da[:,0],da[:,2+k])
+            # plot order parameter:
+            # time starts from zero, op is in data col=0
+            plt.plot(da[:,0],linewidth=2)
+            # plot other particles alos, these are in col=1...
+            for k in range(1,da.shape[1]):
+                plt.plot(da[:,k])
 
             # add title
             if generation is None:
@@ -46,35 +53,22 @@ def create_figure_trajs(figname,data_op,length,accepted,acc=True,interfaces=None
                 plt.title("cycle %i %s"%(index,generation[index]))
     
     plt.tight_layout()
-    plt.savefig(figname)
-    plt.savefig(figname[:-3]+"pdf")
+    plt.savefig(figbasename+".png")
+    plt.savefig(figbasename+".pdf")
     plt.close()
 
- 
 
-def make_plot_trajs(simul,ens,interfaces,first=0):
-
-    op,ep = get_data_ensemble_consistent(simul,ens,interfaces,)
+def make_plot_trajs(figbasename,folder,interfaces,first):
+    """
+    folder -- can be somedir/000, somedir/001, somedir/002, etc
+    interfaces -- [lambda0], [lambda[0], [lambda0,lambda1], etc...
+    """
+    op,ep = get_data_ensemble_consistent(folder)
 
     accepted = [(acc == 'ACC') for acc in op.flags]
 
-    figname = "traj_op.%s.png"%ens
-    #figname = "testing.%s.pdf"%ens
-    create_figure_trajs(figname,op.ops,op.lengths,accepted,acc=True,interfaces=interfaces,generation=op.generation)
-
-def make_histogram_op(simul,ens,interfaces,skip=0,):
-
-    op,ep = get_data_ensemble_consistent(simul,ens,interfaces,)
-
-    weights, ncycle_true = get_weights(op.flags,ACCFLAGS,REJFLAGS)
-
-    figname = "histogram_op.%s.%s"%(simul,ens)
-
-    if skip > 0:
-        figname += ".skip%i"%skip
-    figname += ".png"
-
-    histogram_op(figname,interfaces,op.ops,op.lengths,weights,skip=skip)
+    create_figure_trajs(figbasename,op.ops,op.lengths,accepted,first,
+        acc=True,interfaces=interfaces,generation=op.generation)
 
 
 def analyze_lengths(simul,ens,interfaces,above=0,skip=0):
@@ -161,72 +155,6 @@ def histogram_lengths(figname,retislengths,retisweights,dtc,above=0,skip=0):
 #    plot_histogram(figbasename+".above%i"%tooshort,hist,bin_mids,mean,std)
 
 
-def histogram_op(figname,interfaces,data_op,length,weights,skip=0):
-    ntraj = len(length)
-    assert len(weights) == len(length)
-
-    # choose bins
-    # TODO choose bins histogram_op
-    bins = np.linspace(-3.6,-2.2,101)
-    bins = np.linspace(-3.6,-2.2,51)
-    bins = np.linspace(-3.6,-2.4,61)
-    if INOUT:    # TODO
-        bins = np.linspace(0,1.2,61)
-
-    if FLAT1D:
-        bins = np.linspace(-0.22,0.122,161)
-    #bins = np.linspace(0.8,1.2,100)
-
-    index = 0   # column with the order parameter
-
-    hist = np.zeros(len(bins)-1)
-    for i in range(skip,ntraj):
-        if weights[i] > 0:
-            histi,_ = np.histogram(select_traj(data_op,length,i)[:,index],bins=bins)
-            hist   += weights[i]*histi
-
-    # now delete the first and last point
-    hist2 = np.zeros(len(bins)-1)
-    for i in range(skip,ntraj):
-      if weights[i] > 0:
-        histi,_ = np.histogram(select_traj(data_op,length,i)[1:-1,index],bins=bins)
-        hist2   += weights[i]*histi
-
-    # now delete short traj
-    tooshort = 3
-    hist3 = np.zeros(len(bins)-1)
-    for i in range(skip,ntraj):
-      if weights[i] > 0:
-        if length[i] > tooshort:
-            histi,_ = np.histogram(select_traj(data_op,length,i)[:,index],bins=bins)
-            hist3   += weights[i]*histi
-
-
-    bin_mids = 0.5*(bins[:-1]+bins[1:])
-    #bin_mids = bin_edges[:-1]+np.diff(bin_edges)/2.
-    plt.figure()
-    plt.plot(bin_mids,hist,"x",label="w. st/end pts")
-    plt.plot(bin_mids,hist2,"x",label="wo. st/end pts")
-    plt.plot(bin_mids,hist3,"x",label="wo. short trajs")
-    plt.xlabel("lambda")
-    plt.ylabel("count")
-    plt.title("bin width = %.3f" %(bins[1]-bins[0]))
-    # plot line at lambda0
-    lambda0 = interfaces[0]
-    plt.plot([lambda0,lambda0],[0,max(hist)],color='grey',linewidth=2)
-    plt.legend()
-    plt.savefig(figname)
-
-    plt.figure()
-    plt.plot(bin_mids,-np.log(hist),"x",label="w. st/end pts")
-    plt.plot(bin_mids,-np.log(hist2),"x",label="wo. st/end pts")
-    plt.plot(bin_mids,-np.log(hist3),"x",label="wo. short trajs")
-    plt.xlabel("lambda")
-    plt.ylabel("-ln(count)")
-    plt.plot([lambda0,lambda0],[0,-np.log(max(hist))],color='grey',linewidth=2)
-    plt.savefig(figname[:-4]+".log.png")
-
-
 
 
 #-------------------------------------------------
@@ -237,17 +165,12 @@ def histogram_op(figname,interfaces,data_op,length,weights,skip=0):
 # Investigate decay of first path (ld, from load)
 #-------------------------------------------------
 
-def decay_path(simul,list_ensembles,):
-
-    figbasename = "decay.%s"%(simul,)
+def decay_path(figbasename,list_ensembles,):
 
     nens = len(list_ensembles)
     all_data_path = []
     for ens in list_ensembles:
-        fn_path = "%s/pathensemble.%s.txt"%(ens,simul)
-        if FLAT1D:
-            fn_path = "%s/pathensemble.txt"%(ens)
- 
+        fn_path = "%s/pathensemble.txt"%(ens)
         pe = read_pathensemble(fn_path)
         all_data_path.append(pe)
 
@@ -298,7 +221,8 @@ def decay_path(simul,list_ensembles,):
             except ValueError:
                 pass
 
-    print(decay)
+    print("decay:",decay.shape)
+    #print(decay)
     plot_decay(figbasename,decay,list_ensembles)
     list_newpathnumbers = [pe.newpathnumbers for pe in all_data_path]
     plot_newpathnumbers(figbasename+".newpaths.png",list_newpathnumbers)
@@ -310,13 +234,12 @@ def decay_path(simul,list_ensembles,):
         totcount += count
         print("count {:03d} {}".format(i,count))
     dt = 0.0002  # ps   # TODO
+    print("ASSUME dt=%f"%dt)
     print("totcount = {} = {:.1f} ps = {:.4f} ns".format(totcount,totcount*dt,totcount*dt/1000.))
         
 
 def plot_decay(figbasename,decay,list_ensembles):
     """Plot the decay of the load path"""
-    # TODO fix figure
-    import matplotlib.pyplot as plt
     plt.figure()
     plt.plot(decay[:150,:])
     plt.xlabel("cycle")
@@ -334,7 +257,6 @@ def plot_decay(figbasename,decay,list_ensembles):
 
 def plot_newpathnumbers(figname,list_newpathnumbers):
     """Investigate how many new paths are generated"""
-    import matplotlib.pyplot as plt
     plt.figure()
     for i,newpathnumbers in enumerate(list_newpathnumbers):
         plt.plot(newpathnumbers,label = str(i))
