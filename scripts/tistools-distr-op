@@ -6,7 +6,8 @@ that is relevant for [0-'] ensemble
 AG, June 2, 2020"""
 
 import argparse
-from tistools import *
+from tistools import read_inputfile
+from tistools import create_distrib
 import os
 import glob
 
@@ -51,7 +52,7 @@ if __name__ == '__main__':
         print(fol)
     assert len(folders)>0
 
-    interfaces,zero_left = read_inputfile(filename)
+    interfaces,zero_left = read_inputfile(args.inputfile)
     #assert len(interfaces) == len(folders)
     print("zero_left (can be None):",zero_left)
     if zero_left is not None:
