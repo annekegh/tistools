@@ -7,6 +7,7 @@ def set_flags_ACC_REJ():
     REJFLAGS = ['FTL', 'NCR', 'BWI', 'BTL', 'BTX', 'FTX',]
     REJFLAGS += ['BTS','KOB','FTS','EWI','SWI']
     REJFLAGS += ['MCR']
+    REJFLAGS += ['TSS','TSA']
     """
          MCR': 'Momenta change rejection',
         'BWI': 'Backward trajectory end at wrong interface',
@@ -20,8 +21,9 @@ def set_flags_ACC_REJ():
         'NCR': 'No crossing with middle interface',
         'EWI': 'Initial path ends at wrong interface',
         'SWI': 'Initial path starts at wrong interface'
+        'TSS' = No valid indices to select for swapping
+        'TSA'= Rejection due to the target swap acceptance criterium.
     """
-
 
     ACCFLAGS = ['ACC',]
     # option 1: do not change, as if omitted
