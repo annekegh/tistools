@@ -26,7 +26,8 @@ def get_bins(folders,interfaces,dlambda,lmin=None,lmax=None):
     #What I used to have for make_histogram_op:
     #bins = np.linspace(-3.6,-2.2,101)
 
-def create_distrib(folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc):
+def create_distrib(folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc,
+    op_index,op_weight,do_abs):
     """create figure of distributions of order parameter
     First figure: only path ensembles 000 and 001
     Second figure: all path ensembles
@@ -34,6 +35,9 @@ def create_distrib(folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc):
     folders -- ["somedir/000", "somedir/001", "somedir/002", ...]
     interfaces -- [lambda0,lambda1,...,lambdaN]
                     if lambda_-1 exists: [lambda0,lambda1,...,lambdaN, lambda_-1]
+    op_index -- list of selected order parameters, e.g. [0] or [0,2,3]
+    op_weight -- weight for each of the selected order parameters
+    do_abs -- wether to take the absolute value of the order parameters before histogramming
     """
     bins = get_bins(folders,interfaces,dlambda,lmin,lmax)
 
@@ -57,6 +61,13 @@ def create_distrib(folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc):
         lens = op.lengths
         ncycle = op.ncycle   # this is len(flags) = len(lengths)
         weights, ncycle_true = get_weights(flags,ACCFLAGS,REJFLAGS)
+
+
+        # TODO EXTRA
+        #print(len(op.ops),op.ops.shape)
+        #print(op.longtraj.shape)
+        assert len(op.ops) == len(op.longtraj)
+        # TODO print(ah)
 
         print("ncycle:",ncycle)
 
@@ -115,6 +126,15 @@ def create_distrib(folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc):
 
         hist,edges = np.histogram(trajs,bins=bins,weights=w_all)
         centers = edges[:-1]+np.diff(edges)/2.
+
+        # TODO ADAPTTTT HISTOGRAM
+        hist = np.zeros(len(bins)-1)
+        n_op = len(op_index)
+        for i in range(n_op):
+            if op_weight != 0:
+                histi,edges = np.histogram(op.ops[:,op_index[i]],bins=bins,weights=w_all*op_weight[i])
+                hist += histi
+
 
         plt.figure(1)
         plt.plot(centers,hist,marker='x',label=fol)  #label=r"%s"%(intf_names[i]))
@@ -224,7 +244,6 @@ def histogram_op(figbasename,interfaces,data_op,length,weights,bins,skip=0):
     plt.ylabel("-ln(count)")
     plt.plot([lambda0,lambda0],[0,-np.log(max(hist))],color='grey',linewidth=2)
     plt.savefig(figbasename+".log.png")
-
 
 
 

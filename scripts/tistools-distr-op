@@ -35,7 +35,15 @@ if __name__ == '__main__':
     parser.add_argument("--lmax",dest="lmax",default=None,
         type=float,
         help = "right of the order parameter histogram")
-
+    parser.add_argument("--index",dest="op_index",nargs='*',default=[0],
+        type=int,
+        help = "selection of order parameters (op). E.g. 0 (default) is the first op; 0 1 2 are the first three op's.")
+    parser.add_argument("--weight",dest="op_weight",nargs='*',default=None,
+        type=float,
+        help = "weight of each selected order parameters (op) in the histogram")
+    parser.add_argument("--abs",dest="do_abs",default=False, action = "store_true",
+            help = "operation on op before histogramming: take absolute value")
+    # maybe implement later with choices=['abs','sum'] or so
 
     args = parser.parse_args()
 
@@ -66,8 +74,14 @@ if __name__ == '__main__':
     if args.dlambda_conc is None:
         args.dlambda_conc = args.dlambda
 
+    # verify dimensions of selected ops and their weights
+    if args.op_weight is None:
+        args.op_weight = [1 for i in range(len(args.op_index))]
+    assert len(args.op_index) == len(args.op_weight)
+
     create_distrib(folders,interfaces,
           args.dt, args.dlambda, args.lmin, args.lmax,
-          args.dlambda_conc)
+          args.dlambda_conc,
+          args.op_index, args.op_weight, args.do_abs)
 
 
