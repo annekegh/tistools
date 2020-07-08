@@ -124,16 +124,21 @@ def create_distrib(folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc,
         #trajs_flat = [item for subitem in trajs for item in subitem]
         #print(trajs_flat[:30])
 
-        hist,edges = np.histogram(trajs,bins=bins,weights=w_all)
-        centers = edges[:-1]+np.diff(edges)/2.
+        # Previously:
+        #hist,edges = np.histogram(trajs,bins=bins,weights=w_all)
+        #centers = edges[:-1]+np.diff(edges)/2.
 
         # TODO ADAPTTTT HISTOGRAM
         hist = np.zeros(len(bins)-1)
         n_op = len(op_index)
         for i in range(n_op):
             if op_weight != 0:
-                histi,edges = np.histogram(op.ops[:,op_index[i]],bins=bins,weights=w_all*op_weight[i])
+                if do_abs:
+                    histi,edges = np.histogram(abs(op.ops[:,op_index[i]]),bins=bins,weights=w_all*op_weight[i])
+                else:
+                    histi,edges = np.histogram(op.ops[:,op_index[i]],bins=bins,weights=w_all*op_weight[i])
                 hist += histi
+        centers = edges[:-1]+np.diff(edges)/2.
 
 
         plt.figure(1)
