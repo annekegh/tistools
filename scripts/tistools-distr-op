@@ -20,6 +20,9 @@ if __name__ == '__main__':
     parser.add_argument("-i",dest="inputfile",default="./retis.rst",
         help="inputfile is file retis.rst or out.rst, where also the 000/, 001/... folders are stored",
         )
+    parser.add_argument("-o",dest="outputfile",default="hist",
+        help="outputfile is e.g. hist, which will create files hist.png and hist.01.png",
+        )
     parser.add_argument("--dt",dest="dt",default="1.",
         type=float,
         help = "time between stored order parameters")
@@ -44,6 +47,12 @@ if __name__ == '__main__':
     parser.add_argument("--abs",dest="do_abs",default=False, action = "store_true",
             help = "operation on op before histogramming: take absolute value")
     # maybe implement later with choices=['abs','sum'] or so
+
+    parser.add_argument("--time",dest="do_time",default=False, action = "store_true",
+        help = "when chosen, the time spent per length will be plotted instead of the histogram")
+    parser.add_argument("--dens",dest="do_density",default=False, action = "store_true",
+        help = "when chosen, the probability density will be plotted instead of the histogram")
+
 
     args = parser.parse_args()
 
@@ -79,9 +88,15 @@ if __name__ == '__main__':
         args.op_weight = [1 for i in range(len(args.op_index))]
     assert len(args.op_index) == len(args.op_weight)
 
-    create_distrib(folders,interfaces,
+
+    # do_time and do_density cannot be True simultaneously
+    if args.do_time and args.do_density:
+        raise ValueError("--time and --dens cannot be asked for simultaneously")
+
+    create_distrib(folders,interfaces,args.outputfile,
           args.dt, args.dlambda, args.lmin, args.lmax,
           args.dlambda_conc,
-          args.op_index, args.op_weight, args.do_abs)
+          args.op_index, args.op_weight, args.do_abs,
+          args.do_time, args.do_density)
 
 

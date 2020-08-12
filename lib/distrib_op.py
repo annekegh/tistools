@@ -26,8 +26,9 @@ def get_bins(folders,interfaces,dlambda,lmin=None,lmax=None):
     #What I used to have for make_histogram_op:
     #bins = np.linspace(-3.6,-2.2,101)
 
-def create_distrib(folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc,
-    op_index,op_weight,do_abs):
+def create_distrib(folders,interfaces,outputfile,dt,dlambda,lmin,lmax,dlambda_conc,
+    op_index, op_weight, do_abs,
+    do_time, do_density):
     """create figure of distributions of order parameter
     First figure: only path ensembles 000 and 001
     Second figure: all path ensembles
@@ -100,26 +101,31 @@ def create_distrib(folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc,
 
             print_lmr_000(lmrs,weights)
 
-            # reweigh with xi if possible
+            # compute and print factor xi
             xi = calc_xi(lmrs,weights)
             print("xi",xi)
 
-            if xi !=1:
-                weights_xi = np.array(weights,float)*xi
-                # reconstruct
-                w_all_xi = np.array([ weights_xi[i] for i in range(ncycle) for k in range(lens[i])])
-            else:
-                # just a copy
-                weights_xi = weights
-                w_all_xi = w_all
+            # reweigh with xi if possible
+            # TODO remove this if not needed?
+            #if xi !=1:
+            #    weights_xi = np.array(weights,float)*xi
+            #    # reconstruct
+            #    w_all_xi = np.array([ weights_xi[i] for i in range(ncycle) for k in range(lens[i])])
+            #else:
+            #    # just a copy
+            #    weights_xi = weights
+            #    w_all_xi = w_all
 
         # get concentration at interface and print        
         if fol == "000" or fol == "001":
             cut = interfaces[0]   # location of lambda0
             # dlambca_conc is the width of the bins
             nL = print_concentration_lambda0(ncycle,trajs,cut,dlambda_conc,dt,w_all,xi)
+        
 
-        # Creating histogram
+
+        # Computing histogram
+        #---------------------
         # if trajs were not to be flat yet...
         #trajs_flat = [item for subitem in trajs for item in subitem]
         #print(trajs_flat[:30])
@@ -128,7 +134,17 @@ def create_distrib(folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc,
         #hist,edges = np.histogram(trajs,bins=bins,weights=w_all)
         #centers = edges[:-1]+np.diff(edges)/2.
 
-        # TODO ADAPTTTT HISTOGRAM
+        # Optional:
+        # remove first and last phase point of each path, which are not part of the ensemble
+        # I think that it also works when the path length is 1
+        do_remove_endpoints = False
+        if do_remove_endpoints:
+            # reconstruct w_all
+            time,w_all = compute_time_in_ensemble(w_all,lens,dt)
+        else:
+            # do not store w_all
+            time_ens, _ = compute_time_in_ensemble(w_all,lens,dt)
+
         hist = np.zeros(len(bins)-1)
         n_op = len(op_index)
         for i in range(n_op):
@@ -139,44 +155,128 @@ def create_distrib(folders,interfaces,dt,dlambda,lmin,lmax,dlambda_conc,
                     histi,edges = np.histogram(op.ops[:,op_index[i]],bins=bins,weights=w_all*op_weight[i])
                 hist += histi
         centers = edges[:-1]+np.diff(edges)/2.
+        # dlambda = dlambda,edges[1]-edges[0]   I checked this already
 
 
-        plt.figure(1)
-        plt.plot(centers,hist,marker='x',label=fol)  #label=r"%s"%(intf_names[i]))
-        for c in interfaces:
-            plt.plot([c,c],[0,max(hist)],"--",color='grey',label=None)
-        if fol == "000":
-            title = "ncycle=%i nL=%i"%(ncycle,nL)
-            if xi != 1:
-                plt.plot(centers,hist*xi,marker='x',label=fol+"-xi",color="k")
-                title += " xi=%.2f"%xi
-            plt.title(title)
+        # Normalization?
+        #---------------
+        # Several options...
+        # I chose "time in interval dlambda per path" and "prob_dens"
+        if do_time:
+            #hist3 = hist/ncycle   # time steps in interval dlambda per path
 
-        if ifol<2:
-            plt.figure(2)
-            plt.plot(centers,hist,marker='x',label=fol)  #label=r"%s"%(intf_names[i]))
+            #hist3 = hist/ncycle*dt   # time in interval dlambda per path in unit [time]
+
+            hist3 = hist/ncycle*dt/dlambda   # time per dlambda per path in unit [time/length]
+
+            hist = hist3
+
+        elif do_density:
+            hist3 = hist/ncycle*dt/dlambda / time_ens
+            # time per lambda per path / time per path [1/length]
+            # so this is the probability density in A' = rho_{A',ref}
+
+            
+            #unit = 1./dlambda    # per dlambda (per bin)
+            #hist3 = hist*unit     # histogram in unit [1/length]
+
+
+            #hist3 = hist2/np.sum(hist2)  # normalized histogram, per bin, then end points should be removed
+            # np.sum(hist2) = 1
+
+            #hist3 = hist2/np.sum(hist2)*unit  # normalized histogram in unit [1/length]
+            # np.sum(hist2)*dlambda = 1
+
+            hist = hist3
+
+
+        # Creating histogram
+        #---------------------
+
+        for k in [1,2]:
+          if k == 1 or ( len(folders)>2 and k==2 ):
+            plt.figure(k)
+
+            # plot vertical lines at interfaces
+            # plot each time, because then I will reach the max of all histograms
             for c in interfaces:
                 plt.plot([c,c],[0,max(hist)],"--",color='grey',label=None)
+
+            # plot 000, do xi plot if present
             if fol == "000":
+                plt.plot(centers,hist,marker='x',label=fol,color="green")  #label=r"%s"%(intf_names[i]))
                 title = "ncycle=%i nL=%i"%(ncycle,nL)
-                if xi != 1:
-                    plt.plot(centers,hist*xi,marker='x',label=fol+"-xi",color="k")
+                if xi != 1 and (not do_density):   # not usefull to rescale when plotting the probability density
+                    plt.plot(centers,hist*xi,marker='o',label=fol+"-xi",color="green",fillstyle='none')
                     title += " xi=%.2f"%xi
                 plt.title(title)
- 
+
+            # plot 001 in the same color as 000
+            elif fol == "001":
+                plt.plot(centers,hist,marker='x',label=fol,color="orange")  #label=r"%s"%(intf_names[i]))
+
+            # plot other ensembles
+            else:
+                if k==1:
+                    plt.plot(centers,hist,marker='x',label=fol)  #label=r"%s"%(intf_names[i]))
+
+        if ifol == 1:  # I did 000 and 001
+            plt.figure(2)
+            plt.legend()
+            plt.xlabel("lambda (dlambda=%.3f)" %dlambda)
+            plt.xlim(bins[0],bins[-1])   # always same bins anyways
+            if do_time:
+                plt.ylabel("time spent per length")
+            elif do_density:
+                plt.ylabel("prob. dens.")
+            plt.tight_layout()
+
+            if do_time:
+                plt.savefig(outputfile+".time.01.png")
+            elif do_density:
+                plt.savefig(outputfile+".dens.01.png")
+            else:
+                plt.savefig(outputfile+".01.png")
+
     plt.figure(1)
     plt.legend()
     plt.xlabel("lambda (dlambda=%.3f)" %dlambda)
     plt.xlim(bins[0],bins[-1])   # always same bins anyways
+    if do_time:
+        plt.ylabel("time spent per length")
+    elif do_density:
+        plt.ylabel("prob. density")
     plt.tight_layout()
-    plt.savefig("hist.png")
+    if do_time:
+        plt.savefig(outputfile+".time.png")
+    elif do_density:
+        plt.savefig(outputfile+".dens.png")
+    else:
+        plt.savefig(outputfile+".png")
 
-    plt.figure(2)
-    plt.legend()
-    plt.xlabel("lambda (dlambda=%.3f)" %dlambda)
-    plt.xlim(bins[0],bins[-1])   # always same bins anyways
-    plt.tight_layout()
-    plt.savefig("hist.01.png")
+
+def compute_time_in_ensemble(w_all,lens,dt):
+    """compute time spent in ensemble
+
+    remove first and last phase point of each path, which are not part of the ensemble
+    I think that it also works when the path length is 1
+
+    w_all -- array with weights of each order parameter path, for each stored phase point
+    lens -- array/list? with length of each path
+    dt -- time step"""
+    w_all2 = np.copy(w_all)
+    ncycle = len(lens)
+    count = 0
+    for i in range(ncycle):
+         assert lens[i]>0
+         w_all2[count] = 0
+         w_all2[count+lens[i]-1]=0
+         count += lens[i]
+    time = np.sum(w_all2)*dt/ncycle
+    print("time spent per path:",time)
+    return time, w_all2
+
+
 
 #######################################################################################################
 
