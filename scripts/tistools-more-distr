@@ -44,7 +44,7 @@ if __name__ == '__main__':
     print("indir:",indir)
     print("filename:",filename)
 
-    interfaces,zero_left = read_inputfile(args.inputfile)
+    interfaces,zero_left,timestep = read_inputfile(args.inputfile)
 
     # construct list_ensembles
     ninterf = len(interfaces)
