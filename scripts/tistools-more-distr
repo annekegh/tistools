@@ -86,7 +86,7 @@ if __name__ == '__main__':
         #for skip in [1000,2000,]: #3000,4000,5000,6000,7000]:
         #    make_histogram_op(figbasename,folder,interfaces,skip=skip,)
 
-        break
+        #break
 
     # TRAJECTORIES
     #---------------
