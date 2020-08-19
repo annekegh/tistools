@@ -350,6 +350,7 @@ def print_concentration_lambda0(ncycle,trajs,cut,dlambda,dt,w_all,xi):
     print("n         --  count in histogram bin")
     print("n/ncycle  --  count in histogram bin, per path")
     print("rho       --  density, unit [1/unit-of-dlambda]")
+    print("tau/Dz    --  time spent per length, unit [unit-of-dt/unit-of-dlambda]")
     print("P/Pcross  --  permeability/crossing-probability, unit [1/unit-of-dlambda/unit-of-dt]")
 
     print("dt       ",dt)
@@ -373,25 +374,32 @@ def print_concentration_lambda0(ncycle,trajs,cut,dlambda,dt,w_all,xi):
     #ncycle can be a little bit more
 
     print("Now compute n, rho, P/Pcross; left (L) and right (R) of the interface")
-    rhoL = nL/dlambda/ncycle    # in unit 1/dlambda
-    PL = 1./dt/rhoL   # = P/Pcross = ncycle / nL * dlambda/dt
+    rhoL = nL/dlambda/ncycle    # in units of 1/dlambda
+    tauL = nL*dt/dlambda/ncycle  # in units of dt/dlambda
+    PL = 1./tauL      # = P/Pcross = 1/dt/rhoL = ncycle / nL * dlambda/dt
     rhoR = nR/dlambda/ncycle
-    PR = 1./dt/rhoR   # = ncycle / nR * dlambda/dt
+    tauR = nR*dt/dlambda/ncycle  # in units of dt/dlambda
+    PR = 1./tauR      # = ncycle / nR * dlambda/dt
+
+    tauL = nL*dt/dlambda/ncycle  # in units of dt/dlambda
 
     print("** Left histogram **")
     print("L n            ",nL)
     print("L n/ncycle     ",nL/ncycle)
     print("L rho          ",rhoL)
+    print("L tau/Dz       ",tauL)
     print("L P/Pcross     ",PL)
     print("** Left histogram (xi)**")
     print("L n        (xi)",nL*xi)
     print("L n/ncycle (xi)",nL/ncycle*xi)
     print("L rho      (xi)",rhoL*xi)
+    print("L tau/Dz   (xi)",tauL*xi)
     print("L P/Pcross (xi)",PL/xi)
     print("** Right histogram **")
     print("R n            ",nR)
     print("R n/ncycle     ",nR/ncycle)
     print("R rho          ",rhoR)
+    print("L tau/Dz       ",tauR)
     print("R P/Pcross     ",PR)
     print("."*10)
     #print("Sum/ncycle",len(trajs)/ncycle)  # no, because not weighted TODO

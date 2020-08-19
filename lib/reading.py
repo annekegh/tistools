@@ -403,9 +403,9 @@ def get_ntraj(accepted,acc=True):    # TODO needed?
 
 ###########################################
 def read_inputfile(filename):
-    """read interfaces from inputfile
+    """read interfaces and timestep from inputfile
 
-    Add the zer_left interface to the end of the list, if this
+    Add the zero_left interface to the end of the list, if this
     is present."""
 
     # interfaces
@@ -430,5 +430,13 @@ def read_inputfile(filename):
                 zero_left = float(parts[1])
                 break
 
-    return interfaces,zero_left
+    # interfaces
+    with open(filename,"r") as f:
+        for line in f:
+            if "timestep" in line and "=" in line and not line.strip().startswith("#"):
+                parts = line.split("=")
+                timestep = float(parts[1])
+                break
+
+    return interfaces,zero_left,timestep
 

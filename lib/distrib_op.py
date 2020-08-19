@@ -26,7 +26,8 @@ def get_bins(folders,interfaces,dlambda,lmin=None,lmax=None):
     #What I used to have for make_histogram_op:
     #bins = np.linspace(-3.6,-2.2,101)
 
-def create_distrib(folders,interfaces,outputfile,dt,dlambda,lmin,lmax,dlambda_conc,
+def create_distrib(folders,interfaces,outputfile,do_pdf,
+    dt,dlambda,lmin,lmax,dlambda_conc,
     op_index, op_weight, do_abs,
     do_time, do_density):
     """create figure of distributions of order parameter
@@ -36,10 +37,17 @@ def create_distrib(folders,interfaces,outputfile,dt,dlambda,lmin,lmax,dlambda_co
     folders -- ["somedir/000", "somedir/001", "somedir/002", ...]
     interfaces -- [lambda0,lambda1,...,lambdaN]
                     if lambda_-1 exists: [lambda0,lambda1,...,lambdaN, lambda_-1]
+    do_pdf  --  whether to save figures as pdf as well
     op_index -- list of selected order parameters, e.g. [0] or [0,2,3]
     op_weight -- weight for each of the selected order parameters
     do_abs -- wether to take the absolute value of the order parameters before histogramming
     """
+
+    # for figure extensions
+    extensions = ["png"]
+    if do_pdf:
+        extensions += ["pdf"]
+
     bins = get_bins(folders,interfaces,dlambda,lmin,lmax)
 
     plt.figure(1)
@@ -105,8 +113,7 @@ def create_distrib(folders,interfaces,outputfile,dt,dlambda,lmin,lmax,dlambda_co
             xi = calc_xi(lmrs,weights)
             print("xi",xi)
 
-            # reweigh with xi if possible
-            # TODO remove this if not needed?
+            # reweigh with xi if possible --- this is not needed anymore
             #if xi !=1:
             #    weights_xi = np.array(weights,float)*xi
             #    # reconstruct
@@ -120,8 +127,7 @@ def create_distrib(folders,interfaces,outputfile,dt,dlambda,lmin,lmax,dlambda_co
         if fol == "000" or fol == "001":
             cut = interfaces[0]   # location of lambda0
             # dlambca_conc is the width of the bins
-            nL = print_concentration_lambda0(ncycle,trajs,cut,dlambda_conc,dt,w_all,xi)
-        
+            nL = print_concentration_lambda0(ncycle,trajs,cut,dlambda_conc,dt,w_all,xi)   
 
 
         # Computing histogram
@@ -134,9 +140,11 @@ def create_distrib(folders,interfaces,outputfile,dt,dlambda,lmin,lmax,dlambda_co
         #hist,edges = np.histogram(trajs,bins=bins,weights=w_all)
         #centers = edges[:-1]+np.diff(edges)/2.
 
+        # TODO
         # Optional:
         # remove first and last phase point of each path, which are not part of the ensemble
         # I think that it also works when the path length is 1
+        # Also: compute time spent in the ensemble
         do_remove_endpoints = False
         if do_remove_endpoints:
             # reconstruct w_all
@@ -206,8 +214,11 @@ def create_distrib(folders,interfaces,outputfile,dt,dlambda,lmin,lmax,dlambda_co
             if fol == "000":
                 plt.plot(centers,hist,marker='x',label=fol,color="green")  #label=r"%s"%(intf_names[i]))
                 title = "ncycle=%i nL=%i"%(ncycle,nL)
-                if xi != 1 and (not do_density):   # not usefull to rescale when plotting the probability density
-                    plt.plot(centers,hist*xi,marker='o',label=fol+"-xi",color="green",fillstyle='none')
+                if xi != 1:
+                    # the xi plot is not relevant for 'probability density'
+                    if not do_density:
+                        plt.plot(centers,hist*xi,marker='o',label=fol+"-xi",color="green",fillstyle='none')
+                    # but always adapt the title, so I have xi printed
                     title += " xi=%.2f"%xi
                 plt.title(title)
 
@@ -231,12 +242,14 @@ def create_distrib(folders,interfaces,outputfile,dt,dlambda,lmin,lmax,dlambda_co
                 plt.ylabel("prob. dens.")
             plt.tight_layout()
 
-            if do_time:
-                plt.savefig(outputfile+".time.01.png")
-            elif do_density:
-                plt.savefig(outputfile+".dens.01.png")
-            else:
-                plt.savefig(outputfile+".01.png")
+            # save figure for the desired file extensions (png, pdf)
+            for ext in extensions:
+                if do_time:
+                    plt.savefig(outputfile+".time.01.%s"%ext)
+                elif do_density:
+                    plt.savefig(outputfile+".dens.01.%s"%ext)
+                else:
+                    plt.savefig(outputfile+".01.%s"%ext)
 
     plt.figure(1)
     plt.legend()
@@ -247,12 +260,15 @@ def create_distrib(folders,interfaces,outputfile,dt,dlambda,lmin,lmax,dlambda_co
     elif do_density:
         plt.ylabel("prob. density")
     plt.tight_layout()
-    if do_time:
-        plt.savefig(outputfile+".time.png")
-    elif do_density:
-        plt.savefig(outputfile+".dens.png")
-    else:
-        plt.savefig(outputfile+".png")
+
+    # save figure for the desired file extensions (png, pdf)
+    for ext in extensions:
+        if do_time:
+            plt.savefig(outputfile+".time.%s"%ext)
+        elif do_density:
+            plt.savefig(outputfile+".dens.%s"%ext)
+        else:
+            plt.savefig(outputfile+".%s"%ext)
 
 
 def compute_time_in_ensemble(w_all,lens,dt):
