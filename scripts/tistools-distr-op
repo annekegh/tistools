@@ -41,6 +41,13 @@ if __name__ == '__main__':
     parser.add_argument("--lmax",dest="lmax",default=None,
         type=float,
         help = "right of the order parameter histogram")
+    parser.add_argument("--ymin",dest="ymin",default=None,
+        type=float,
+        help = "lower limit on the y-axis")
+    parser.add_argument("--ymax",dest="ymax",default=None,
+        type=float,
+        help = "upper limit on the y-axis")
+
     parser.add_argument("--index",dest="op_index",nargs='*',default=[0],
         type=int,
         help = "selection of order parameters (op). E.g. 0 (default) is the first op; 0 1 2 are the first three op's.")
@@ -102,6 +109,7 @@ if __name__ == '__main__':
 
     create_distrib(folders,interfaces,args.outputfile,args.do_pdf,
           timestep, args.dlambda, args.lmin, args.lmax,
+          args.ymin, args.ymax,
           args.dlambda_conc,
           args.op_index, args.op_weight, args.do_abs,
           args.do_time, args.do_density,)

@@ -27,7 +27,7 @@ def get_bins(folders,interfaces,dlambda,lmin=None,lmax=None):
     #bins = np.linspace(-3.6,-2.2,101)
 
 def create_distrib(folders,interfaces,outputfile,do_pdf,
-    dt,dlambda,lmin,lmax,dlambda_conc,
+    dt,dlambda,lmin,lmax,ymin,ymax,dlambda_conc,
     op_index, op_weight, do_abs,
     do_time, do_density):
     """create figure of distributions of order parameter
@@ -236,6 +236,7 @@ def create_distrib(folders,interfaces,outputfile,do_pdf,
             plt.legend()
             plt.xlabel("lambda (dlambda=%.3f)" %dlambda)
             plt.xlim(bins[0],bins[-1])   # always same bins anyways
+            plt.ylim(ymin,ymax)
             if do_time:
                 plt.ylabel("time spent per length")
             elif do_density:
@@ -255,6 +256,7 @@ def create_distrib(folders,interfaces,outputfile,do_pdf,
     plt.legend()
     plt.xlabel("lambda (dlambda=%.3f)" %dlambda)
     plt.xlim(bins[0],bins[-1])   # always same bins anyways
+    plt.ylim(ymin,ymax)
     if do_time:
         plt.ylabel("time spent per length")
     elif do_density:
