@@ -26,8 +26,8 @@ def get_bins(folders,interfaces,dlambda,lmin=None,lmax=None):
     #What I used to have for make_histogram_op:
     #bins = np.linspace(-3.6,-2.2,101)
 
-def create_distrib(folders,interfaces,outputfile,do_pdf,
-    dt,dlambda,lmin,lmax,ymin,ymax,dlambda_conc,
+def create_distrib(folders,interfaces_input,outputfile,do_pdf,
+    dt,dlambda,dlambda_conc,lmin,lmax,ymin,ymax,offset,box,
     op_index, op_weight, do_abs,
     do_time, do_density):
     """create figure of distributions of order parameter
@@ -48,6 +48,10 @@ def create_distrib(folders,interfaces,outputfile,do_pdf,
     if do_pdf:
         extensions += ["pdf"]
 
+    if offset != 0.:
+        interfaces = [interf - offset for interf in interfaces_input]
+    else:
+        interfaces = interfaces_input
     bins = get_bins(folders,interfaces,dlambda,lmin,lmax)
 
     plt.figure(1)
@@ -70,6 +74,9 @@ def create_distrib(folders,interfaces,outputfile,do_pdf,
         lens = op.lengths
         ncycle = op.ncycle   # this is len(flags) = len(lengths)
         weights, ncycle_true = get_weights(flags,ACCFLAGS,REJFLAGS)
+
+        if offset != 0.:
+            trajs = op.longtraj - offset
 
 
         # TODO EXTRA
@@ -156,11 +163,32 @@ def create_distrib(folders,interfaces,outputfile,do_pdf,
         hist = np.zeros(len(bins)-1)
         n_op = len(op_index)
         for i in range(n_op):
-            if op_weight != 0:
-                if do_abs:
-                    histi,edges = np.histogram(abs(op.ops[:,op_index[i]]),bins=bins,weights=w_all*op_weight[i])
+            if op_weight[i] != 0:
+                if op_index[i] == 0: offset1 = offset
+                else: offset1 = 0
+                if box is None:
+                  if do_abs:
+                    histi,edges = np.histogram(abs(op.ops[:,op_index[i]]-offset1),bins=bins,weights=w_all*op_weight[i])
+                  else:
+                    histi,edges = np.histogram(op.ops[:,op_index[i]]-offset1,bins=bins,weights=w_all*op_weight[i])
                 else:
-                    histi,edges = np.histogram(op.ops[:,op_index[i]],bins=bins,weights=w_all*op_weight[i])
+                  # L = high - low
+                  # d = pos-np.floor(pos/L)*L + low
+                  low = box[0]
+                  high = box[1]
+                  L = high-low
+                  if do_abs:
+                    histi,edges = np.histogram(abs(
+                            op.ops[:,op_index[i]]-offset1
+                            - np.floor(op.ops[:,op_index[i]]/L-offset1/L)*L + low
+                            ),
+                            bins=bins,weights=w_all*op_weight[i])
+                  else:
+                    histi,edges = np.histogram(
+                            op.ops[:,op_index[i]]-offset1
+                            - np.floor(op.ops[:,op_index[i]]/L-offset1/L)*L + low
+                            ,
+                            bins=bins,weights=w_all*op_weight[i])
                 hist += histi
         centers = edges[:-1]+np.diff(edges)/2.
         # dlambda = dlambda,edges[1]-edges[0]   I checked this already

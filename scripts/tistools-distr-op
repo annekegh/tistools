@@ -29,6 +29,13 @@ if __name__ == '__main__':
     #parser.add_argument("--dt",dest="dt",default="1.",
     #    type=float,
     #    help = "time between stored order parameters")
+    parser.add_argument("--offset",dest="offset",default="0",
+        type=float,
+        help = "offset by which the lambda parameter is shifted in the positive direction")
+    parser.add_argument("--box",dest="box",nargs=2,default=None,
+        type=float,
+        help = "periodic box (low, high) for the op and the collective variables, default is not periodic")
+
     parser.add_argument("--dlambda",dest="dlambda",default="0.01",
         type=float,
         help = "width of bins in order parameter (lambda) histogram")
@@ -107,10 +114,15 @@ if __name__ == '__main__':
     if args.do_time and args.do_density:
         raise ValueError("--time and --dens cannot be asked for simultaneously")
 
+    if args.box is not None:
+        assert args.box[0] < args.box[1]
+
     create_distrib(folders,interfaces,args.outputfile,args.do_pdf,
-          timestep, args.dlambda, args.lmin, args.lmax,
-          args.ymin, args.ymax,
+          timestep, args.dlambda, 
           args.dlambda_conc,
+          args.lmin, args.lmax,
+          args.ymin, args.ymax,
+          args.offset, args.box,
           args.op_index, args.op_weight, args.do_abs,
           args.do_time, args.do_density,)
 
