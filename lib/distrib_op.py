@@ -273,12 +273,14 @@ def create_distrib(folders,interfaces_input,outputfile,do_pdf,
 
             # save figure for the desired file extensions (png, pdf)
             for ext in extensions:
+                if ext =="pdf": transparent = True
+                else: transparent = False
                 if do_time:
-                    plt.savefig(outputfile+".time.01.%s"%ext)
+                    plt.savefig(outputfile+".time.01.%s"%ext, transparent = transparent)
                 elif do_density:
-                    plt.savefig(outputfile+".dens.01.%s"%ext)
+                    plt.savefig(outputfile+".dens.01.%s"%ext, transparent = transparent)
                 else:
-                    plt.savefig(outputfile+".01.%s"%ext)
+                    plt.savefig(outputfile+".01.%s"%ext, transparent = transparent)
 
     plt.figure(1)
     plt.legend()
@@ -292,13 +294,15 @@ def create_distrib(folders,interfaces_input,outputfile,do_pdf,
     plt.tight_layout()
 
     # save figure for the desired file extensions (png, pdf)
+    if ext =="pdf": transparent = True
+    else: transparent = False
     for ext in extensions:
         if do_time:
-            plt.savefig(outputfile+".time.%s"%ext)
+            plt.savefig(outputfile+".time.%s"%ext, transparent = transparent)
         elif do_density:
-            plt.savefig(outputfile+".dens.%s"%ext)
+            plt.savefig(outputfile+".dens.%s"%ext, transparent = transparent)
         else:
-            plt.savefig(outputfile+".%s"%ext)
+            plt.savefig(outputfile+".%s"%ext, transparent = transparent)
 
 
 def compute_time_in_ensemble(w_all,lens,dt):
