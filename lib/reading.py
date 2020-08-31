@@ -274,6 +274,9 @@ def get_weights(flags,ACCFLAGS,REJFLAGS):
         # I did not store yet the weight of the previous accepted path
         # because I do not have the next accepted path yet
         # so neglect this path, I guess.
+    # at the end: store the last accepted path with its weight
+    weights[acc_index] = acc_w
+    tot_w += acc_w
 
     print("weights:")
     print("accepted     ",accepted)
