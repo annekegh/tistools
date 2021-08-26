@@ -7,7 +7,7 @@ import glob
 import subprocess
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Subsampling the trajectories, using N processors equally.')
+    parser = argparse.ArgumentParser(description='Subsampling a list of trajectories, one by one.')
     parser.add_argument("-f", dest="chunk_fn", default=None,
             help="chunk_fn is the filename where the trajectories to be subsampled are saved.")
     parser.add_argument("-c", dest="cid", default=None,
@@ -37,7 +37,7 @@ if __name__ == '__main__':
     
     for traj in trr_files:
         assert os.path.isfile(traj), 'You want to subsample non-existing trajectory: '+traj
-        traj_temp = traj[:-4]+"_temp.xtc"
+        traj_temp = traj[:-4]+".xtc"
         cmd = ['gmx_mpi', 'trjconv', '-f', traj, '-s', tpr_fn, '-n', ndx_fn, '-dt', dt, '-o', traj_temp]
         inputs=b'0\n'
         return_code = execute_command(cmd,inputs=inputs,fn=cid)
@@ -47,7 +47,6 @@ if __name__ == '__main__':
             assert os.path.isfile(traj)
             assert os.path.isfile(traj_temp)
             os.remove(traj)
-            #os.rename(traj_temp, traj)
-            print("Removed high frequency file, changed it by subsampled file with _temp in fn.")
+            print("Removed high frequency TRR file, changed with low frequency XTC file.")
         else:
             RuntimeError("You should not see me, something went wrong with gmx trjconv, abort deleting files.")
