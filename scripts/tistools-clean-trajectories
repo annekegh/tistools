@@ -1,0 +1,97 @@
+#!/usr/bin/env python
+
+import argparse
+from reading import *
+from cleaner import *
+import os
+import glob
+
+
+ACCFLAGS, REJFLAGS = set_flags_ACC_REJ()
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Remove all trajectories from non-shooting moves, i.e. remove all non-unique trajectories')
+    parser.add_argument("-i", dest="inputfile", default="./retis.rst",
+            help="inputfile is file retis.rst or out.rst, where also the 000/ 001/ ... folders are stored",)
+    parser.add_argument("-o",dest="outputfolder", default="cleanfolder", 
+            help="outputfolder is where the log files will be saved")
+    parser.add_argument("-n",dest="ncleanedfile", default="nclean.txt",
+            help="The amount of cycles that have been cleaned previously")
+    parser.add_argument("-p",dest="procs", default=1,
+            help="The amount of cores to be used for trajectory-subsampling. Choose this amount such that PyRETIS has at least one core left to handle non-GROMACS tasks.")
+
+    args = parser.parse_args()
+    indir, filename = os.path.split(args.inputfile)
+    cleanfn = args.ncleanedfile
+    procs = int(args.procs)
+    outf = args.outputfolder
+
+    if not os.path.isdir(outf):
+        os.mkdir(outf)
+    print("Directory log files: "+outf)
+
+    if len(indir) == 0: indir = "./"
+    print("indir:",indir)
+    print("filename:",filename)
+
+    print("folders:")
+    folders = glob.glob(indir+"/0[0-9][0-9]") #element of list folders: "./001"
+    folders = sorted(folders)
+    for fol in folders:
+        print(fol)
+    assert len(folders)>0
+    
+    # DETERMINE CYCLE RANGE TO CLEAN
+    n_clean = read_from_cleanfn(cleanfn) 
+    max_cycnum = get_max_cycnum_simul(folders)
+
+    assert max_cycnum > n_clean+1, "Max_cycnum is smaller than n_clean+1: \nmax_cycnum: "+str(max_cycnum)+"\nn_clean: "+str(n_clean)
+
+    print("Cycle range to clean: "+str(max_cycnum)+" > cycle >= "+str(n_clean))
+    
+    # defining some filenames for .txt log files
+    rmdirs_fn = outf+"/rmdirs_"+str(n_clean)+"_to_"+str(max_cycnum)+".txt"
+    shdirs_fn = outf+"/shdirs_"+str(n_clean)+"_to_"+str(max_cycnum)+".txt"
+    alldirs_fn = outf+"/alldirs_"+str(n_clean)+"_to_"+str(max_cycnum)+".txt"
+    
+    # and the global logger files
+    log_rmdirs_fn = outf+"/logger_rmdirs.txt"
+    log_shdirs_fn = outf+"/logger_shdirs.txt"
+    log_alldirs_fn = outf+"/logger_alldirs.txt"
+    
+    for el in [log_rmdirs_fn,log_shdirs_fn,log_alldirs_fn]:
+        if not os.isdir(el):
+            os.mdkir(el)
+
+    # SIEVE TRAJECTORIES: SHOOT OR NOT?
+    rmdirs, shdirs, alldirs = sieve_trajectories(folders, n_clean = n_clean, max_cycnum=max_cycnum)
+    
+    # WRITE DIRECTORIES TO TXT
+    write_trajdirs_to_txt(rmdirs, rmdirs_fn)
+    write_trajdirs_to_txt(shdirs, shdirs_fn)
+    write_trajdirs_to_txt(alldirs, alldirs_fn)
+
+    #REMOVE THE NONSHOOT TRAJECTORIES
+    remove_nonshoot_trajectories(rmdirs,outf,stop_on_error=False,donotremove=False)
+    
+    #SUBSAMPLE THE SHOOT TRAJECTORIES
+    shoot_trajectories = collect_trajectories_from_trajdirs(shdirs)
+    ndx_fn = "ext_input/index.ndx"
+    tpr_fn = "ext_input/topol.tpr"
+    dt = 0.2
+    all_went_well = subsample_trajectories(shoot_trajectories, str(dt), ndx_fn, tpr_fn,  procs=procs)
+    
+    if all_went_well:
+        print("Subsampling went well, now moving trajectories")
+        #MOVE ALL TRAJECTORIES TO TIER-2 DATA FOLDER
+        move_dir = "/user/gent/428/vsc42875/vomydata/GPU_RUN_DATA/equilibration_trajectories"
+        move_trajectories(alldirs, move_dir)
+
+        #KEEP TRACK OF GLOBAL CHANGES IN LOG.TXT FILES
+        append_to_txt(shdirs_fn,log_shdirs_fn)
+        append_to_txt(rmdirs_fn,log_rmdirs_fn)
+        append_to_txt(alldirs_fn,log_alldirs_fn)
+        
+        #If all went well, we can remove the temp files, 
+        #and update the cleanfn file
+        write_to_cleanfn(cleanfn, n_clean)
