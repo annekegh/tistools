@@ -153,9 +153,12 @@ def subsample_trajectories(trajectories, dt, ndx_fn, tpr_fn, procs=1):
         all_went_well: - boolean - True if all returncodes are zero.
     """ 
     
+    traj_sizes = get_traj_sizes(trajectories)
+
     print("The amount of processors for subsampling: "+str(procs))
     if procs > 1:
-        chunk_list = split_list(trajectories, procs)
+        #chunk_list = split_list(trajectories, procs)
+        chunk_list = weighted_split_list(trajectories, procs, traj_sizes)
     else:
         chunk_list = [trajectories]
     
@@ -216,8 +219,8 @@ def subsample_trajectories(trajectories, dt, ndx_fn, tpr_fn, procs=1):
             print("ERROR: subsampling chunk "+str(i)+" went BAD.\nCheck the log files in cleanfolder: \nstdout:"+str(i)+"_stdout.txt\nstderr: "+str(i)+"_stderr.txt")
     
     if all_went_well:
-        for f in fn:
-            os.remove(f)
+        for fn in fn_list:
+            os.remove(fn)
 
     return all_went_well
 
@@ -239,8 +242,42 @@ def read_chunk_trr(fn):
 
 def split_list(l,n):
     #split list l with L elements into chunks of size ~ L/n
+    assert n > 1, "Please don't call the split function to split into 1"
     k,m=divmod(len(l),n)
     return [l[i*k+min(i,m):(i+1)*k+min(i+1,m)] for i in range(n)]
+
+def weighted_split_list(l,n,s,verbose=False):
+    """ 
+    split list l with L elements into n chunks, where each chunk
+    has similar total size (bytes). The size of each list element
+    is given by s
+    """
+    assert n > 1, "Please don't cal lthe split function to split into 1"
+    assert len(l) == len(s), "list and weight-list have differnt len: "+str(len(l))+";"+str(len(s))
+
+    #chunks = [[]]*n        # In this notation, all list elements are linked!!!!!!!
+    #chunks_w = [0]*n
+    
+    chunks = [[] for i in range(n)]
+    chunks_w = [0 for i in range(n)]
+
+    for t, tw in zip(l,s):
+        idx = chunks_w.index(min(chunks_w)) # This will give the 'first' min_idx when multiple min exist
+        chunks[idx].append(t)
+        chunks_w[idx] += tw
+    
+    max_weight = max(chunks_w)
+    min_weight = min(chunks_w)
+    
+    if verbose:
+        print("Chunk load, in units min_chunk_weight ["+str(min_weight)+" bytes]\n")
+        for w in chunks_w:
+            print(str(round(w/min_weight,2))+"\t")
+        print("\n")
+    
+    print("Imbalance max_chunk_weight/min_chunk_weight: "+str(round(max_weight/min_weight,2)))
+
+    return chunks
 
 def get_max_cycnum_ensemble(indir,pe_fn="pathensemble.txt"):
     pe = read_pathensemble(indir+"/"+pe_fn)
@@ -394,3 +431,10 @@ def write_trajdirs_to_txt(list_trajdirs, fn):
     with open(fn, "w+") as f:
         for path in list_trajdirs:
             f.write(str(path)+"\n")
+
+def get_traj_sizes(trajectories):
+    """ Returns list of sizes (in bytes) of the trajectories """
+    size_list = []
+    for traj in trajectories:
+        size_list.append(os.path.getsize(traj))
+    return size_list
