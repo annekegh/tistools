@@ -28,19 +28,21 @@ if __name__ == '__main__':
     
     print("Working on chunk: "+str(chunk_fn))
     
-    #First we check whether the gromacs files are correctly located
+    # Check whether the gromacs files are correctly located
     assert os.path.isfile(tpr_fn), "TPR file not found: "+tpr_fn
     assert os.path.isfile(ndx_fn), "NDX file not found: "+ndx_fn
     assert (dt is not None) and (float(dt) > 0.1), "sampling period non-existent or too low: "+dt
 
+    # Load the trajectory paths
     trr_files = read_chunk_trr(chunk_fn)
-    
+
+    # Do the subsampling
     for traj in trr_files:
         assert os.path.isfile(traj), 'You want to subsample non-existing trajectory: '+traj
         traj_temp = traj[:-4]+".xtc"
         cmd = ['gmx_mpi', 'trjconv', '-f', traj, '-s', tpr_fn, '-n', ndx_fn, '-dt', dt, '-o', traj_temp]
         inputs=b'0\n'
-        return_code = execute_command(cmd,inputs=inputs,fn=cid)
+        return_code = execute_command(cmd,inputs=inputs,fn="cleanfolder/"+cid)
         
         if return_code is not None and return_code == 0:
             print("Done subsampling %s", traj)

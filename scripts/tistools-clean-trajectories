@@ -107,4 +107,10 @@ if __name__ == '__main__':
         print("Added progress to global log files")
 
         # UPDATE CLEAN FILE
-        write_to_cleanfn(cleanfn, n_clean)
+        write_to_cleanfn(cleanfn, max_cycnum-1)
+        print("Updated N_clean in "+cleanfn)
+
+        # DONE
+        print("="*5+"Done"+"="*5)
+    else:
+        print("Subsampling went not so well, I either lack the confidence or the audacity to move the trajectories")

@@ -1,3 +1,4 @@
+import tempfile
 import os
 import glob
 from reading import *
@@ -138,21 +139,70 @@ def check_if_ordertxt_is_shoot(trajdir):
     return shootcheck, moveline
 
 def subsample_trajectories(trajectories, dt, ndx_fn, tpr_fn, procs=1):
+    """
+    Spawns procs processes that subsample the listed trajectories.
+    ----
+    INPUT:
+        trajectories: - list of str - list of paths to the trajectory files
+        dt: - float - sampling period
+        ndx_fn: - str - path to the index.ndx file
+        tpr_fn: - str - path to the topol.tpr file (this is gromacs-version dependent (TPX))
+        procs: - int - amount of processes to run in parallel (Do not choose this > free ppns in RETIS simul)
+    
+    OUTPUT: 
+        all_went_well: - boolean - True if all returncodes are zero.
+    """ 
+    
+    print("The amount of processors for subsampling: "+str(procs))
     if procs > 1:
         chunk_list = split_list(trajectories, procs)
     else:
         chunk_list = [trajectories]
+    
+    log_file = "cleanfolder/log_subsampling.txt"
 
     proc_list = []
+    out_list = []
+    err_list = []
+    cid_list = []
+    fn_list = []
 
     for i, chunk_trr in enumerate(chunk_list):
         fn = write_chunk_trr(chunk_trr, str(i))
+        f_out = tempfile.TemporaryFile()
+        f_err = tempfile.TemporaryFile()
         cmd = ["./subsampler_chunk", '-f', fn, '-n', ndx_fn, '-s', tpr_fn, '-t', dt, '-c', str(i)]
-        proc_list.append(subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE))
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=f_out, stderr=f_err, shell=False)
+        proc_list.append(proc)
+        out_list.append(f_out)
+        err_list.append(f_err)
+        cid_list.append(str(i))
+        fn_list.append(fn)
 
-    for proc in proc_list:
-        proc.communicate()
-    
+    with open(log_file, "wb+") as f_log:
+        for proc, f_out, f_err, cid in zip(proc_list,out_list,err_list,cid_list):
+            subline = ("--SUBPROCESS " + cid + " --\n").encode('ascii')
+            outline = ("--OUTPUT " + cid + " --\n").encode('ascii')
+            errline = ("--ERROR " + cid + " --\n").encode('ascii')
+            intline = ("-"*15+"\n").encode('ascii')
+            proc.wait()
+            f_log.write(intline)
+            f_log.write(subline)
+            f_log.write(intline)
+            f_log.write(outline)
+            f_log.write(intline)
+            f_out.seek(0)
+            f_log.write(f_out.read())
+            f_out.close()
+            f_log.write(intline)
+            f_log.write(errline)
+            f_log.write(intline)
+            f_err.seek(0)
+            f_log.write(f_err.read())
+            f_err.close()
+            f_log.write(intline)
+    f_log.close()
+
     return_codes = [None]*procs
     
     all_went_well = True
@@ -163,7 +213,11 @@ def subsample_trajectories(trajectories, dt, ndx_fn, tpr_fn, procs=1):
             print("subsampling chunk "+str(i)+" went well.")
         else:
             all_went_well = False
-            print("subsampling chunk "+str(i)+ "went BAD.")
+            print("ERROR: subsampling chunk "+str(i)+" went BAD.\nCheck the log files in cleanfolder: \nstdout:"+str(i)+"_stdout.txt\nstderr: "+str(i)+"_stderr.txt")
+    
+    if all_went_well:
+        for f in fn:
+            os.remove(f)
 
     return all_went_well
 
@@ -233,12 +287,13 @@ def list_trajectory_folders_lt_maxnum(indir,max_cycnum,pe_fn="pathensemble.txt")
             move_list.append(dirstring)
     return move_list
 
-def move_trajectories(traj_dirs, target_dir,verbose=True):
+def move_trajectories(traj_dirs, target_dir,verbose=False):
     for movedir in traj_dirs:
         temp_target = target_dir+"/"+movedir
         os.system('mkdir -p '+temp_target)
         os.system('mv '+movedir+'/* '+temp_target)
-        print("moved: \nfrom: "+movedir+"\nto: "+temp_target)
+        if verbose:
+            print("moved: \nfrom: "+movedir+"\nto: "+temp_target)
 
 def execute_command(cmd, cwd=None, inputs=None, fn=''):
     """
@@ -251,12 +306,12 @@ def execute_command(cmd, cwd=None, inputs=None, fn=''):
     """
 
     cmd_string = ' '.join(cmd)
-    print("Executing: %s", cmd_string)
+    print("Executing:\n"+cmd_string)
     if inputs is not None:
-        print("With input: %s", inputs)
+        print(("With input: ").encode('ascii')+inputs)
 
     out_fn = fn+'stdout.txt'
-    err_fn = fn+'stdin.txt'
+    err_fn = fn+'stderr.txt'
 
     if cwd: 
         out_fn = os.path.join(cwd, out_fn)
@@ -293,6 +348,7 @@ def execute_command(cmd, cwd=None, inputs=None, fn=''):
         raise RuntimeError(error_message)
 
     if return_code is not None and return_code == 0:
+        print('Command '+str(cmd_string)+' went perfectly fine.')
         os.remove(out_fn)
         os.remove(err_fn)
 
@@ -305,14 +361,15 @@ def collect_trajectories_from_trajdirs(shoot_dirs):
         trajectories += temptraj
     return trajectories
 
-def append_to_txt(source_file, temp_file):
+def append_to_txt(temp_file,source_file):
     with open(source_file, "a+") as f:
         f.write("-"*20)
         f.write("Appending from "+temp_file)
         f.write("-"*20)
+        f.write("\n")
         with open(temp_file, "r") as g:
             for line in g:
-                f.write(g)
+                f.write(line)
         g.close()
     f.close()
 
