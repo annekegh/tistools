@@ -1,0 +1,72 @@
+#!/usr/bin/env python
+
+"""script to plot histograms with/without the correction factor xi
+that is relevant for [0-'] ensemble
+
+AG, June 2, 2020"""
+
+import argparse
+from tistools import read_inputfile
+from tistools import create_distrib_first_crossing
+from tistools import set_flags_ACC_REJ
+import os
+import glob
+
+ACCFLAGS,REJFLAGS = set_flags_ACC_REJ() # Hard-coded rejection flags found in output files
+
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser(description='histograms with/without xi')
+    parser.add_argument("-i",dest="inputfile",default="./retis.rst",
+        help="inputfile is file retis.rst or out.rst, where also the 000/, 001/... folders are stored",
+        )
+    parser.add_argument("-o",dest="outputfile",default="hist",
+        help="outputfile is e.g. hist, which will create files hist.png and hist.01.png",
+        )
+    parser.add_argument("--pdf",dest="do_pdf",default=False, action = "store_true",
+        help = "when chosen, the figures will be stored not only as png but also as pdf")
+
+    #parser.add_argument("--dt",dest="dt",default="1.",
+    #    type=float,
+    #    help = "time between stored order parameters")
+    parser.add_argument("--offset",dest="offset",default="0",
+        type=float,
+        help = "offset by which the lambda parameter is shifted in the positive direction")
+
+# TODO BOX?
+# TODO pdf not implemented yet
+# TODO outputfile not used?
+
+    args = parser.parse_args()
+
+    indir, filename = os.path.split(args.inputfile)
+    if len(indir) == 0: indir = "./"
+    print("indir:",indir)
+    print("filename:",filename)
+    #args_dict = vars(parser.parse_args())
+
+    print("folders")
+    folders = glob.glob(indir+"/0[0-9][0-9]")
+    folders = sorted(folders)
+    #folders = [fol[-3:] for fol in folders]
+    for fol in folders:
+        print(fol)
+    assert len(folders)>0
+
+    interfaces,zero_left,timestep = read_inputfile(args.inputfile)
+    #assert len(interfaces) == len(folders)
+    print("zero_left (can be None):",zero_left)
+    if zero_left is not None:
+        interfaces += [zero_left]
+    print("interfaces")
+    print(interfaces)
+    print("timestep")
+    print(timestep)
+    # Use this timestep as "dt"
+
+
+    create_distrib_first_crossing(folders,interfaces,args.outputfile,
+          args.do_pdf,
+          timestep, args.offset,)
+
