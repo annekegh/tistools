@@ -330,7 +330,7 @@ def read_pathensemble(fn,ostart=0):
 
     """
     data = []
-    with open(fn,"r+") as f:
+    with open(fn,"r") as f:
         lines = f.readlines()
         for line in lines:
             words = line.split()
@@ -400,13 +400,13 @@ def read_order(fn, ostart=0):
     last_length = 0
 
     # check first line
-    with open(fn,"r+") as f:
+    with open(fn,"r") as f:
         line = f.readline()
         if not line.startswith("# Cycle:"):
             print("First line of orderparameter file %s  didn't start with cycle"%fn)
             raise ValueError("something wrong")
 
-    with open(fn,'r') as f:        # read this file
+    with open(fn,"r") as f:        # read this file
         for i, line in enumerate(f):
             #if i > ostart:   # NOOOOOO  # TODO
 
@@ -458,7 +458,7 @@ def read_order(fn, ostart=0):
                 # collect all order parameters: words[1:]
                 if len(words[1:])>1: data.append([float(word) for word in words[1:]])  # skip the time
                 else:
-                    data.append(float(words[1]))  # this is a stupied copy of longtraj
+                    data.append(float(words[1]))  # this is a stupid copy of longtraj
 
     # finish the last trajectory when done with reading
 
