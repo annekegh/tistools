@@ -307,6 +307,9 @@ def calc_xi(lmrs,weights):
 
     xi = (# paths) / (# paths that end at R)
     """
+    print("Doing xi....")
+    print("lmrs",len(lmrs))
+    print("weights",np.sum(weights))
     n_lml = np.sum((lmrs=="LML")*weights)
     n_rml = np.sum((lmrs=="RML")*weights)
     n_lmr = np.sum((lmrs=="LMR")*weights)
@@ -315,7 +318,8 @@ def calc_xi(lmrs,weights):
     n_rstarl = np.sum((lmrs=="R*L")*weights)
     n_lstarr = np.sum((lmrs=="L*R")*weights)
     n_rstarr = np.sum((lmrs=="R*R")*weights)
-    n_ends_l = n_lml + n_rml + n_lstarl + n_rstarl
+    n_lstarstar = np.sum((lmrs=="L**")*weights)
+    n_ends_l = n_lml + n_rml + n_lstarl + n_rstarl + n_lstarstar   # TODO needed indeed??? checking with Sander/Titus
     n_ends_r = n_lmr + n_rmr + n_lstarr + n_rstarr
     n_all = np.sum(weights)
     assert n_all == n_ends_r + n_ends_l
@@ -336,10 +340,12 @@ def calc_xi(lmrs,weights):
 def print_lmr_000(lmrs,weights):
     """print the codes of 000, such as LML and RML"""
     print("count paths in 000")
-    for code in ["LML","LMR","L*R","L*L","RMR","RML","R*R","R*L"]:
+    for code in ["LML","LMR","L*R","L*L","RMR","RML","R*R","R*L"] + ["L**","R**","**L","**R","RM*","LM*","*MR","*ML","*M*"]:
         n = np.sum(lmrs==code)
         nw = np.sum((lmrs==code)*weights)
         print(code,n,nw)
+    #for i in range(len(lmrs)):
+    #    if lmrs[i]=="L**": print(i,lmrs[i],weights[i])
 
 
 def print_concentration_lambda0(ncycle,trajs,cut,dlambda,dt,w_all,xi):
