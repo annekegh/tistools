@@ -438,7 +438,8 @@ def read_inputfile(filename):
         for line in f:
             if "timestep" in line and "=" in line and not line.strip().startswith("#"):
                 parts = line.split("=")
-                timestep = float(parts[1])
+                parts = parts[1].split("#")   # cut off comments if that is still there
+                timestep = float(parts[0])
                 break
 
     return interfaces,zero_left,timestep
