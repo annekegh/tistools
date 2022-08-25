@@ -1,7 +1,7 @@
 import tempfile
 import os
 import glob
-from reading import *
+from .reading import *
 import subprocess
 
 def cleaner(fn_i,fn_o,overwrite=False):

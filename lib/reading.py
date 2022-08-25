@@ -8,6 +8,7 @@ def set_flags_ACC_REJ():
     REJFLAGS += ['BTS','KOB','FTS','EWI','SWI']
     REJFLAGS += ['MCR']
     REJFLAGS += ['TSS','TSA']
+    REJFLAGS += ['HAS','CSA','NSG']
     """
          MCR': 'Momenta change rejection',
         'BWI': 'Backward trajectory end at wrong interface',
@@ -20,9 +21,12 @@ def set_flags_ACC_REJ():
         'FTS': 'Forward trajectory too short',
         'NCR': 'No crossing with middle interface',
         'EWI': 'Initial path ends at wrong interface',
-        'SWI': 'Initial path starts at wrong interface'
-        'TSS' = No valid indices to select for swapping
-        'TSA'= Rejection due to the target swap acceptance criterium.
+        'SWI': 'Initial path starts at wrong interface',
+        'TSS': 'No valid indices to select for swapping',
+        'TSA': 'Rejection due to the target swap acceptance criterium',
+        'HAS': 'High acceptance swap rejection for SS/CS detailed balance',
+        'CSA': 'Common Sense super detailed balance rejection',
+        'NSG': 'Path has no suitable segments'.
     """
 
     ACCFLAGS = ['ACC',]
@@ -58,6 +62,27 @@ class PathEnsemble(object):
         self.ncycle     = len(self.lengths)
         self.totaltime  = np.sum(self.lengths)
         # consistency is automatic
+
+        self.weights = []
+        self.shootlinks = np.full_like(self.cyclenumbers,None,dtype=object)
+
+    def set_weights(self, weights):
+        self.weights=weights
+
+    def update_shootlink(self,cycnum,link):
+        cycnumlist = (self.cyclenumbers).tolist()
+        cyc_idx = cycnumlist.index(cycnum)
+        self.shootlinks[cyc_idx] = link
+    
+    def get_shootlink(self, cycnum):
+        cycnumlist = (self.cyclenumbers).tolist()
+        cyc_idx = cycnumlist.index(cycnum)
+        return self.shootlinks[cyc_idx]
+
+    def save_pe(self, fn):
+        import pickle 
+        with open("pe_"+fn+".pkl", 'wb') as g:
+            pickle.dump(pe, g, pickle.HIGHEST_PROTOCOL)
 
 class OrderParameter(object):
 
@@ -207,8 +232,7 @@ def read_order(fn,ostart=0):
                 # assume just 1 op: words[1]
                 longtraj.append(float(words[1]))
                 # collect all order parameters: words[1:]
-                if len(words[1:])>1:
-                    data.append([float(word) for word in words[1:]])  # skip the time
+                if len(words[1:])>1: data.append([float(word) for word in words[1:]])  # skip the time
                 else:
                     data.append(float(words[1]))  # this is a stupied copy of longtraj
 
@@ -442,4 +466,121 @@ def read_inputfile(filename):
                 break
 
     return interfaces,zero_left,timestep
+
+
+
+########################################
+def get_shoot_weights():
+    """
+    Get the weights of the paths as a function of the shoottrajectories only.
+    """
+    # We will do this in two steps:
+    # 1) List the trajectories per ensemble, with correct weights.
+    # 2) Swap moves require us to allocate the correct trajectory file.
+
+    ### 1) Get the pathensemble weights, put them in a list. 
+    pes = get_pes()
+
+    ### 2) Non-shoot moves need their original shoot-path link
+    linked_pes = link_pes(pes)
+########################################
+
+
+def get_shoot_weights_phase_1(pe):
+    """
+    Notes: we are not interested in load traj. So search for first accepted sh traj
+    and start from there.
+    You will have a problem in 000 and last ensemble, who don't have paths for all
+    of the cycle numbers...
+    """
+    ACCFLAGS, REJFLAGS = set_flags_ACC_REJ()
+
+    weights = np.zeros(len(pe.flags),int)
+    weights[0] = 1 # Load path is accepted
+    last_acc_cycnum = 0
+    for i,flag in enumerate(pe.flags):
+        if flag in REJFLAGS:
+            weights[last_acc_cycnum] += 1
+        else:
+            weights[i] = 1
+            last_acc_cycnum = i
+    return weights
+
+def get_shoot_weights_phase_2(pes,folders):
+    ACCFLAGS, REJFLAGS = set_flags_ACC_REJ()
+    
+    # Here, for each cycle, we will note the link to the defining shoot-trajectory.
+    # For rejected trajectories, NoneType will be found
+    sh_src_folders = []
+    
+    for ens_idx, pe in enumerate(pes):
+        print("working in pe number", ens_idx)
+        cycindices = np.arange(len(pe.cyclenumbers))
+        for cycidx, cycnum, flag, generation in zip(cycindices, pe.cyclenumbers, pe.flags,
+                pe.generation):
+            print("working on cycidx "+str(cycidx)+", which is cycnum "+str(cycnum))
+            if flag in ACCFLAGS:
+                if generation == "ld":
+                    sh_src = "loadtraj"
+                elif generation == "sh":
+                    sh_src = folders[ens_idx]+"/traj/traj-acc/"+str(cycnum)+"/"
+                else:
+                    sh_src = find_sh_src(ens_idx, cycnum, generation, pes, folders)
+                sh_src_folders.append(sh_src)
+            else:
+                assert flag in REJFLAGS
+                sh_src = None
+                sh_src_folders.append(sh_src)
+            pe.update_shootlink(cycnum, sh_src)
+
+            if flag in ACCFLAGS:
+                assert sh_src is not None, "ACC, but no sh_src found?? cycnum: "+str(cycnum)+"gen: "+str(generation)
+
+
+def find_sh_src(ens_idx, cycnum, generation, pes, folders):
+    """ Recursive function to find the accepted shoot trajectory from which 
+    the accepted non-shoot trajectory stems """
+    target_ens_idx = None
+    if generation == "tr":
+        target_ens_idx = ens_idx
+    elif generation == "s-":
+        target_ens_idx = ens_idx - 1
+        #print("I actually find this thing")
+    elif generation == "s+": 
+        target_ens_idx = ens_idx + 1
+        #print("Also this one I actually find")
+    elif generation == "ld":
+        print("We should not see a load trajectory in this function")
+    else:
+        print("Euhm, weird generation: ", generation)
+    assert target_ens_idx is not None
+
+    prev_ACC_idx = find_prev_ACC_cyc_idx(cycnum, pes[target_ens_idx])
+    # First we check whether this trajectory is already been linked to a shoot traj,
+    # in this case we need not look further. Otherwise, we do look further.
+    if pes[target_ens_idx].get_shootlink(pes[target_ens_idx].cyclenumbers[prev_ACC_idx]) is not None:
+        return pes[target_ens_idx].get_shootlink(pes[target_ens_idx].cyclenumbers[prev_ACC_idx])
+    else:
+        if (pes[target_ens_idx]).generation[prev_ACC_idx] == "sh":
+            testme = folders[target_ens_idx]+"/traj/traj-acc/"+str((pes[target_ens_idx]).cyclenumbers[prev_ACC_idx])+"/"
+            return testme
+        else: # RECURSIVE FUNCTION REQUIRES A RETURN STATEMENT AAAAAH
+            return find_sh_src(target_ens_idx, (pes[target_ens_idx]).cyclenumbers[prev_ACC_idx],
+                (pes[target_ens_idx]).generation[prev_ACC_idx], pes, folders)
+
+def find_prev_ACC_cyc_idx(target_cycnum, pe):
+    ACCFLAGS, REJFLAGS = set_flags_ACC_REJ()
+    cycnums = pe.cyclenumbers
+    # I used to have x > target_cycnum, but gives err for last idx.
+    # No now i take >=, and then give text_idx + 1 to start with ...
+    first_larger_cyc_idx = list(x >= target_cycnum for x in cycnums).index(True)
+    test_idx = first_larger_cyc_idx+1
+    found = False
+    while not found:
+        test_idx -= 1
+        if pe.flags[test_idx] in ACCFLAGS and cycnums[test_idx] < target_cycnum:
+            found = True
+    # We assume we find an accepted path ...
+    #print("test_idx_found "+str(test_idx)+ " with cycnum "+str(cycnums[test_idx]))
+    return test_idx
 
