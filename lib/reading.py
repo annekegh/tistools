@@ -65,6 +65,10 @@ class PathEnsemble(object):
 
         self.weights = []
         self.shootlinks = np.full_like(self.cyclenumbers,None,dtype=object)
+        self.name = ""
+
+    def set_name(self, name):
+        self.name = name
 
     def set_weights(self, weights):
         self.weights=weights
@@ -144,6 +148,14 @@ def read_pathensemble(fn,ostart=0):
             #      data[8]
 
     pe = PathEnsemble(data)
+
+    try: 
+        pe_name = fn.split("/")[0] 
+    except: 
+        pe_name = fn
+    finally: 
+        pe.set_name(pe_name)
+
     return pe
 
 
