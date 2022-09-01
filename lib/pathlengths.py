@@ -126,6 +126,9 @@ def plot_pathlength_distributions_separately(pe, nbins = 50, save=True, dpi=500,
     for mask, maskname in zip(masks,mask_names):
         pl_mask = select_with_masks(pl, [mask, flag_mask])
         w_mask = select_with_masks(w, [mask, flag_mask])
+        # If we want to plot rejected paths, we give all paths unit weight...
+        if status is not "ACC":
+            w_mask = np.ones_like(w_mask)
         plot_pathlength_distribution(pl_mask, w_mask, ncycle_flag, maskname, \
             name=pe.name, nbins=nbins, save=save, dpi=dpi, do_pdf=do_pdf, fn=fn, status = status)
 
@@ -135,11 +138,11 @@ def plot_pathlength_distribution(pl, w, ncycle, maskname, nbins=50, \
     ncycle_mask = len(w)
     hist, bin_centers = get_pathlength_distribution(pl, w, nbins)
     fig,ax = plt.subplots()
-    ax.plot(bin_centers, hist)
+    ax.bar(bin_centers, hist, width=bin_centers[-1]/nbins)
     ax.set_xlabel("Pathlength")
     ax.set_ylabel("Counts")
-    ax.set_title("Pathlength distribution for {} ensemble ({} of {} paths with mask {})"\
-        .format(name, ncycle_mask, ncycle, maskname))
+    ax.set_title("Pathlength distribution for {} ensemble\n({} of {} paths with status {}) [w = {}]"\
+        .format(name, ncycle_mask, ncycle, maskname,str(np.sum(hist))))
     fig.tight_layout()
     if save:
         fig.savefig(fn+"pathlength_distribution_{}_{}_{}.png".format(name, maskname, status), dpi=dpi)
@@ -174,25 +177,28 @@ def plot_pathlength_distributions_together(pe, nbins = 50, save=True, dpi=500, d
     # get the lmr masks
     masks, mask_names = get_lmr_masks(pe)
     # Plot the pathlength distributions for the different masks
-    fig,ax = plt.subplots(nrows=4, ncols=4, figsize=(10,10))
+    fig,ax = plt.subplots(nrows=4, ncols=4, figsize=(12,12))
     i = 0
     for mask, maskname in zip(masks,mask_names):
         pl_mask = select_with_masks(pl, [mask, flagmask])
         w_mask = select_with_masks(w, [mask, flagmask])
+        # If we want to plot rejected paths, we give all paths unit weight...
+        if status is not "ACC":
+            w_mask = np.ones_like(w_mask)
         ncycle_mask = len(w_mask)
         hist, bin_centers = get_pathlength_distribution(pl_mask, w_mask, nbins)
-        ax[i//4,i%4].plot(bin_centers, hist)
+        ax[i//4,i%4].bar(bin_centers, hist, width=bin_centers[-1]/nbins)
         ax[i//4,i%4].set_xlabel("Pathlength")
         ax[i//4,i%4].set_ylabel("Counts")
-        ax[i//4,i%4].set_title("{} of {} paths\n with mask {}"\
-            .format(ncycle_mask, ncycle_flag, maskname))
+        ax[i//4,i%4].set_title("{} of {} paths\n status {} [w = {}]"\
+            .format(ncycle_mask, ncycle_flag, maskname,str(np.sum(hist))))
         i+=1
     if status == "ACC":
         fig.suptitle("Pathlength distributions for {} ensemble, with {} {} paths of {} total."\
-            .format(pe.name, ncycle_flag, status, ncycle_true))
+            .format(pe.name, ncycle_flag, status, ncycle_true),fontsize=16)
     else:
         fig.suptitle("Pathlength distributions for {} paths, with {} {} paths of {} total."\
-            .format(pe.name, ncycle_flag, status, ncycle_true))
+            .format(pe.name, ncycle_flag, status, ncycle_true),fontsize=16)
     fig.tight_layout()
     if save:
         fig.savefig(fn+"pathlength_distribution_{}_{}.png".format(pe.name, status), dpi=dpi)
