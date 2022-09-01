@@ -75,6 +75,13 @@ def get_acc_mask(pe):
     acc = pe.flags == "ACC"
     return acc
 
+def get_flag_mask(pe, status):
+    """
+    Returns boolean array
+    """
+    flagmask = pe.flags == status 
+    return flagmask
+
 
 def select_with_masks(A, masks):
     """
@@ -96,7 +103,7 @@ def select_with_masks(A, masks):
     return A[union_mask]
 
 def plot_pathlength_distributions_separately(pe, nbins = 50, save=True, dpi=500,\
-     do_pdf = False, fn = ""):
+     do_pdf = False, fn = "", status = "ACC"):
     """
     Plots the pathlength distributions for the given path ensemble.
     """
@@ -105,19 +112,25 @@ def plot_pathlength_distributions_separately(pe, nbins = 50, save=True, dpi=500,
     # get weights of the paths
     w, ncycle_true = get_weights(pe.flags, ACCFLAGS, REJFLAGS)
     # get acc mask
-    accmask = get_acc_mask(pe)
-    ncycle_acc = np.sum(accmask)
+    assert (status == "ACC") or (status == "REJ") or (status in REJFLAGS)
+    if status == "ACC":
+        flag_mask = get_acc_mask(pe)
+    elif status == "REJ":
+        flag_mask = ~get_acc_mask(pe)
+    else:
+        flag_mask = get_flag_mask(pe, status)
+    ncycle_flag = np.sum(flag_mask)
     # get the lmr masks
     masks, mask_names = get_lmr_masks(pe)
     # Plot the pathlength distributions for the different masks
     for mask, maskname in zip(masks,mask_names):
-        pl_mask = select_with_masks(pl, [mask, accmask])
-        w_mask = select_with_masks(w, [mask, accmask])
-        plot_pathlength_distribution(pl_mask, w_mask, ncycle_acc, maskname, \
-            name=pe.name, nbins=nbins, save=save, dpi=dpi, do_pdf=do_pdf, fn=fn)
+        pl_mask = select_with_masks(pl, [mask, flag_mask])
+        w_mask = select_with_masks(w, [mask, flag_mask])
+        plot_pathlength_distribution(pl_mask, w_mask, ncycle_flag, maskname, \
+            name=pe.name, nbins=nbins, save=save, dpi=dpi, do_pdf=do_pdf, fn=fn, status = status)
 
 def plot_pathlength_distribution(pl, w, ncycle, maskname, nbins=50, \
-    name="", save=True, dpi=500, do_pdf=False, fn=""):
+    name="", save=True, dpi=500, do_pdf=False, fn="", status = "ACC"):
     import matplotlib.pyplot as plt
     ncycle_mask = len(w)
     hist, bin_centers = get_pathlength_distribution(pl, w, nbins)
@@ -129,9 +142,9 @@ def plot_pathlength_distribution(pl, w, ncycle, maskname, nbins=50, \
         .format(name, ncycle_mask, ncycle, maskname))
     fig.tight_layout()
     if save:
-        fig.savefig(fn+"pathlength_distribution_{}_{}.png".format(name, maskname), dpi=dpi)
+        fig.savefig(fn+"pathlength_distribution_{}_{}_{}.png".format(name, maskname, status), dpi=dpi)
         if do_pdf:
-            fig.savefig(fn+"pathlength_distribution_{}_{}.pdf".format(name, maskname))
+            fig.savefig(fn+"pathlength_distribution_{}_{}_{}.pdf".format(name, maskname, status))
     else:
         fig.show()
 
@@ -140,7 +153,7 @@ def get_pathlength_distribution(pl, w, nbins=50):
     bin_centers = (bin_edges[1:] + bin_edges[:-1])/2
     return hist, bin_centers
 
-def plot_pathlength_distributions_together(pe, nbins = 50, save=True, dpi=500, do_pdf=False, fn=""):
+def plot_pathlength_distributions_together(pe, nbins = 50, save=True, dpi=500, do_pdf=False, fn="", status = "ACC"):
     """
     Plots the pathlength distributions for the given path ensemble.
     """
@@ -150,43 +163,55 @@ def plot_pathlength_distributions_together(pe, nbins = 50, save=True, dpi=500, d
     # get weights of the paths
     w, ncycle_true = get_weights(pe.flags, ACCFLAGS, REJFLAGS)
     # get acc mask
-    accmask = get_acc_mask(pe)
-    ncycle_acc = np.sum(accmask)
+    assert (status == "ACC") or (status == "REJ") or (status in REJFLAGS)
+    if status == "ACC":
+        flagmask = get_acc_mask(pe)
+    if status == "REJ":
+        flagmask = ~get_acc_mask(pe)
+    else: 
+        flagmask = get_flag_mask(pe, status)
+    ncycle_flag = np.sum(flagmask)
     # get the lmr masks
     masks, mask_names = get_lmr_masks(pe)
     # Plot the pathlength distributions for the different masks
     fig,ax = plt.subplots(nrows=4, ncols=4, figsize=(10,10))
     i = 0
     for mask, maskname in zip(masks,mask_names):
-        pl_mask = select_with_masks(pl, [mask, accmask])
-        w_mask = select_with_masks(w, [mask, accmask])
+        pl_mask = select_with_masks(pl, [mask, flagmask])
+        w_mask = select_with_masks(w, [mask, flagmask])
         ncycle_mask = len(w_mask)
         hist, bin_centers = get_pathlength_distribution(pl_mask, w_mask, nbins)
         ax[i//4,i%4].plot(bin_centers, hist)
         ax[i//4,i%4].set_xlabel("Pathlength")
         ax[i//4,i%4].set_ylabel("Counts")
         ax[i//4,i%4].set_title("{} of {} paths\n with mask {}"\
-            .format(ncycle_mask, ncycle_acc, maskname))
+            .format(ncycle_mask, ncycle_flag, maskname))
         i+=1
-    fig.suptitle("Pathlength distributions for {} ensemble, with {} ACC paths of {} total."\
-        .format(pe.name, ncycle_acc, ncycle_true))
+    if status == "ACC":
+        fig.suptitle("Pathlength distributions for {} ensemble, with {} {} paths of {} total."\
+            .format(pe.name, ncycle_flag, status, ncycle_true))
+    else:
+        fig.suptitle("Pathlength distributions for {} paths, with {} {} paths of {} total."\
+            .format(pe.name, ncycle_flag, status, ncycle_true))
     fig.tight_layout()
     if save:
-        fig.savefig(fn+"pathlength_distribution_{}.png".format(pe.name), dpi=dpi)
+        fig.savefig(fn+"pathlength_distribution_{}_{}.png".format(pe.name, status), dpi=dpi)
         if do_pdf:
-            fig.savefig(fn+"pathlength_distribution_{}.pdf".format(pe.name))
+            fig.savefig(fn+"pathlength_distribution_{}_{}.pdf".format(pe.name, status))
     else:
         fig.show()
 
 
 def create_pathlength_distributions(pathensembles, nbins=50, save=True, dpi=500, do_pdf=False, \
-    fn="",plot_separately=False):
+    fn="",plot_separately=False, status = "ACC"):
     """
     Creates the pathlength distributions for the given path ensembles.
     """
     print(pathensembles)
     for pe in pathensembles:
         if plot_separately:
-            plot_pathlength_distributions_separately(pe, nbins=nbins, save=save, dpi=dpi, do_pdf=do_pdf, fn=fn)
-        plot_pathlength_distributions_together(pe, nbins=nbins, save=save, dpi=dpi, do_pdf=do_pdf, fn=fn)
+            plot_pathlength_distributions_separately(pe, nbins=nbins, save=save, dpi=dpi,\
+                 do_pdf=do_pdf, fn=fn, status=status)
+        plot_pathlength_distributions_together(pe, nbins=nbins, save=save, dpi=dpi,\
+             do_pdf=do_pdf, fn=fn, status=status)
     
