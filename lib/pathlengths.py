@@ -103,7 +103,7 @@ def select_with_masks(A, masks):
     return A[union_mask]
 
 def plot_pathlength_distributions_separately(pe, nbins = 50, save=True, dpi=500,\
-     do_pdf = False, fn = "", status = "ACC", force_bins = False):
+     do_pdf = False, fn = "", status = "ACC", force_bins = False, xmin = 0):
     """
     Plots the pathlength distributions for the given path ensemble.
     """
@@ -145,20 +145,22 @@ def plot_pathlength_distributions_separately(pe, nbins = 50, save=True, dpi=500,
         if status != "ACC":
             w_mask = np.ones_like(w_mask)
         plot_pathlength_distribution(pl_mask, w_mask, ncycle_flag, maskname, \
-            name=pe.name, nbins=nbins_use, save=save, dpi=dpi, do_pdf=do_pdf, fn=fn, status = status)
+            name=pe.name, nbins=nbins_use, save=save, dpi=dpi, do_pdf=do_pdf, \
+            fn=fn, status = status, xmin = xmin)
 
 def plot_pathlength_distribution(pl, w, ncycle, maskname, nbins=50, \
-    name="", save=True, dpi=500, do_pdf=False, fn="", status = "ACC"):
+    name="", save=True, dpi=500, do_pdf=False, fn="", status = "ACC", xmin = 0):
     import matplotlib.pyplot as plt
     ncycle_mask = len(w)
     hist, bin_centers = get_pathlength_distribution(pl, w, nbins)
     fig,ax = plt.subplots()
     ax.bar(bin_centers, hist, width=bin_centers[-1]/nbins)
-    ax.set_xlabel("Pathlength ({} bins with width = {})".format(nbins, \
+    ax.set_xlabel("Pathlength ({} bins, bwidth = {})".format(nbins, \
         np.round(bin_centers[-1]/nbins,2)))
     ax.set_ylabel("Counts")
     ax.set_title("Pathlength distribution for {} ensemble\n({} of {} paths with status {}) [w = {}]"\
         .format(name, ncycle_mask, ncycle, maskname,str(np.sum(hist))))
+    ax.set_xlim(left=xmin)
     fig.tight_layout()
     if save:
         fig.savefig(fn+"pathlength_distribution_{}_{}_{}.png".format(name, maskname, status), dpi=dpi)
@@ -173,7 +175,7 @@ def get_pathlength_distribution(pl, w, nbins=50):
     return hist, bin_centers
 
 def plot_pathlength_distributions_together(pe, nbins = 50, save=True, dpi=500, do_pdf=False, fn="",\
-     status = "ACC", force_bins=False):
+     status = "ACC", force_bins=False, xmin = 0):
     """
     Plots the pathlength distributions for the given path ensemble.
     """
@@ -217,12 +219,13 @@ def plot_pathlength_distributions_together(pe, nbins = 50, save=True, dpi=500, d
         ncycle_mask = len(w_mask)
         hist, bin_centers = get_pathlength_distribution(pl_mask, w_mask, nbins_use)
         ax[i//4,i%4].bar(bin_centers, hist, width=bin_centers[-1]/nbins_use)
-        ax[i//4,i%4].set_xlabel("Pathlength ({} bins with width = {})".format(nbins_use,\
+        ax[i//4,i%4].set_xlabel("Pathlength ({} bins, bwidth = {})".format(nbins_use,\
              np.round(bin_centers[-1]/nbins_use, 2)))
         ax[i//4,i%4].set_ylabel("Counts")
         ax[i//4,i%4].set_title("{} of {} paths\n status {} [w = {}]"\
             .format(ncycle_mask, ncycle_flag, maskname,str(np.sum(hist))))
-        i+=1
+        ax[i//4,i%4].set_xlim(left=xmin)
+        i += 1
     if status == "ACC":
         fig.suptitle("Pathlength distributions for {} ensemble, with {} {} paths of {} total."\
             .format(pe.name, ncycle_flag, status, ncycle_true),fontsize=16)
@@ -239,7 +242,7 @@ def plot_pathlength_distributions_together(pe, nbins = 50, save=True, dpi=500, d
 
 
 def create_pathlength_distributions(pathensembles, nbins=50, save=True, dpi=500, do_pdf=False, \
-    fn="",plot_separately=False, status = "ACC", force_bins=False):
+    fn="",plot_separately=False, status = "ACC", force_bins=False, xmin=0):
     """
     Creates the pathlength distributions for the given path ensembles.
     """
@@ -247,7 +250,7 @@ def create_pathlength_distributions(pathensembles, nbins=50, save=True, dpi=500,
     for pe in pathensembles:
         if plot_separately:
             plot_pathlength_distributions_separately(pe, nbins=nbins, save=save, dpi=dpi,\
-                 do_pdf=do_pdf, fn=fn, status=status, force_bins=force_bins)
+                 do_pdf=do_pdf, fn=fn, status=status, force_bins=force_bins, xmin=xmin)
         plot_pathlength_distributions_together(pe, nbins=nbins, save=save, dpi=dpi,\
-             do_pdf=do_pdf, fn=fn, status=status, force_bins=force_bins)
+             do_pdf=do_pdf, fn=fn, status=status, force_bins=force_bins, xmin=xmin)
     

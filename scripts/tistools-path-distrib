@@ -26,11 +26,11 @@ if __name__ == '__main__':
             prefix_...pe00.png and prefix_...pe01.png",)
     parser.add_argument("--pdf",dest="do_pdf",default=False, action = "store_true",
         help = "when chosen, the figures will be stored not only as png but also as pdf")
-    parser.add_argument("--nbins",dest="nbins",default=100,
+    parser.add_argument("--nbins",dest="nbins",default=50,
         type=int,help="Amount of bins used in the histrograms.")
     parser.add_argument("--dpi",dest="dpi",default=500,
         type=int,help="DPI of the created figures.")
-    parser.add_argument("--lmin",dest="lmin",default=None,
+    parser.add_argument("--lmin",dest="lmin",default=0,
         type=float,
         help = "left of the pathlength histogram")
     parser.add_argument("--lmax",dest="lmax",default=None,
@@ -48,6 +48,9 @@ if __name__ == '__main__':
         help="if given, distributions are NOT saved as png")
     parser.add_argument("--flag",dest="flag",default="ACC",help="status flag (ACC, REJ, NCR, FTL...) for which \
         the pathlength distribution is plotted")
+    parser.add_argument("--force-bins", dest="force_bins", default=False, action="store_true",\
+        help="True: If the max pathlength is smaller than the chosen nbins, \
+            the nbins is set to the max pathlength")
 
     args = parser.parse_args()
 
@@ -74,5 +77,6 @@ if __name__ == '__main__':
         pathensembles.append(pe)
     assert len(folders)>0
 
-    create_pathlength_distributions(pathensembles, nbins=args.nbins, save=args.save_png, dpi=args.dpi, do_pdf=args.do_pdf, \
-    fn=args.outfn,plot_separately=args.separate_plot, status=args.flag)
+    create_pathlength_distributions(pathensembles, nbins=args.nbins, save=args.save_png, dpi=args.dpi, \
+        do_pdf=args.do_pdf, fn=args.outfn,plot_separately=args.separate_plot, status=args.flag, \
+        force_bins = args.force_bins, xmin=args.lmin)
