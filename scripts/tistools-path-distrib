@@ -46,11 +46,15 @@ if __name__ == '__main__':
         help="if True, the pathlength distribution of each ensemble is plotted separately")
     parser.add_argument("--nosave",dest="save_png", default=True, action="store_false",
         help="if given, distributions are NOT saved as png")
+    parser.add_argument("--flag",dest="flag",default="ACC",help="status flag (ACC, REJ, NCR, FTL...) for which \
+        the pathlength distribution is plotted")
 
     args = parser.parse_args()
 
     print("arguments: ")
     print(args)
+
+    assert args.flag in ACCFLAGS+REJFLAGS+["REJ"], "flag must be one of %s" % (ACCFLAGS+REJFLAGS+["REJ"])
 
     indir, filename = os.path.split(args.inputfile)
     if len(indir) == 0: indir = "./"
@@ -71,4 +75,4 @@ if __name__ == '__main__':
     assert len(folders)>0
 
     create_pathlength_distributions(pathensembles, nbins=args.nbins, save=args.save_png, dpi=args.dpi, do_pdf=args.do_pdf, \
-    fn=args.outfn,plot_separately=args.separate_plot)
+    fn=args.outfn,plot_separately=args.separate_plot, status=args.flag)
