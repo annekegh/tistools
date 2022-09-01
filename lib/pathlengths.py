@@ -103,7 +103,7 @@ def select_with_masks(A, masks):
     return A[union_mask]
 
 def plot_pathlength_distributions_separately(pe, nbins = 50, save=True, dpi=500,\
-     do_pdf = False, fn = "", status = "ACC"):
+     do_pdf = False, fn = "", status = "ACC", force_bins = False):
     """
     Plots the pathlength distributions for the given path ensemble.
     """
@@ -126,11 +126,26 @@ def plot_pathlength_distributions_separately(pe, nbins = 50, save=True, dpi=500,
     for mask, maskname in zip(masks,mask_names):
         pl_mask = select_with_masks(pl, [mask, flag_mask])
         w_mask = select_with_masks(w, [mask, flag_mask])
-        # If we want to plot rejected paths, we give all paths unit weight...
-        if status is not "ACC":
+    
+        if pl_mask.tolist(): # If there are any paths in the mask, we check for better binsize
+            if nbins > np.max(pl_mask):
+                if force_bins == False:
+                    print('\n'.join(("The amount of bins is larger than the maximum pathlength in the mask.",\
+                    "Setting nbins to {}".format(np.max(pl_mask)))))
+                    nbins_use = np.max(pl_mask)
+                else:
+                    print('\n'.join(("The amount of bins is larger than the maximum pathlength in the mask.",\
+                    "set force_bins=False to allow for variable bin sizes")))
+                    nbins_use = nbins
+            else:
+                nbins_use = nbins
+        else:
+            nbins_use = nbins
+            # If we want to plot rejected paths, we give all paths unit weight...
+        if status != "ACC":
             w_mask = np.ones_like(w_mask)
         plot_pathlength_distribution(pl_mask, w_mask, ncycle_flag, maskname, \
-            name=pe.name, nbins=nbins, save=save, dpi=dpi, do_pdf=do_pdf, fn=fn, status = status)
+            name=pe.name, nbins=nbins_use, save=save, dpi=dpi, do_pdf=do_pdf, fn=fn, status = status)
 
 def plot_pathlength_distribution(pl, w, ncycle, maskname, nbins=50, \
     name="", save=True, dpi=500, do_pdf=False, fn="", status = "ACC"):
@@ -139,7 +154,8 @@ def plot_pathlength_distribution(pl, w, ncycle, maskname, nbins=50, \
     hist, bin_centers = get_pathlength_distribution(pl, w, nbins)
     fig,ax = plt.subplots()
     ax.bar(bin_centers, hist, width=bin_centers[-1]/nbins)
-    ax.set_xlabel("Pathlength")
+    ax.set_xlabel("Pathlength ({} bins with width = {})".format(nbins, \
+        np.round(bin_centers[-1]/nbins,2)))
     ax.set_ylabel("Counts")
     ax.set_title("Pathlength distribution for {} ensemble\n({} of {} paths with status {}) [w = {}]"\
         .format(name, ncycle_mask, ncycle, maskname,str(np.sum(hist))))
@@ -183,21 +199,26 @@ def plot_pathlength_distributions_together(pe, nbins = 50, save=True, dpi=500, d
     for mask, maskname in zip(masks,mask_names):
         pl_mask = select_with_masks(pl, [mask, flagmask])
         w_mask = select_with_masks(w, [mask, flagmask])
-        if nbins > np.max(pl_mask):
-            if force_bins == False:
-                print("The amount of bins is larger than the maximum pathlength in the mask."+\
-                 +"Setting nbins to {}".format(np.max(pl_mask)))
-                nbins = np.max(pl_mask)
-            else:
-                print("The amount of bins is larger than the maximum pathlength in the mask."+\
-                 +"set force_bins=False to allow for variable bin sizes")
+        if pl_mask.tolist(): # If there are any paths in the mask, we check for better binsize
+            if nbins > np.max(pl_mask):
+                if force_bins == False:
+                    print('\n'.join(("The amount of bins is larger than the maximum pathlength in the mask.",\
+                    "Setting nbins to {}".format(np.max(pl_mask)))))
+                    nbins_use = np.max(pl_mask)
+                else:
+                    print('\n'.join(("The amount of bins is larger than the maximum pathlength in the mask.",\
+                    "set force_bins=False to allow for variable bin sizes")))
+                    nbins_use = nbins
+            else: nbins_use = nbins
+        else: nbins_use = nbins
         # If we want to plot rejected paths, we give all paths unit weight...
-        if status is not "ACC":
+        if status != "ACC":
             w_mask = np.ones_like(w_mask)
         ncycle_mask = len(w_mask)
-        hist, bin_centers = get_pathlength_distribution(pl_mask, w_mask, nbins)
-        ax[i//4,i%4].bar(bin_centers, hist, width=bin_centers[-1]/nbins)
-        ax[i//4,i%4].set_xlabel("Pathlength")
+        hist, bin_centers = get_pathlength_distribution(pl_mask, w_mask, nbins_use)
+        ax[i//4,i%4].bar(bin_centers, hist, width=bin_centers[-1]/nbins_use)
+        ax[i//4,i%4].set_xlabel("Pathlength ({} bins with width = {})".format(nbins_use,\
+             np.round(bin_centers[-1]/nbins_use, 2)))
         ax[i//4,i%4].set_ylabel("Counts")
         ax[i//4,i%4].set_title("{} of {} paths\n status {} [w = {}]"\
             .format(ncycle_mask, ncycle_flag, maskname,str(np.sum(hist))))
@@ -218,7 +239,7 @@ def plot_pathlength_distributions_together(pe, nbins = 50, save=True, dpi=500, d
 
 
 def create_pathlength_distributions(pathensembles, nbins=50, save=True, dpi=500, do_pdf=False, \
-    fn="",plot_separately=False, status = "ACC"):
+    fn="",plot_separately=False, status = "ACC", force_bins=False):
     """
     Creates the pathlength distributions for the given path ensembles.
     """
@@ -226,7 +247,7 @@ def create_pathlength_distributions(pathensembles, nbins=50, save=True, dpi=500,
     for pe in pathensembles:
         if plot_separately:
             plot_pathlength_distributions_separately(pe, nbins=nbins, save=save, dpi=dpi,\
-                 do_pdf=do_pdf, fn=fn, status=status)
+                 do_pdf=do_pdf, fn=fn, status=status, force_bins=force_bins)
         plot_pathlength_distributions_together(pe, nbins=nbins, save=save, dpi=dpi,\
-             do_pdf=do_pdf, fn=fn, status=status)
+             do_pdf=do_pdf, fn=fn, status=status, force_bins=force_bins)
     
