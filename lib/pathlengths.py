@@ -254,25 +254,147 @@ def create_pathlength_distributions(pathensembles, nbins=50, save=True, dpi=500,
         plot_pathlength_distributions_together(pe, nbins=nbins, save=save, dpi=dpi,\
              do_pdf=do_pdf, fn=fn, status=status, force_bins=force_bins, xmin=xmin)
     
+
+def get_pptis_0shortcross_probabilities(pe):
+    """
+    The short crossing probabilities of the [0+*] path ensemble are special: 
+    As all the paths go to the right, the pPN and pPP probabilities are zero.
+    For the [0-*] pathe ensemble, it would be the other way around, but that 
+    crossing probability is not used for the TIS crossing probabililty anyway.
+    """
+
+
+def get_pptis_shortcross_probabilities(pe,inzero=False):
+    """
+    We denote P_a^b by pab, where a is either +(P) or -(N).
+    Thus we have 
+        pPP which is the weight of RMR paths in the ensemble divided by total weight
+        pPN which is the weight of RML paths in the ensemble divided by total weight
+        pNP which is the weight of LMR paths in the ensemble divided by total weight
+        pNN which is the weight of LML paths in the ensemble divided by total weight
+    """
+
+    # get the lmr masks
+    masks, masknames = get_lmr_masks(pe)
+    # get weights of the paths
+    w, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS)
+    # get acc mask
+    flagmask = get_acc_mask(pe)
+    # get the weights of the different paths
+    wRMR = np.sum(select_with_masks(w, [masks[masknames.index("RMR")], flagmask]))
+    wRML = np.sum(select_with_masks(w, [masks[masknames.index("RML")], flagmask]))
+    wLMR = np.sum(select_with_masks(w, [masks[masknames.index("LMR")], flagmask]))
+    wLML = np.sum(select_with_masks(w, [masks[masknames.index("LML")], flagmask]))
+    # In PPTIS, we also get accepted paths that are of the type 
+    # L*L and R*R in the [0+*] and [0-*] path ensemble, respectively. 
+    wLSL = np.sum(select_with_masks(w, [masks[masknames.index("L*L")], flagmask]))
+    wRSR = np.sum(select_with_masks(w, [masks[masknames.index("R*R")], flagmask]))
+    if not inzero:
+        # Now we can calculate the weights of probabilities starting from the left and right
+        wR = wRMR + wRML + wRSR
+        wL = wLMR + wLML + wLSL
+        # Now we can calculate the probabilities
+        pPP = wRMR/wR
+        pPN = wRML/wR
+        pNP = wLMR/wL
+        pNN = wLML/wL
+        return pPP, pPN, pNP, pNN
+
+def get_all_shortcross_probabilities(pathensembles):
+    """
+    Returns the shortcrossing probabilities for all path ensembles.
+    """
+    pPP = []
+    pPN = []
+    pNP = []
+    pNN = []
+    for pe in pathensembles:
+        pPP_pe, pPN_pe, pNP_pe, pNN_pe = get_pptis_shortcross_probabilities(pe)
+        pPP.append(pPP_pe)
+        pPN.append(pPN_pe)
+        pNP.append(pNP_pe)
+        pNN.append(pNN_pe)
+    return pPP, pPN, pNP, pNN
+
+def get_longcross_probabilities(pPP, pPN, pNP, pNN):
+    """
+    The crossing probality of an ensemble is given by the following recursive formulas:
+        P_plus[j] = (pNP[j-1]*P_plus[j-1]) / (pNP[j-1]+pNN[j-1]*P_min[j-1])
+        P_min[j] = (pPN[j-1]P_min[j-1])/(pNP[j-1]+pNN[j-1]*P_min[j-1])
+        where the sum is over j = 1, ..., N and where P_plus[1] = 1 and P_min[1] = 1.
+    """
+    N = len(pPP)
+    P_plus = np.zeros(N)
+    P_min = np.zeros(N)
+    P_plus[1] = 1
+    P_min[1] = 1
+    for j in range(2,N):
+        P_plus[j] = (pNP[j-1]*P_plus[j-1]) / (pNP[j-1]+pNN[j-1]*P_min[j-1])
+        P_min[j] = (pPN[j-1]*P_min[j-1])/(pNP[j-1]+pNN[j-1]*P_min[j-1])
+    return P_plus, P_min
+
+    # P_plus = []
+    # P_min = []
+    # P_plus.append(pPP[0])
+    # P_min.append(pNN[0])
+    # for i in range(1,len(pPP)):
+    #     P_plus.append((pNP[i-1]*P_plus[i-1])/(pNP[i-1]+pNN[i-1]*P_min[i-1]))
+    #     P_min.append((pPN[i-1]*P_min[i-1])/(pNP[i-1]+pNN[i-1]*P_min[i-1]))
+    # return P_plus, P_min
+
+def get_TIS_cross_from_PPTIS_cross(P_plus,pNP):
+    """
+    The TIS cross probability P_A[j] is given by the following formula:
+    P_A[j] = pNP[0]*P_plus[j]
+    """
+    P_A = []
+    for i in range(len(P_plus)):
+        P_A.append(pNP[1]*P_plus[i])
+    return P_A
+
+def calculate_cross_probabilities(pathensembles):
+    """
+    Calculates and returns the TIS and PPTIS crossing probabilities for the given path ensembles.
+    For each path ensemble, print the shortcrossing probabilities and the TIS and PPTIS crossing probabilities.
+    """
+    pPP, pPN, pNP, pNN = get_all_shortcross_probabilities(pathensembles)
+    P_plus, P_min = get_longcross_probabilities(pPP, pPN, pNP, pNN)
+    P_A = get_TIS_cross_from_PPTIS_cross(P_plus,pNP)
+    for i in range(len(pathensembles)):
+        print("------------------")
+        print("Path ensemble: {}".format(pathensembles[i].name))
+        print("pPP = {}".format(pPP[i]))
+        print("pPN = {}".format(pPN[i]))
+        print("pNP = {}".format(pNP[i]))
+        print("pNN = {}".format(pNN[i]))
+        print("P_plus = {}".format(P_plus[i]))
+        print("P_min = {}".format(P_min[i]))
+        print("P_A = {}".format(P_A[i]))
+        print("------------------")
+    return P_plus, P_min, P_A
+
+
+
 def calculate_crossing_rates(pathensembles, verbose = True):
     """
     Calculates the crossing rates for the given path ensembles.
-    The cross rate is the amount of LMR paths divided by the amount of (LML+LMR) paths,
+    The cross rate is the amount of LMR paths divided by the amount of accepted paths,
     using the correct weights for the paths.
     """
     cross_rates = []
     for pe in pathensembles:
         cross_rates.append(get_cross_rate(pe, verbose = verbose))
 
-
 def get_cross_rate(pe, verbose = True):
     """
     Calculates the crossing rate for the given path ensemble.
-    The cross rate is the amount of LMR paths divided by the amount of (LML+LMR) paths,
-    using the correct weights for the paths.
+    The cross rate is the amount of LMR paths divided by the amount of accepted paths,
+    using the correct weights for the paths. The weight of the accepted paths is of course
+    just the weight of the ensemble.
     """
     # get weights of the paths
     w, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS)
+    print(np.sum(w))
     # get acc mask
     flagmask = get_acc_mask(pe)
     # get the lmr masks
@@ -285,6 +407,7 @@ def get_cross_rate(pe, verbose = True):
     w_lmr = select_with_masks(w, [flagmask, lmr_mask])
     w_lml = select_with_masks(w, [flagmask, lml_mask])
     cross_rate = np.sum(w_lmr)/(np.sum(w_lmr)+np.sum(w_lml))
+    
     if verbose: 
         print("Crossing rate for {} is {}".format(pe.name, cross_rate))
         # and print amount of lmr and lml paths, weighted and unweighted
@@ -292,7 +415,7 @@ def get_cross_rate(pe, verbose = True):
         print("Amount of ACC LML paths: {} (weight: {})".format(np.sum(lml_acc_mask), np.sum(w_lml)))
         # Print cross ratio without weights
         print("Crossing rate without weights for {} is {}".format(pe.name, 
-            np.sum(lmr_mask)/(np.sum(lmr_acc_mask)+np.sum(lml_acc_mask))))
+            np.sum(lmr_mask)/np.sum(flagmask)))
     return cross_rate
 
 # def get_cross_rate(pe):
