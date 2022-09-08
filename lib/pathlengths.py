@@ -254,3 +254,57 @@ def create_pathlength_distributions(pathensembles, nbins=50, save=True, dpi=500,
         plot_pathlength_distributions_together(pe, nbins=nbins, save=save, dpi=dpi,\
              do_pdf=do_pdf, fn=fn, status=status, force_bins=force_bins, xmin=xmin)
     
+def calculate_crossing_rates(pathensembles, verbose = True):
+    """
+    Calculates the crossing rates for the given path ensembles.
+    The cross rate is the amount of LMR paths divided by the amount of (LML+LMR) paths,
+    using the correct weights for the paths.
+    """
+    cross_rates = []
+    for pe in pathensembles:
+        cross_rates.append(get_cross_rate(pe, verbose = verbose))
+
+
+def get_cross_rate(pe, verbose = True):
+    """
+    Calculates the crossing rate for the given path ensemble.
+    The cross rate is the amount of LMR paths divided by the amount of (LML+LMR) paths,
+    using the correct weights for the paths.
+    """
+    # get weights of the paths
+    w, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS)
+    # get acc mask
+    flagmask = get_acc_mask(pe)
+    # get the lmr masks
+    masks, _ = get_lmr_masks(pe)
+    # Calculate the crossing rate
+    lmr_mask = masks[2]
+    lml_mask = masks[3]
+    lmr_acc_mask = select_with_masks(lmr_mask, [flagmask])
+    lml_acc_mask = select_with_masks(lml_mask, [flagmask])
+    w_lmr = select_with_masks(w, [flagmask, lmr_mask])
+    w_lml = select_with_masks(w, [flagmask, lml_mask])
+    cross_rate = np.sum(w_lmr)/(np.sum(w_lmr)+np.sum(w_lml))
+    if verbose: 
+        print("Crossing rate for {} is {}".format(pe.name, cross_rate))
+        # and print amount of lmr and lml paths, weighted and unweighted
+        print("Amount of ACC LMR paths: {} (weight: {})".format(np.sum(lmr_acc_mask), np.sum(w_lmr)))
+        print("Amount of ACC LML paths: {} (weight: {})".format(np.sum(lml_acc_mask), np.sum(w_lml)))
+        # Print cross ratio without weights
+        print("Crossing rate without weights for {} is {}".format(pe.name, 
+            np.sum(lmr_mask)/(np.sum(lmr_acc_mask)+np.sum(lml_acc_mask))))
+    return cross_rate
+
+# def get_cross_rate(pe):
+#     """
+#     Calculates the crossing rate for the given path ensemble.
+#     The cross rate is the amount of LMR paths divided by the amount of (LML+LMR) paths
+#     """
+#     masks, mask_names = get_lmr_masks(pe)
+#     mask_lml = masks[2]
+#     mask_lmr = masks[3]
+#     ncycle_lml = np.sum(mask_lml)
+#     ncycle_lmr = np.sum(mask_lmr)
+#     cross_rate = ncycle_lmr/(ncycle_lml+ncycle_lmr)
+#     print("Crossing rate (lmr/(lml+lmr)) for {} is {}".format(pe.name, cross_rate))
+#     return cross_rate

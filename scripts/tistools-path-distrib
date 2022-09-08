@@ -6,7 +6,7 @@
 """
 
 import argparse
-from tistools import create_pathlength_distributions
+from tistools import create_pathlength_distributions, calculate_crossing_rates
 from tistools import set_flags_ACC_REJ
 from tistools import read_pathensemble
 import os
@@ -77,6 +77,8 @@ if __name__ == '__main__':
         pathensembles.append(pe)
     assert len(folders)>0
 
-    create_pathlength_distributions(pathensembles, nbins=args.nbins, save=args.save_png, dpi=args.dpi, \
-        do_pdf=args.do_pdf, fn=args.outfn,plot_separately=args.separate_plot, status=args.flag, \
-        force_bins = args.force_bins, xmin=args.lmin)
+    calculate_crossing_rates(pathensembles, verbose=True)
+
+    # create_pathlength_distributions(pathensembles, nbins=args.nbins, save=args.save_png, dpi=args.dpi, \
+    #     do_pdf=args.do_pdf, fn=args.outfn,plot_separately=args.separate_plot, status=args.flag, \
+    #     force_bins = args.force_bins, xmin=args.lmin)
