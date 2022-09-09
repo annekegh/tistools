@@ -1,0 +1,88 @@
+#!/usr/bin/env python
+
+"""Script to plot the pathlength distribution of the simulation ensembles.
+
+    Usage: python tistools-path-distr 
+"""
+
+import argparse
+from tistools import (create_pathlength_distributions,
+                        calculate_cross_probabilities,
+                        calculate_crossing_rates)
+from tistools import set_flags_ACC_REJ
+from tistools import read_pathensemble
+import os
+import glob
+from pprint import pprint
+
+# Hard-coded rejection flags found in output files
+ACCFLAGS,REJFLAGS = set_flags_ACC_REJ() 
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Pathlength distributions')
+    parser.add_argument("-i",dest="inputfile",default="./retis.rst",
+        help="inputfile is file retis.rst or out.rst, where also the 000/,\
+         001/... folders are stored",)
+    parser.add_argument("-o",dest="outfn",default="",
+        help="prefix to filename of created figures, which will create files \
+            prefix_...pe00.png and prefix_...pe01.png",)
+    parser.add_argument("--pdf",dest="do_pdf",default=False, action = "store_true",
+        help = "when chosen, the figures will be stored not only as png but also as pdf")
+    parser.add_argument("--nbins",dest="nbins",default=50,
+        type=int,help="Amount of bins used in the histrograms.")
+    parser.add_argument("--dpi",dest="dpi",default=500,
+        type=int,help="DPI of the created figures.")
+    parser.add_argument("--lmin",dest="lmin",default=0,
+        type=float,
+        help = "left of the pathlength histogram")
+    parser.add_argument("--lmax",dest="lmax",default=None,
+        type=float,
+        help = "right of the pathlength histogram")
+    parser.add_argument("--ymin",dest="ymin",default=None,
+        type=float,
+        help = "lower limit on the y-axis")
+    parser.add_argument("--ymax",dest="ymax",default=None,
+        type=float,
+        help = "upper limit on the y-axis")
+    parser.add_argument("--sep",dest="separate_plot", default=False, action="store_true", 
+        help="if True, the pathlength distribution of each ensemble is plotted separately")
+    parser.add_argument("--nosave",dest="save_png", default=True, action="store_false",
+        help="if given, distributions are NOT saved as png")
+    parser.add_argument("--flag",dest="flag",default="ACC",help="status flag (ACC, REJ, NCR, FTL...) for which \
+        the pathlength distribution is plotted")
+    parser.add_argument("--force-bins", dest="force_bins", default=False, action="store_true",\
+        help="True: If the max pathlength is smaller than the chosen nbins, \
+            the nbins is set to the max pathlength")
+
+    args = parser.parse_args()
+
+    print("arguments: ")
+    print(args)
+
+    assert args.flag in ACCFLAGS+REJFLAGS+["REJ"], "flag must be one of %s" % (ACCFLAGS+REJFLAGS+["REJ"])
+
+    indir, filename = os.path.split(args.inputfile)
+    if len(indir) == 0: indir = "./"
+    print("indir:",indir)
+    print("filename:",filename)
+
+    print("folders:")
+    folders = glob.glob(indir+"/0[0-9][0-9]")
+    folders = sorted(folders)
+    pathensembles = []
+    for fol in folders:
+        print(fol)
+        pe = read_pathensemble(fol+"/pathensemble.txt")
+        pe.set_name(fol[len(indir):])
+        print("pathensemble info: ")
+        pprint(vars(pe))
+        pathensembles.append(pe)
+    assert len(folders)>0
+
+    # calculate_cross_probabilities(pathensembles)
+
+    # calculate_crossing_rates(pathensembles, verbose = True)
+
+    create_pathlength_distributions(pathensembles, nbins=args.nbins, save=args.save_png, dpi=args.dpi, \
+        do_pdf=args.do_pdf, fn=args.outfn,plot_separately=args.separate_plot, status=args.flag, \
+        force_bins = args.force_bins, xmin=args.lmin)
