@@ -308,6 +308,16 @@ def get_pptis_shortcross_probabilities(pe,inzero=False):
         pNP = wLMR/wL
         pNN = wLML/wL
         return pPP, pPN, pNP, pNN
+    if inzero:
+        # Now we can calculate the weights of probabilities starting from the left and right
+        wR = wRMR + wRML + wRSR
+        wL = wLMR + wLML + wLSL
+        # Now we can calculate the probabilities
+        pPP = wRMR/wR
+        pPN = wRML/wR
+        pNP = wLMR/wL
+        pNN = wLML/wL
+        return pPP, pPN, pNP, pNN
 
 def get_all_shortcross_probabilities(pathensembles):
     """
@@ -338,8 +348,10 @@ def get_longcross_probabilities(pPP, pPN, pNP, pNN):
     P_plus[1] = 1
     P_min[1] = 1
     for j in range(2,N):
-        P_plus[j] = (pNP[j-1]*P_plus[j-1]) / (pNP[j-1]+pNN[j-1]*P_min[j-1])
-        P_min[j] = (pPN[j-1]*P_min[j-1])/(pNP[j-1]+pNN[j-1]*P_min[j-1])
+        # P_plus[j] = (pNP[j-1]*P_plus[j-1]) / (pNP[j-1]+pNN[j-1]*P_min[j-1])
+        # P_min[j] = (pPN[j-1]*P_min[j-1])/(pNP[j-1]+pNN[j-1]*P_min[j-1])
+        P_plus[j] = (pNP[j]*P_plus[j-1]) / (pNP[j]+pNN[j]*P_min[j-1])
+        P_min[j] = (pPN[j]*P_min[j-1])/(pNP[j]+pNN[j]*P_min[j-1])
     return P_plus, P_min
 
     # P_plus = []
