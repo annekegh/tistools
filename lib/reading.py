@@ -159,6 +159,140 @@ def read_pathensemble(fn,ostart=0):
     return pe
 
 
+def read_orderparameter(fn, ostart=0):
+    """read file order.txt
+
+    Format order.txt:
+
+# Cycle: 0, status: ACC, move: ('ld', 0, 0, 0)
+#     Time       Orderp
+         0     0.992591     0.751421     0.122551     1.440613     0.235256     0.625671
+         1     1.002283     0.737442     0.095843     1.420257     0.252691     0.565861
+    ...
+
+    """
+    #data_op = np.loadtxt(fn)
+
+    # now read line per line
+    cyclenumbers = []
+    lengths = []
+    flags = []
+    generation = []
+
+    longtraj = []
+    data = []
+
+    subdata_list = []
+    subdata = []
+
+    ntraj = 0
+    ntraj_started = 0
+    last_length = 0
+
+    # check first line
+    with open(fn,"r+") as f:
+        line = f.readline()
+        if not line.startswith("# Cycle:"):
+            print("First line of orderparameter file %s  didn't start with cycle"%fn)
+            raise ValueError("something wrong")
+
+    with open(fn,'r') as f:        # read this file
+        for i, line in enumerate(f):
+            #if i > ostart:   # NOOOOOO  # TODO
+
+            # header time
+            if line.startswith("#     Time"):
+                pass
+
+            # header Cycle
+            elif line.startswith("# Cycle:"):
+                subdata_list.append(subdata)
+                subdata = []
+                if ntraj_started > 0:  # not the very first traj
+                    if last_length > 0:
+                        # successfully update the previous one
+                        ntraj += 1
+                        lengths[-1] = last_length
+
+                    elif last_length == 0:
+                        print("WARNING"*30)
+                        print("encountered traj with length 0")
+                        print("at cyclenumber",line)
+                        # undo a few things
+                        cyclenumbers = cyclenumbers[:-1]
+                        flags = flags[:-1]
+                        generation = generation[:-1]
+                        ntraj_started -= 1  # previous was fake alarm
+
+                # and reset for new one
+                ntraj_started += 1
+                last_length = 0
+
+                # extract the time, cyclenumber, flag, generation
+                words = line.split()
+                cyclenumbers.append(int(words[2][:-1]))  # remove the last character, which is a comma
+                flags.append(words[4][:-1])         # remove the last character, which is a comma: ACC,
+                generation.append(words[6][2:4])    # remove characters: ('sh',
+                # length to be updated!!!
+                lengths.append(0)
+
+            # Collect order parameter of traj
+            else:
+                words = line.split()
+
+                # words[0] = the time step of the traj, counting starts at 0
+                assert int(words[0])==last_length
+                last_length += 1    # update traj length
+
+                # the order parameters
+                # assume just 1 op: words[1]
+                longtraj.append(float(words[1]))
+                # collect all order parameters: words[1:]
+                if len(words[1:])>1: data.append([float(word) for word in words[1:]])  # skip the time
+                else:
+                    data.append(float(words[1]))  # this is a stupied copy of longtraj
+                    subdata.append(float(words[1]))
+
+    # finish the last trajectory when done with reading
+
+    # if order parameter lines were the last lines of order.txt
+    # then I need to update
+    if last_length > 0:
+        ntraj += 1
+        lengths[-1] = last_length
+
+    # if "# Cycle:" was the last line of order.txt
+    elif ntraj_started == ntraj+1:
+        # undo a few things
+        cyclenumbers = cyclenumbers[:-1]
+        flags = flags[:-1]
+        generation = generation[:-1]
+        lengths = lengths[:-1]
+
+    data = np.array(data)
+    if len(data.shape)==1:
+        data = data.reshape((len(data),1))
+
+    subdata_list.append(subdata)
+    subdata_list = subdata_list[1:]
+
+    # verify lengths:
+    assert_consistent(cyclenumbers,lengths,flags,generation,longtraj,data)
+    return subdata_list
+
+def strip_endpoints(order_list):
+    stripped_order_list = []
+    for orders in order_list:
+        stripped_order_list.append(orders[1:-1])
+    return stripped_order_list
+
+def get_flat_list_and_weights(orders,weights):
+    all_orders = np.array([item for sublist in orders for item in sublist])
+    all_ws = []
+    for w,o in zip(weights,orders):
+        all_ws += [w]*len(o)
+    return all_orders, all_ws
+
 def read_order(fn,ostart=0):
     """read file order.txt
 

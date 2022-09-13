@@ -8,9 +8,10 @@
 import argparse
 from tistools import (create_pathlength_distributions,
                         calculate_cross_probabilities,
-                        calculate_crossing_rates)
+                        calculate_crossing_rates,
+                        create_order_distributions)
 from tistools import set_flags_ACC_REJ
-from tistools import read_pathensemble
+from tistools import read_pathensemble, read_order, read_orderparameter
 import os
 import glob
 from pprint import pprint
@@ -70,10 +71,12 @@ if __name__ == '__main__':
     folders = glob.glob(indir+"/0[0-9][0-9]")
     folders = sorted(folders)
     pathensembles = []
+    orderparameters = []
     for fol in folders:
         print(fol)
         pe = read_pathensemble(fol+"/pathensemble.txt")
         pe.set_name(fol[len(indir):])
+        orderparameters.append(read_orderparameter(fol+"/order.txt"))
         print("pathensemble info: ")
         pprint(vars(pe))
         pathensembles.append(pe)
@@ -86,3 +89,5 @@ if __name__ == '__main__':
     create_pathlength_distributions(pathensembles, nbins=args.nbins, save=args.save_png, dpi=args.dpi, \
         do_pdf=args.do_pdf, fn=args.outfn,plot_separately=args.separate_plot, status=args.flag, \
         force_bins = args.force_bins, xmin=args.lmin)
+
+    create_order_distributions(pathensembles, orderparameters, nbins=args.nbins)

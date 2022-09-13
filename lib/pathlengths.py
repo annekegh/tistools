@@ -82,6 +82,12 @@ def get_flag_mask(pe, status):
     flagmask = pe.flags == status 
     return flagmask
 
+def get_generation_mask(pe, generation):
+    """
+    Returns boolean array
+    """
+    genmask = pe.generation == generation
+    return genmask
 
 def select_with_masks(A, masks):
     """
@@ -170,6 +176,7 @@ def plot_pathlength_distribution(pl, w, ncycle, maskname, nbins=50, \
         fig.show()
 
 def get_pathlength_distribution(pl, w, nbins=50):
+    pl = np.array([el-2 for el in pl])
     hist, bin_edges = np.histogram(pl, bins=nbins, weights=w)
     bin_centers = (bin_edges[1:] + bin_edges[:-1])/2
     return hist, bin_centers
@@ -180,6 +187,8 @@ def plot_pathlength_distributions_together(pe, nbins = 50, save=True, dpi=500, d
     Plots the pathlength distributions for the given path ensemble.
     """
     import matplotlib.pyplot as plt
+    # We don't want load paths:
+    load_mask = get_generation_mask(pe, "ld")
     # get pathlengths
     pl = pe.lengths
     # get weights of the paths
@@ -199,8 +208,8 @@ def plot_pathlength_distributions_together(pe, nbins = 50, save=True, dpi=500, d
     fig,ax = plt.subplots(nrows=4, ncols=4, figsize=(12,12))
     i = 0
     for mask, maskname in zip(masks,mask_names):
-        pl_mask = select_with_masks(pl, [mask, flagmask])
-        w_mask = select_with_masks(w, [mask, flagmask])
+        pl_mask = select_with_masks(pl, [mask, flagmask, ~load_mask])
+        w_mask = select_with_masks(w, [mask, flagmask, ~load_mask])
         if pl_mask.tolist(): # If there are any paths in the mask, we check for better binsize
             if nbins > np.max(pl_mask):
                 if force_bins == False:
@@ -418,16 +427,52 @@ def get_cross_rate(pe, verbose = True):
             np.sum(lmr_mask)/np.sum(flagmask)))
     return cross_rate
 
-# def get_cross_rate(pe):
-#     """
-#     Calculates the crossing rate for the given path ensemble.
-#     The cross rate is the amount of LMR paths divided by the amount of (LML+LMR) paths
-#     """
-#     masks, mask_names = get_lmr_masks(pe)
-#     mask_lml = masks[2]
-#     mask_lmr = masks[3]
-#     ncycle_lml = np.sum(mask_lml)
-#     ncycle_lmr = np.sum(mask_lmr)
-#     cross_rate = ncycle_lmr/(ncycle_lml+ncycle_lmr)
-#     print("Crossing rate (lmr/(lml+lmr)) for {} is {}".format(pe.name, cross_rate))
-#     return cross_rate
+def create_order_distributions(pathensembles, orderparameters, nbins = 50, verbose = True):
+    """
+    Creates order parameter distributions for the given path ensembles.
+    """
+    for pe, op in zip(pathensembles,orderparameters):
+        create_order_distribution(pe, op, nbins = nbins, verbose = verbose)
+ 
+
+def create_order_distribution(pe,op,nbins=50,verbose=True):
+    """
+    Plots the distribution of orderparameters for each path mask in the ensemble (accepted paths)
+    """
+    import matplotlib.pyplot as plt
+    # get weights of the paths
+    w, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS)
+    # Get load mask
+    loadmask = get_generation_mask(pe, "ld")
+    # get acc mask
+    accmask = get_acc_mask(pe)
+    # get the lmr masks
+    masks, masknames = get_lmr_masks(pe)
+    # Strip the orderparameters of their start and endpoints (not part of ensemble)
+    stripped_op_list = strip_endpoints(op)
+    stripped_op = np.array(stripped_op_list,object)
+    # Create the distributions
+    fig,ax=plt.subplots(nrows = 4, ncols = 4, figsize = (10,10))
+    i = 0
+    for mask, maskname in zip(masks, masknames):
+        axi = ax[i//4,i%4]
+        # Select the paths with the mask
+        mask_o = select_with_masks(stripped_op, [accmask,mask,~loadmask])
+        mask_w = select_with_masks(w, [accmask,mask,~loadmask])
+        # Flatten
+        mask_o, mask_w = get_flat_list_and_weights(mask_o, mask_w)
+        # Plot
+        axi.hist(mask_o, weights = mask_w, bins = nbins)
+        axi.set_title(maskname)
+        i += 1
+    fig.suptitle(pe.name)
+    fig.tight_layout()
+    fig.savefig(pe.name + "_order_distributions.png")
+
+
+def plot_op_distribution(op, lmr_mask):
+    """
+    Plots the orderparamter distribution for the given orderParameter object, for the lmr_mask paths.
+    """
+    plt.hist(op[lmr_mask], bins = 100)
+    plt.show()
