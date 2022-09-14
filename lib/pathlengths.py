@@ -523,7 +523,7 @@ def compare_cross_probabilities(pPP, pPN, pNP, pNN, P_plus, P_min, P_A, P_cross,
     ax.errorbar(range(1,len(P_cross)+1),P_cross,yerr=P_cross_err,marker='o',linestyle='',
     capsize=5,capthick=1,elinewidth=1,ecolor='black',barsabove=True)
     for i, (pc, pce, pcre) in enumerate(zip(P_cross, P_cross_err, P_cross_relerr)):
-        ax.text(i+1.15,pc,"{:.2f}".format(pc)+r"$\pm$"+"{:.2f}%".format(pcre))
+        ax.text(i+1.15,pc,"{:.2f}".format(pc)+r"$\pm$"+"{:.2f}".format(pcre))
     ax.set_xlabel('interface')
     ax.set_ylabel('crossing probability')
     ax.set_title("Crossing probabilities in RETIS")
@@ -576,6 +576,28 @@ def create_order_distribution(pe,op,nbins=50,verbose=True,flag="ACC"):
     for mask, maskname in zip(masks, masknames):
         axi = ax[i//4,i%4]
         # Select the paths with the mask
+        # print the shape of stripped_op, flagmask, mask, loadmask, and w
+        # and name it
+        # print("stripped_op.shape = ", stripped_op.shape)
+        # print("flagmask.shape = ", flagmask.shape)
+        # print("mask.shape = ", mask.shape)
+        # print("loadmask.shape = ", loadmask.shape)
+
+        # If you get errors with the shape, check whether your simulation
+        # actually finished. It's most likely that ensembles up to j were updated
+        # in a specific cycle, while the ensembles from j+1 on were not updated 
+        # (because the simulation was [forcefully] stopped before the cycle was finished).
+        # TODO: add a check for this, and print a warning if this is the case.
+        # It can only be the op that is 1 bigger ...: 
+
+        if len(stripped_op) == len(flagmask) + 1:
+            print(' '.join(["WARNING: The order parameter is 1 longer than the flagmask.\n",
+            "This is most likely because the simulation was stopped before the\n",
+            "cycle was finished. The last order parameter will be ignored."]))
+            stripped_op = stripped_op[:-1]
+        elif len(stripped_op) != len(flagmask):
+            raise Exception("The order parameter and the flagmask have different lengths.")
+
         mask_o = select_with_masks(stripped_op, [flagmask,mask,~loadmask])
         mask_w = select_with_masks(w, [flagmask,mask,~loadmask])
         # Flatten
