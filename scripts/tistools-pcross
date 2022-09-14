@@ -1,0 +1,67 @@
+#!/usr/bin/env python
+
+"""Script to plot the pathlength distribution of the simulation ensembles.
+
+    Usage: python tistools-path-distr 
+"""
+
+import argparse
+from tistools import (create_pathlength_distributions,
+                        calculate_cross_probabilities,
+                        calculate_crossing_rates)
+from tistools import set_flags_ACC_REJ
+from tistools import (read_pathensemble, read_inputfile, 
+                        get_LMR_interfaces, extract_Pcross_from_retis_html_report,
+                        compare_cross_probabilities)
+import os
+import glob
+from pprint import pprint
+
+# Hard-coded rejection flags found in output files
+ACCFLAGS,REJFLAGS = set_flags_ACC_REJ() 
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Crossing probabilities REPPTIS')
+    parser.add_argument("-i",dest="inputfile",default="./retis.rst",
+        help="inputfile is file retis.rst or out.rst, where also the 000/,\
+         001/... folders are stored",)
+    parser.add_argument("-o",dest="outfn",default="",
+        help="prefix to filename of created figures, which will create files \
+            prefix_...pe00.png and prefix_...pe01.png",)
+    parser.add_argument("--compare", dest="compare", default=None,\
+        help="filename of the PyRETIS report")
+    args = parser.parse_args()
+
+    print("arguments: ")
+    print(args)
+
+    indir, filename = os.path.split(args.inputfile)
+    if len(indir) == 0: indir = "./"
+    print("indir:",indir)
+    print("filename:",filename)
+
+    # read the retis.rst input file
+    interfaces, zero_left, timestep = read_inputfile(args.inputfile)
+    LMR_interfaces, LMR_strings = get_LMR_interfaces(interfaces, zero_left)
+
+    print("folders:")
+    folders = glob.glob(indir+"/0[0-9][0-9]")
+    folders = sorted(folders)
+    pathensembles = []
+    for i,fol in enumerate(folders):
+        print(fol)
+        pe = read_pathensemble(fol+"/pathensemble.txt")
+        pe.set_name(fol[len(indir):])
+        pe.set_interfaces([LMR_interfaces[i], LMR_strings[i]])
+        print("pathensemble info: ")
+        pprint(vars(pe))
+        pathensembles.append(pe)
+    assert len(folders)>0
+
+    pPP, pPN, pNP, pNN, P_plus, P_min, P_A = calculate_cross_probabilities(pathensembles, verbose=True)
+
+    if args.compare:
+        P_cross, P_cross_err, P_cross_relerr = extract_Pcross_from_retis_html_report(args.compare)
+        compare_cross_probabilities(pPP, pPN, pNP, pNN, P_plus, P_min, P_A, P_cross, P_cross_err, P_cross_relerr)
+
+

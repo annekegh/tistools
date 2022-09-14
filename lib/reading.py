@@ -66,12 +66,16 @@ class PathEnsemble(object):
         self.weights = []
         self.shootlinks = np.full_like(self.cyclenumbers,None,dtype=object)
         self.name = ""
+        self.interfaces = [] # [ [L, M, R], string([L,M,R]) ] 2 lists in a list
 
     def set_name(self, name):
         self.name = name
 
     def set_weights(self, weights):
         self.weights=weights
+
+    def set_interfaces(self, interfaces):
+        self.interfaces = interfaces
 
     def update_shootlink(self,cycnum,link):
         cycnumlist = (self.cyclenumbers).tolist()
@@ -86,7 +90,7 @@ class PathEnsemble(object):
     def save_pe(self, fn):
         import pickle 
         with open("pe_"+fn+".pkl", 'wb') as g:
-            pickle.dump(pe, g, pickle.HIGHEST_PROTOCOL)
+            pickle.dump(self, g, pickle.HIGHEST_PROTOCOL)
 
 class OrderParameter(object):
 
@@ -408,7 +412,7 @@ def read_order(fn,ostart=0):
     return op
 
 
-def get_weights(flags,ACCFLAGS,REJFLAGS):
+def get_weights(flags,ACCFLAGS,REJFLAGS,verbose=True):
     """
     Returns:
       weights -- array with weight of each trajectory, 0 if not accepted
@@ -447,13 +451,13 @@ def get_weights(flags,ACCFLAGS,REJFLAGS):
     # at the end: store the last accepted path with its weight
     weights[acc_index] = acc_w
     tot_w += acc_w
-
-    print("weights:")
-    print("accepted     ",accepted)
-    print("rejected     ",rejected)
-    print("omitted      ",omitted)
-    print("total trajs  ",ntraj)
-    print("total weights",np.sum(weights))
+    if verbose:
+        print("weights:")
+        print("accepted     ",accepted)
+        print("rejected     ",rejected)
+        print("omitted      ",omitted)
+        print("total trajs  ",ntraj)
+        print("total weights",np.sum(weights))
 
     assert omitted == 0
     ncycle_true = np.sum(weights)
@@ -613,7 +617,23 @@ def read_inputfile(filename):
 
     return interfaces,zero_left,timestep
 
+def get_LMR_interfaces(interfaces, zero_left):
+    """Get the left, middle, right interfaces for each PyRETIS folder-ensemble"""
+    LMR_interfaces = []
+    LMR_strings = []
+    if zero_left:
+        LMR_interfaces.append([zero_left, (zero_left + interfaces[0])/2., interfaces[0]])
+        LMR_strings.append(["l_[-1]", "( l_[-1] + l_[0] ) / 2", "l_[0]"])
+    else:
+        LMR_interfaces.append([interfaces[0], interfaces[0], interfaces[0]])
+        LMR_strings.append(["l_[0]", "l_[0]", "l_[0]"])
+    LMR_interfaces.append([interfaces[0], interfaces[0], interfaces[1]])
+    LMR_strings.append(["l_[0]", "l_[0]", "l_[1]"])
+    for i in range(1, len(interfaces)-1):
+        LMR_interfaces.append([interfaces[i-1], interfaces[i], interfaces[i+1]])
+        LMR_strings.append(["l_[{}]".format(i-1), "l_[{}]".format(i), "l_[{}]".format(i+1)])
 
+    return LMR_interfaces, LMR_strings
 
 ########################################
 def get_shoot_weights():
