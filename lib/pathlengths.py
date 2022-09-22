@@ -493,6 +493,14 @@ def compare_cross_probabilities(pPP, pPN, pNP, pNN, P_plus, P_min, P_A, P_cross,
             P_A_RETIS.append(P_cross[0])
         else:
             P_A_RETIS.append(P_A_RETIS[i-1]*P_cross[i])
+
+    # Second bis, we calculate P_A_RETIS_error[i], which is the error of P_A_RETIS[i]
+    P_A_RETIS_error = []
+    for i in range(len(P_cross)):
+        if i == 0:
+            P_A_RETIS_error.append(P_cross_err[0])
+        else:
+            P_A_RETIS_error.append(P_A_RETIS_error[i-1]*P_cross[i]+P_A_RETIS[i-1]*P_cross_err[i])
     
     # Now make a table comparing P_A and P_A_RETIS
     print("")
@@ -507,7 +515,8 @@ def compare_cross_probabilities(pPP, pPN, pNP, pNN, P_plus, P_min, P_A, P_cross,
     # with the name "Pcross_compared.png", and with nice labels
     fig,ax=plt.subplots()
     ax.plot(range(1,len(P_A)+1),P_A,marker='o',label=r"$p_0^{\pm}P^{+}_{j}$")
-    ax.plot(range(1,len(P_A_RETIS)+1),P_A_RETIS,marker='o',label=r'$P_A(\lambda_{j}|\lambda_{0})$')
+    ax.errorbar(range(1,len(P_A_RETIS)+1),P_A_RETIS,yerr=P_A_RETIS_error,marker='o',label=r'$P_A(\lambda_{j}|\lambda_{0})$')
+    #ax.plot(range(1,len(P_A_RETIS)+1),P_A_RETIS,marker='o',label=r'$P_A(\lambda_{j}|\lambda_{0})$')
     ax.set_xlabel('interface')
     ax.set_ylabel('crossing probability')
     ax.set_title("Comparison of long crossing probabilities in RETIS and REPPTIS")
@@ -515,9 +524,19 @@ def compare_cross_probabilities(pPP, pPN, pNP, pNN, P_plus, P_min, P_A, P_cross,
     fig.tight_layout()
     fig.savefig('Pcross_compared.png')
 
-    # Fourth, plot P_cross with errorbars, and save to a PNG file,
-    # with the name "Pcross_error.png", and with nice labels
-    # Print the value of P_cross plusminus P_cross_relerr next to the marker
+    # Fourth, we plot P_A and P_A_RETIS on a logarithmic scale, where we also plot the error bars for P_A_RETIS
+    fig,ax=plt.subplots()
+    ax.plot(range(1,len(P_A)+1),P_A,marker='o',label=r"$p_0^{\pm}P^{+}_{j}$")
+    ax.errorbar(range(1,len(P_A_RETIS)+1),P_A_RETIS,yerr=P_A_RETIS_error,marker='o',label=r'$P_A(\lambda_{j}|\lambda_{0})$')
+    #ax.plot(range(1,len(P_A_RETIS)+1),P_A_RETIS,marker='o',label=r'$P_A(\lambda_{j}|\lambda_{0})$')
+    ax.set_xlabel('interface')
+    ax.set_ylabel('crossing probability')
+    ax.set_yscale('log',nonposy='clip')
+    ax.set_title("Comparison of long crossing probabilities in RETIS and REPPTIS")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig('Pcross_compared_LOG.png')
+
 
     fig,ax=plt.subplots()        
     ax.errorbar(range(1,len(P_cross)+1),P_cross,yerr=P_cross_err,marker='o',linestyle='',
