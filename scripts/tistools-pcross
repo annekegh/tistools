@@ -61,14 +61,12 @@ if __name__ == '__main__':
     assert len(folders)>0
 
     pPP, pPN, pNP, pNN, P_plus, P_min, P_A = calculate_cross_probabilities(pathensembles, verbose=True)
-
-    pPP, pPN, pNP, pNN, P_plus, P_min, P_A, pPP_err, pPN_err, pNP_err, pNN_err, P_plus_err, P_min_err, P_A_err = calculate_cross_probabilities_blockavg(pathensembles, verbose=True, Nblocks=10)
-
-
-
     if args.compare:
         P_cross, P_cross_err, P_cross_relerr = extract_Pcross_from_retis_html_report(args.compare)
         compare_cross_probabilities(pPP, pPN, pNP, pNN, P_plus, P_min, P_A, P_cross, P_cross_err, P_cross_relerr)
+
+    pPP, pPN, pNP, pNN, P_plus, P_min, P_A, pPP_err, pPN_err, pNP_err, pNN_err, P_plus_err, P_min_err, P_A_err = calculate_cross_probabilities_blockavg(pathensembles, verbose=True, Nblocks=10)
+    if args.compare:
         compare_cross_probabilities_blockavg(pPP, pPN, pNP, pNN, P_plus, P_min, P_A, pPP_err, pPN_err, pNP_err, pNN_err, P_plus_err, P_min_err, P_A_err, P_cross, P_cross_err, P_cross_relerr, Nblocks=10)
 
 
