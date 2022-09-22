@@ -651,6 +651,8 @@ def get_longcross_probabilities_blockavg(pPPs, pPNs, pNPs, pNNs):
 
 def get_TIS_cross_from_PPTIS_cross_blockavg(P_plus_list, pNPs):
     P_A_list = []
+    P_plus_list = np.array(P_plus_list).T
+    pNPs = np.array(pNPs).T
     for P_plus, pNP in zip(P_plus_list, pNPs):
         P_A = []
         for i in range(len(P_plus)):
