@@ -640,10 +640,10 @@ def get_longcross_probabilities_blockavg(pPPs, pPNs, pNPs, pNNs):
         P_min_list.append(P_min)
 
     # Calculate the average and the error of the longcross probabilities
-    P_plus = np.mean(P_plus_list, axis = 0)
-    P_min = np.mean(P_min_list, axis = 0)
-    P_plus_err = np.std(P_plus_list, axis = 0)
-    P_min_err = np.std(P_min_list, axis = 0)
+    P_plus = np.mean(P_plus_list, axis = 1)
+    P_min = np.mean(P_min_list, axis = 1)
+    P_plus_err = np.std(P_plus_list, axis = 1)
+    P_min_err = np.std(P_min_list, axis = 1)
 
     print("P_plus = {}".format(P_plus))
 
@@ -653,13 +653,17 @@ def get_TIS_cross_from_PPTIS_cross_blockavg(P_plus_list, pNPs):
     P_A_list = []
     P_plus_list = np.array(P_plus_list).T
     pNPs = np.array(pNPs).T
+    print("P_plus_list.shape = {}".format(P_plus_list.shape))
+    print("pNPs.shape = {}".format(pNPs.shape))
     for P_plus, pNP in zip(P_plus_list, pNPs):
         P_A = []
         for i in range(len(P_plus)):
             P_A.append(pNP[1]*P_plus[i])
         P_A_list.append(P_A)
-    P_A = np.mean(P_A_list, axis = 0)
-    P_A_err = np.std(P_A_list, axis = 0)
+    print("P_A_list: {}".format(P_A_list))
+    P_A = np.mean(P_A_list, axis = 1)
+    print("P_A: {}".format(P_A))
+    P_A_err = np.std(P_A_list, axis = 1)
     return P_A, P_A_err, P_A_list
 
 
