@@ -8,11 +8,13 @@
 import argparse
 from tistools import (create_pathlength_distributions,
                         calculate_cross_probabilities,
-                        calculate_crossing_rates)
+                        calculate_crossing_rates,
+                        calculate_cross_probabilities_blockavg)
 from tistools import set_flags_ACC_REJ
 from tistools import (read_pathensemble, read_inputfile, 
                         get_LMR_interfaces, extract_Pcross_from_retis_html_report,
-                        compare_cross_probabilities)
+                        compare_cross_probabilities, 
+                        compare_cross_probabilities_blockavg)
 import os
 import glob
 from pprint import pprint
@@ -60,8 +62,13 @@ if __name__ == '__main__':
 
     pPP, pPN, pNP, pNN, P_plus, P_min, P_A = calculate_cross_probabilities(pathensembles, verbose=True)
 
+    pPP, pPN, pNP, pNN, P_plus, P_min, P_A, pPP_err, pPN_err, pNP_err, pNN_err, P_plus_err, P_min_err, P_A_err = calculate_cross_probabilities_blockavg(pathensembles, verbose=True, Nblocks=10)
+
+
+
     if args.compare:
         P_cross, P_cross_err, P_cross_relerr = extract_Pcross_from_retis_html_report(args.compare)
         compare_cross_probabilities(pPP, pPN, pNP, pNN, P_plus, P_min, P_A, P_cross, P_cross_err, P_cross_relerr)
+        compare_cross_probabilities_blockavg(pPP, pPN, pNP, pNN, P_plus, P_min, P_A, pPP_err, pPN_err, pNP_err, pNN_err, P_plus_err, P_min_err, P_A_err, P_cross, P_cross_err, P_cross_relerr, Nblocks=10)
 
 

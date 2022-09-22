@@ -375,10 +375,11 @@ def get_longcross_probabilities(pPP, pPN, pNP, pNN):
     # Now we can calculate the longcross probabilities
     P_plus = [1]
     P_min = [1]
+    print("len(pPP) = {}".format(len(pPP)))
     for i in range(len(pPP)):
         P_plus.append((pNP[i]*P_plus[i])/(pNP[i]+pNN[i]*P_min[i]))
         P_min.append((pPN[i]*P_min[i])/(pNP[i]+pNN[i]*P_min[i]))
-
+    print("P_plus = {}".format(P_plus))
     return P_plus, P_min
 
     # N = len(pPP)
@@ -447,6 +448,218 @@ def calculate_cross_probabilities(pathensembles, verbose=True):
         print("----------------------------------------------")
     return pPP, pPN, pNP, pNN, P_plus, P_min, P_A
 
+### BLOCKAVERAGING ALTERNATIVES TO THE FUNCTIONS ABOVE ###
+def calculate_cross_probabilities_blockavg(pathensembles, Nblocks, verbose=True):
+    """
+    Calculates and returns the TIS and PPTIS crossing probabilities for the given path ensembles. 
+    For each pathensemble, an error is calculated by blockaveraging the short crossing probabilities.
+    For each path ensemble, print the shortcrossing probabilities and the TIS and PPTIS crossing probabilities.
+    """
+    pPP, pPN, pNP, pNN, pPP_err, pPN_err, pNP_err, pNN_err, pPPs, pPNs, pNPs, pNNs = get_all_shortcross_probabilities_blockavg(pathensembles, Nblocks, verbose=True)
+    P_plus, P_min, P_plus_err, P_min_err, P_plus_list, _ = get_longcross_probabilities_blockavg(pPPs, pPNs, pNPs, pNNs)
+    P_A, P_A_err, _ = get_TIS_cross_from_PPTIS_cross_blockavg(P_plus_list,pNPs)
+
+    for i, pe in enumerate(pathensembles):
+        pe_LMR_values = (pe.interfaces)[0]
+        pe_LMR_strings = (pe.interfaces)[1]
+        print("##############################################")
+        print("Path ensemble: {}".format(pathensembles[i].name))
+        print("----------------------------------------------")
+        print("Interfaces: {}".format(pe_LMR_values))
+        print("Interfaces: {}".format(pe_LMR_strings))
+        print("----------------------------------------------")
+        print("pPP = {} +/- {}".format(pPP[i], pPP_err[i]))
+        print("pPN = {} +/- {}".format(pPN[i], pPN_err[i]))
+        print("pNP = {} +/- {}".format(pNP[i], pNP_err[i]))
+        print("pNN = {} +/- {}".format(pNN[i], pNN_err[i]))
+        print("----------------------------------------------")
+        print("##############################################")
+
+    print("")
+    print("Long crossing probabilities:")
+    print("----------------------------------------------")
+    for i, (pp, pm, pa, pp_err, pm_err, pa_err) in enumerate(zip(P_plus, P_min, P_A, P_plus_err, P_min_err, P_A_err)):
+        print("P{}_plus = {} +/- {}".format(i+1,pp, pp_err))
+        print("P{}_min = {} +/- {}".format(i+1,pm, pm_err))
+        print("P{}_A = {} +/- {}".format(i+1,pa, pa_err))
+        print("----------------------------------------------")
+    return pPP, pPN, pNP, pNN, P_plus, P_min, P_A, pPP_err, pPN_err, pNP_err, pNN_err, P_plus_err, P_min_err, P_A_err
+
+
+def get_all_shortcross_probabilities_blockavg(pathensembles, Nblocks, verbose=True):
+    """
+    Calculates and returns the shortcrossing probabilities for the given path ensembles.
+    For each pathensemble, an error is calculated by blockaveraging the short crossing probabilities.
+    """
+    pPP = []
+    pPN = []
+    pNP = []
+    pNN = []
+    pPP_err = []
+    pPN_err = []
+    pNP_err = []
+    pNN_err = []
+    pPPs_list = []
+    pPNs_list = []
+    pNPs_list = []
+    pNNs_list = []
+    for i,pe in enumerate(pathensembles):
+        if i == 0:
+            inzero = True
+        else:
+            inzero = False
+        pPP_pe, pPN_pe, pNP_pe, pNN_pe, pPP_pe_err, pPN_pe_err, pNP_pe_err, pNN_pe_err, pPPs, pPNs, pNPs, pNNs = get_shortcross_probabilities_blockavg(pe, Nblocks, inzero=inzero, verbose=verbose)
+        pPP.append(pPP_pe)
+        pPN.append(pPN_pe)
+        pNP.append(pNP_pe)
+        pNN.append(pNN_pe)
+        pPP_err.append(pPP_pe_err)
+        pPN_err.append(pPN_pe_err)
+        pNP_err.append(pNP_pe_err)
+        pNN_err.append(pNN_pe_err)
+        pPPs_list.append(pPPs)
+        pPNs_list.append(pPNs)
+        pNPs_list.append(pNPs)
+        pNNs_list.append(pNNs)
+    return pPP, pPN, pNP, pNN, pPP_err, pPN_err, pNP_err, pNN_err, pPPs_list, pPNs_list, pNPs_list, pNNs_list
+
+def get_shortcross_probabilities_blockavg(pe, Nblocks, inzero=False, verbose=True):
+    """
+    Calculates and returns the shortcrossing probabilities for the given path ensemble.
+    For the pathensemble, an error is calculated by blockaveraging. This is done by taking 
+    a block of the pathensemble and calculating the shortcrossing probabilities for that block.
+    Then the average is taken over all blocks, and an error is calculated by taking the standard
+    deviation over all blocks.
+    """
+    pPP = []
+    pPN = []
+    pNP = []
+    pNN = []
+    pPP_err = []
+    pPN_err = []
+    pNP_err = []
+    pNN_err = []
+    # get the lmr masks
+    masks, masknames = get_lmr_masks(pe)
+    # get the weights of the paths
+    w, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose = False)
+    # get acc mask
+    flagmask = get_acc_mask(pe)
+    # get load mask
+    load_mask = get_generation_mask(pe, "ld")
+    if verbose:
+        print("Ensemble {} has {} paths".format(pe.name, len(w)))
+        print("The total weight of the ensemble is {}".format(np.sum(w)))
+        print("The total amount of the accepted paths is {}".format(np.sum(flagmask)))
+        print("Amount of loaded masks is {}".format(np.sum(load_mask)))
+
+    # Create masks that partition the paths into Nblocks blocks of equal size
+    # The masks have the same dimension as flagmask, and block i has True for the
+    # indices [i*L:(i+1)*L] where L is the length of a block. Other values are False.
+    # Make sure that L*Nblocks is not greater than the number of paths in the ensemble.
+    L = int(np.floor(len(flagmask)/Nblocks))
+    blockmasks = []
+    for i in range(Nblocks):
+        blockmask = np.zeros_like(flagmask, dtype=bool)
+        blockmask[i*L:(i+1)*L] = True
+        blockmasks.append(blockmask)
+
+    # Calculate the shortcrossing probabilities for each block
+    wRMRs, wRMLs, wLMRs, wLMLs = [], [], [], []
+    if not inzero:
+        wRs, wLs = [], []
+    else:
+        wRs, wLs, wLSLs, wLSRs = [], [], [], []
+
+    for blockmask in blockmasks:
+        wRMR = np.sum(select_with_masks(w, [masks[masknames.index("RMR")], flagmask, ~load_mask, blockmask]))
+        wRML = np.sum(select_with_masks(w, [masks[masknames.index("RML")], flagmask, ~load_mask, blockmask]))
+        wLMR = np.sum(select_with_masks(w, [masks[masknames.index("LMR")], flagmask, ~load_mask, blockmask]))
+        wLML = np.sum(select_with_masks(w, [masks[masknames.index("LML")], flagmask, ~load_mask, blockmask]))
+        wRMRs.append(wRMR)
+        wRMLs.append(wRML)
+        wLMRs.append(wLMR)
+        wLMLs.append(wLML)
+        if not inzero:
+            wR = wRMR + wRML
+            wL = wLMR + wLML
+            wRs.append(wR)
+            wLs.append(wL)
+        else:
+            wLSL = np.sum(select_with_masks(w, [masks[masknames.index("L*L")], flagmask, ~load_mask, blockmask]))
+            wRSR = np.sum(select_with_masks(w, [masks[masknames.index("R*R")], flagmask, ~load_mask, blockmask]))
+            wR = wRMR + wRML + wRSR
+            wL = wLMR + wLML + wLSL
+            wRs.append(wR)
+            wLs.append(wL)
+            wLSLs.append(wLSL)
+            wLSRs.append(wRSR)
+
+    # Calculate the shortcrossing probabilities for the ensemble
+    pPPs = np.array(wRMRs)/np.array(wRs)
+    pPNs = np.array(wRMLs)/np.array(wRs)
+    pNPs = np.array(wLMRs)/np.array(wLs)
+    pNNs = np.array(wLMLs)/np.array(wLs)
+
+    # Calculate the average and the error of the shortcrossing probabilities
+    pPP = np.mean(pPPs)
+    pPN = np.mean(pPNs)
+    pNP = np.mean(pNPs)
+    pNN = np.mean(pNNs)
+    pPP_err = np.std(pPPs)
+    pPN_err = np.std(pPNs)
+    pNP_err = np.std(pNPs)
+    pNN_err = np.std(pNNs)
+
+    return pPP, pPN, pNP, pNN, pPP_err, pPN_err, pNP_err, pNN_err, pPPs, pPNs, pNPs, pNNs
+
+
+def get_longcross_probabilities_blockavg(pPPs, pPNs, pNPs, pNNs):
+    """
+    The same thing is done as get_longcross_probabilities, but we keep track of the errors as well now"""
+    pPPs = np.array(pPPs).T
+    pPNs = np.array(pPNs).T
+    pNPs = np.array(pNPs).T
+    pNNs = np.array(pNNs).T
+    print("pPPs.shape = {}".format(pPPs.shape))
+    P_plus_list = []
+    P_min_list = []
+    for pPP, pPN, pNP, pNN in zip(pPPs, pPNs, pNPs, pNNs):
+        pPP = pPP[2:]
+        pPN = pPN[2:]
+        pNP = pNP[2:]
+        pNN = pNN[2:]
+        # Now we can calculate the longcross probabilities
+        P_plus = [1]
+        P_min = [1]
+        print("len(pPP) = {}".format(len(pPP)))
+        for i in range(len(pPP)):
+            P_plus.append((pNP[i]*P_plus[i])/(pNP[i]+pNN[i]*P_min[i]))
+            P_min.append((pPN[i]*P_min[i])/(pNP[i]+pNN[i]*P_min[i]))
+        P_plus_list.append(P_plus)
+        P_min_list.append(P_min)
+
+    # Calculate the average and the error of the longcross probabilities
+    P_plus = np.mean(P_plus_list, axis = 0)
+    P_min = np.mean(P_min_list, axis = 0)
+    P_plus_err = np.std(P_plus_list, axis = 0)
+    P_min_err = np.std(P_min_list, axis = 0)
+
+    print("P_plus = {}".format(P_plus))
+
+    return P_plus, P_min, P_plus_err, P_min_err, P_plus_list, P_min_list
+
+def get_TIS_cross_from_PPTIS_cross_blockavg(P_plus_list, pNPs):
+    P_A_list = []
+    for P_plus, pNP in zip(P_plus_list, pNPs):
+        P_A = []
+        for i in range(len(P_plus)):
+            P_A.append(pNP[1]*P_plus[i])
+        P_A_list.append(P_A)
+    P_A = np.mean(P_A_list, axis = 0)
+    P_A_err = np.std(P_A_list, axis = 0)
+    return P_A, P_A_err, P_A_list
+
 
 def extract_Pcross_from_retis_html_report(html_report_file):
     """
@@ -472,6 +685,101 @@ def extract_Pcross_from_retis_html_report(html_report_file):
         if "</table>" in lines[j]:
             break
     return P_cross, P_cross_err, P_cross_relerr
+
+def compare_cross_probabilities_blockavg(pPP, pPN, pNP, pNN, P_plus, P_min, P_A, pPP_err, pPN_err, pNP_err, pNN_err, P_plus_err, P_min_err, P_A_err, P_cross, P_cross_err, P_cross_relerr, Nblocks=10):
+    """
+    First, print a table with pNP, pNP_err, pNP_relerr, P_cross, P_cross_err and P_cross_relerr. 
+    """
+    import matplotlib.pyplot as plt
+    print("")
+    print("Comparison of short crossing probabilities:")
+    print("----------------------------------------------")
+    print("pNP\t\tpNP_err\t\tpNP_relerr\tP_cross\t\tP_cross_err\tP_cross_relerr")
+    print("----------------------------------------------------------------------------------------------------------------")
+    for i in range(len(P_cross)):
+        print("{:.4f}\t\t{:.4f}\t\t{:.4f}\t\t{:.4f}\t\t{:.4f}\t\t{:.4f}".format(pNP[i+1], pNP_err[i+1], pNP_err[i+1]/pNP[i+1], P_cross[i], P_cross_err[i], P_cross_relerr[i]))
+    print("----------------------------------------------------------------------------------------------------------------")
+    print("")
+
+    # Second, calculate P_A according to RETIS, whhere P_A_RETIS[i] = product of P_cross from 0 to i
+    P_A_RETIS = []
+    for i in range(len(P_cross)):
+        if i == 0:
+            P_A_RETIS.append(P_cross[0])
+        else:
+            P_A_RETIS.append(P_A_RETIS[i-1]*P_cross[i])
+
+    # Second bis, we calculate P_A_RETIS_error[i], which is the error of P_A_RETIS[i]
+    P_A_RETIS_error = []
+    for i in range(len(P_cross)):
+        if i == 0:
+            P_A_RETIS_error.append(P_cross_err[0])
+        else:
+            P_A_RETIS_error.append(P_A_RETIS_error[i-1]*P_cross[i]+P_A_RETIS[i-1]*P_cross_err[i])
+    
+    # Now make a table comparing P_A and P_A_RETIS, and their errors
+    print("")
+    print("Comparison of P_A_REPPTIS and P_A_RETIS:")
+    print("----------------------------------------------")
+    print("P_A_REPPTIS\t\tP_A_REPPTIS_err\t\tP_A_RETIS\t\tP_A_RETIS_err")
+    print("----------------------------------------------------------------------------------------------------------------")
+    for i in range(len(P_cross)):
+        print("{:.4f}\t\t{:.4f}\t\t{:.4f}\t\t{:.4f}".format(P_A[i], P_A_err[i], P_A_RETIS[i], P_A_RETIS_error[i]))
+    print("----------------------------------------------------------------------------------------------------------------")
+    print("")
+
+
+    # Third, plot P_A_REPPTIS and P_A_RETIS, and save to a PNG file, 
+    # with the name "Pcross_compared.png", and with nice labels, and with their error bars
+    fig,ax=plt.subplots()
+    ax.errorbar(range(1,len(P_A)+1), P_A, yerr=P_A_err, fmt='o', label=r"$p_0^{\pm}P^{+}_{j}$")
+    ax.errorbar(range(1,len(P_A_RETIS)+1), P_A_RETIS, yerr=P_A_RETIS_error, fmt='o', label=r'$P_A(\lambda_{j}|\lambda_{0})$')
+    ax.set_xlabel('interface')
+    ax.set_ylabel('crossing probability')
+    ax.set_title("Comparison of long crossing probabilities in RETIS and REPPTIS. Nblocks = {}".format(Nblocks))
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig('P_cross_compared.png')
+
+    # Fourth, we plot P_A and P_A_RETIS on a logarithmic scale, where we also plot the error bars
+    fig,ax=plt.subplots()
+    #ax.plot(range(1,len(P_A)+1),P_A,marker='o',label=r"$p_0^{\pm}P^{+}_{j}$")
+    ax.errorbar(range(1,len(P_A)+1), P_A, yerr=P_A_err, fmt='o', label=r"$p_0^{\pm}P^{+}_{j}$")
+    ax.errorbar(range(1,len(P_A_RETIS)+1),P_A_RETIS,yerr=P_A_RETIS_error,marker='o',label=r'$P_A(\lambda_{j}|\lambda_{0})$')
+    #ax.plot(range(1,len(P_A_RETIS)+1),P_A_RETIS,marker='o',label=r'$P_A(\lambda_{j}|\lambda_{0})$')
+    ax.set_xlabel('interface')
+    ax.set_ylabel('crossing probability')
+    ax.set_yscale('log',nonpositive='clip')
+    ax.set_title("Comparison of long crossing probabilities in RETIS and REPPTIS. Nblocks = {}".format(Nblocks))
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig('P_cross_compared_LOG.png')
+
+
+    fig,ax=plt.subplots()        
+    ax.errorbar(range(1,len(P_cross)+1),P_cross,yerr=P_cross_err,color="red",marker='o',linestyle='',
+    capsize=5,capthick=1,elinewidth=1,ecolor='black',barsabove=True,label=r"$P_A(\lambda_{i+1}|\lambda_i}$")
+    for i, (pc, pce, pcre) in enumerate(zip(P_cross, P_cross_err, P_cross_relerr)):
+        ax.text(i+1.15,pc,"{:.2f}".format(pc)+r"$\pm$"+"{:.2f}".format(pcre))
+    ax.errorbar(range(1,len(pNP[1:])+1),pNP[1:],yerr=pNP_err[1:],marker='o',color="blue",linestyle='',
+    capsize=5,capthick=1,elinewidth=1,ecolor='black',barsabove=True,label=r"$p_i^{\pm}$")
+    for i, (pc, pce, pcre) in enumerate(zip(pNP[1:], pNP_err[1:], np.array(pNP_err[1:])/np.array(pNP[1:]))):
+        ax.text(i+1.15,pc,"{:.2f}".format(pc)+r"$\pm$"+"{:.2f}".format(pcre))
+    ax.legend()    
+    ax.set_xlabel('interface')
+    ax.set_ylabel('crossing probability')
+    ax.set_title("Short crossing probabilities in REPPTIS and RETIS. Nblocks = {}".format(Nblocks))
+    fig.tight_layout()
+    fig.savefig('shortcross_compared.png')
+
+    # fig,ax=plt.subplots()
+    # ax.errorbar(range(1,len(P_cross)+1),P_cross,yerr=P_cross_err,marker='o')
+    # ax.set_xlabel('interface')
+    # ax.set_ylabel('crossing probability')
+    # ax.set_title('RETIS short crossing probabilities')
+    # fig.tight_layout()
+    # fig.savefig('Pcross_error.png')
+
 
 def compare_cross_probabilities(pPP, pPN, pNP, pNN, P_plus, P_min, P_A, P_cross, P_cross_err, P_cross_relerr):
     """
@@ -556,7 +864,6 @@ def compare_cross_probabilities(pPP, pPN, pNP, pNN, P_plus, P_min, P_A, P_cross,
     # ax.set_title('RETIS short crossing probabilities')
     # fig.tight_layout()
     # fig.savefig('Pcross_error.png')
-
 
 def create_order_distributions(pathensembles, orderparameters, nbins = 50, verbose = True, flag = "ACC"):
     """
@@ -679,3 +986,5 @@ def get_cross_rate(pe, verbose = True):
         print("Crossing rate without weights for {} is {}".format(pe.name, 
             np.sum(lmr_mask)/np.sum(flagmask)))
     return cross_rate
+
+
