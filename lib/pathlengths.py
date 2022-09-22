@@ -531,7 +531,7 @@ def compare_cross_probabilities(pPP, pPN, pNP, pNN, P_plus, P_min, P_A, P_cross,
     #ax.plot(range(1,len(P_A_RETIS)+1),P_A_RETIS,marker='o',label=r'$P_A(\lambda_{j}|\lambda_{0})$')
     ax.set_xlabel('interface')
     ax.set_ylabel('crossing probability')
-    ax.set_yscale('log',nonposy='clip')
+    ax.set_yscale('log',nonpositive='clip')
     ax.set_title("Comparison of long crossing probabilities in RETIS and REPPTIS")
     ax.legend()
     fig.tight_layout()
