@@ -770,15 +770,15 @@ def compare_cross_probabilities_blockavg(pPP, pPN, pNP, pNN, P_plus, P_min, P_A,
     First, print a table with pNP, pNP_err, pNP_relerr, P_cross, P_cross_err and P_cross_relerr. 
     """
     import matplotlib.pyplot as plt
-    print("")
+    # Print again, but with scientific notation up to 8 decimals
     print("Comparison of short crossing probabilities:")
     print("----------------------------------------------")
-    print("   \t\tREPPTIS\t\t              \t       \t\t  RETIS    \t              ")
+    print("   \t\t\tREPPTIS\t\t              \t       \t\t  RETIS    \t              ")
     print("--------------------------------------------------------------------------------")
-    print("pNP\t\tpNP_err\t\tpNP_relerr [%]\tP_cross\t\tP_cross_err\tP_cross_relerr [%]")
+    print("pNP\t\t\tpNP_err\t\tpNP_relerr [%]\t\tP_cross\t\tP_cross_err\t\tP_cross_relerr [%]")
     print("--------------------------------------------------------------------------------")
     for i in range(len(P_cross)):
-        print("{:.4f}\t\t{:.4f}\t\t{:.4f}\t\t{:.4f}\t\t{:.4f}\t\t{:.4f}".format(pNP[i+1], pNP_err[i+1], (pNP_err[i+1]/pNP[i+1])*100 if pNP_err[i+1] != 0 else 0, P_cross[i], P_cross_err[i], P_cross_relerr[i]))
+        print("{:.8e}\t\t{:.8e}\t\t{:.4e}\t\t{:.8e}\t\t{:.8e}\t\t{:.4e}".format(pNP[i+1], pNP_err[i+1]/np.sqrt(Nblocks), (pNP_err[i+1]/np.sqrt(Nblocks)/pNP[i+1])*100 if pNP_err[i+1] != 0 else 0, P_cross[i], P_cross_err[i], P_cross_relerr[i]))
     print("--------------------------------------------------------------------------------")
     print("")
 
@@ -803,8 +803,8 @@ def compare_cross_probabilities_blockavg(pPP, pPN, pNP, pNN, P_plus, P_min, P_A,
     print("Comparison of P_A_REPPTIS and P_A_RETIS:")
     print("----------------------------------------------")
     for i in range(len(P_cross)):
-        print("PPTIS: P({}|0) = {:.4f} +/- {:.4f} ({:.4f}%)\nRETIS: P({}|0) = {:.4f} +/- {:.4f} ({:.4f}%)".format(i+1, 
-            P_A[i], P_A_err[i], (P_A_err[i]/P_A[i])*100 if P_A_err[i] != 0 else 0, i+1, P_A_RETIS[i], 
+        print("PPTIS: P({}|0) = {:.8e} +/- {:.8e} ({:.4e}%)\nRETIS: P({}|0) = {:.8e} +/- {:.8e} ({:.4e}%)".format(i+1, 
+            P_A[i], P_A_err[i]/np.sqrt(Nblocks), (P_A_err[i]/np.sqrt(Nblocks)/P_A[i])*100 if P_A_err[i] != 0 else 0, i+1, P_A_RETIS[i], 
             P_A_RETIS_error[i], (P_A_RETIS_error[i]/P_A_RETIS[i])*100 if P_A_RETIS_error[i] != 0 else 0))
         print("----------------------------------------------")
     print("")
@@ -813,7 +813,7 @@ def compare_cross_probabilities_blockavg(pPP, pPN, pNP, pNN, P_plus, P_min, P_A,
     # Third, plot P_A_REPPTIS and P_A_RETIS, and save to a PNG file, 
     # with the name "Pcross_compared.png", and with nice labels, and with their error bars
     fig,ax=plt.subplots()
-    ax.errorbar(range(1,len(P_A)+1), P_A, yerr=P_A_err, fmt='o', label=r"$p_0^{\pm}P^{+}_{j}$")
+    ax.errorbar(range(1,len(P_A)+1), P_A, yerr=P_A_err/np.sqrt(Nblocks), fmt='o', label=r"$p_0^{\pm}P^{+}_{j}$")
     ax.errorbar(range(1,len(P_A_RETIS)+1), P_A_RETIS, yerr=P_A_RETIS_error, fmt='o', label=r'$P_A(\lambda_{j}|\lambda_{0})$')
     ax.set_xlabel('interface')
     ax.set_ylabel('crossing probability')
@@ -825,7 +825,7 @@ def compare_cross_probabilities_blockavg(pPP, pPN, pNP, pNN, P_plus, P_min, P_A,
     # Fourth, we plot P_A and P_A_RETIS on a logarithmic scale, where we also plot the error bars
     fig,ax=plt.subplots()
     #ax.plot(range(1,len(P_A)+1),P_A,marker='o',label=r"$p_0^{\pm}P^{+}_{j}$")
-    ax.errorbar(range(1,len(P_A)+1), P_A, yerr=P_A_err, fmt='o', label=r"$p_0^{\pm}P^{+}_{j}$")
+    ax.errorbar(range(1,len(P_A)+1), P_A, yerr=P_A_err/np.sqrt(Nblocks), fmt='o', label=r"$p_0^{\pm}P^{+}_{j}$")
     ax.errorbar(range(1,len(P_A_RETIS)+1),P_A_RETIS,yerr=P_A_RETIS_error,marker='o',label=r'$P_A(\lambda_{j}|\lambda_{0})$')
     #ax.plot(range(1,len(P_A_RETIS)+1),P_A_RETIS,marker='o',label=r'$P_A(\lambda_{j}|\lambda_{0})$')
     ax.set_xlabel('interface')
@@ -838,10 +838,10 @@ def compare_cross_probabilities_blockavg(pPP, pPN, pNP, pNN, P_plus, P_min, P_A,
 
 
     fig,ax=plt.subplots()        
-    ax.errorbar(range(1,len(P_cross)+1),P_cross,yerr=P_cross_err,color="red",marker='o',linestyle='',
+    ax.errorbar(range(1,len(P_cross)+1),P_cross,yerr=P_cross_err/np.sqrt(Nblocks),color="red",marker='o',linestyle='',
     capsize=5,capthick=1,elinewidth=1,ecolor='black',barsabove=True,label=r"$P_A(\lambda_{i+1}|\lambda_i}$")
     for i, (pc, pce, pcre) in enumerate(zip(P_cross, P_cross_err, P_cross_relerr)):
-        ax.text(i+1.15,pc,"{:.2f}".format(pc)+r"$\pm$"+"{:.2f}%".format(pcre))
+        ax.text(i+1.15,pc,"{:.2f}".format(pc)+r"$\pm$"+"{:.2f}%".format(pcre/np.sqrt(Nblocks)))
     ax.errorbar(range(1,len(pNP[1:])+1),pNP[1:],yerr=pNP_err[1:],marker='o',color="blue",linestyle='',
     capsize=5,capthick=1,elinewidth=1,ecolor='black',barsabove=True,label=r"$p_i^{\pm}$")
     for i, (pc, pce, pcre) in enumerate(zip(pNP[1:], pNP_err[1:], (np.array(pNP_err[1:])/np.array(pNP[1:]))*100 if pNP[1:] != 0 else 0)):
