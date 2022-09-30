@@ -861,6 +861,14 @@ def compare_cross_probabilities_blockavg(pPP, pPN, pNP, pNN, P_plus, P_min, P_A,
     # fig.tight_layout()
     # fig.savefig('Pcross_error.png')
 
+    # Now save all the data to a pickle file. 
+    # This P_A, P_A_err, P_A_RETIS, P_A_RETIS_error, P_cross, P_cross_err, P_cross_relerr, pNP, pNP_err, pNP_relerr, Nblocks
+    # (this is a binary file format that can be read by Python)
+    import pickle
+    with open('Pcross_data.pkl', 'wb') as f:
+        pickle.dump([P_A, P_A_err, P_A_RETIS, P_A_RETIS_error, P_cross, P_cross_err, P_cross_relerr, 
+        pNP, pNP_err, Nblocks], f)
+
 
 def compare_cross_probabilities(pPP, pPN, pNP, pNN, P_plus, P_min, P_A, P_cross, P_cross_err, P_cross_relerr):
     """
