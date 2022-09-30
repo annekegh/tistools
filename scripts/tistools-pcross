@@ -71,6 +71,11 @@ if __name__ == '__main__':
     (pPP, pPN, pNP, pNN, P_plus, P_min, P_A, pPP_err, pPN_err, pNP_err, pNN_err, 
     P_plus_err, P_min_err, P_A_err) = calculate_cross_probabilities_blockavg(pathensembles, 
     verbose=True, Nblocks=args.nblocks)
+    import pickle 
+    #pickle the output of the previous funciton
+    with open("cross_probabilities_blockavg.pickle", "wb") as f:
+        pickle.dump([pPP, pPN, pNP, pNN, P_plus, P_min, P_A, pPP_err, pPN_err, pNP_err, pNN_err, 
+        P_plus_err, P_min_err, P_A_err, args.nblocks], f)
     if args.compare:
         compare_cross_probabilities_blockavg(pPP, pPN, pNP, pNN, P_plus, 
         P_min, P_A, pPP_err, pPN_err, pNP_err, pNN_err, P_plus_err, P_min_err, 
