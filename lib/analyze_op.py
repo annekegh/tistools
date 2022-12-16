@@ -321,7 +321,17 @@ def calc_xi(lmrs,weights):
     n_lstarstar = np.sum((lmrs=="L**")*weights)
     n_ends_l = n_lml + n_rml + n_lstarl + n_rstarl + n_lstarstar   # TODO needed indeed??? checking with Sander/Titus
     n_ends_r = n_lmr + n_rmr + n_lstarr + n_rstarr
+
     n_all = np.sum(weights)
+
+    # the load path (ld) can be LM* or so, and still be accepted with a weight>0
+    # (a bit weird)
+    # therefore, I SKIP the load path if this is the case,
+    # in the calculation of xi
+    if weights[0] > 0:
+        if lmrs[0] not in ["LML", "RML", "RMR", "LMR", "L*L", "R*L", "L*R", "R*R"]:
+            n_all = np.sum(weights[1:])  # skip this first path
+
     assert n_all == n_ends_r + n_ends_l
     if n_ends_r > 0:
         print("big reweight!!")
