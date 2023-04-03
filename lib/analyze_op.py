@@ -41,7 +41,7 @@ def create_figure_trajs(figbasename,data_op,length,accepted,first,acc=True,inter
 
             # plot order parameter:
             # time starts from zero, op is in data col=0
-            plt.plot(da[:,0],linewidth=2)
+            plt.plot(da[:,0],linewidth=1,marker='o',markersize=3)
             # plot other particles alos, these are in col=1...
             for k in range(1,da.shape[1]):
                 plt.plot(da[:,k])
