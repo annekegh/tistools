@@ -57,6 +57,11 @@ if __name__ == '__main__':
         pe = read_pathensemble(fol+"/pathensemble.txt")
         pe.set_name(fol[len(indir):])
         pe.set_interfaces([LMR_interfaces[i], LMR_strings[i]])
+        if i==0:
+            pe.set_zero_minus_one = True
+            pe.set_in_zero_minus_one = True
+        if i==1:
+            pe.set_in_zero_plus = True 
         print("pathensemble info: ")
         pprint(vars(pe))
         pathensembles.append(pe)

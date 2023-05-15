@@ -9,6 +9,7 @@ def set_flags_ACC_REJ():
     REJFLAGS += ['MCR']
     REJFLAGS += ['TSS','TSA']
     REJFLAGS += ['HAS','CSA','NSG']
+    REJFLAGS += ['SWD']
     """
          MCR': 'Momenta change rejection',
         'BWI': 'Backward trajectory end at wrong interface',
@@ -26,7 +27,8 @@ def set_flags_ACC_REJ():
         'TSA': 'Rejection due to the target swap acceptance criterium',
         'HAS': 'High acceptance swap rejection for SS/CS detailed balance',
         'CSA': 'Common Sense super detailed balance rejection',
-        'NSG': 'Path has no suitable segments'.
+        'NSG': 'Path has no suitable segments',
+        'SWD': 'PPTIS swap with incompatible propagation direction'.
     """
 
     ACCFLAGS = ['ACC',]
@@ -49,24 +51,31 @@ def set_flags_ACC_REJ():
     return ACCFLAGS, REJFLAGS
 
 class PathEnsemble(object):
-    def __init__(self,data):
-        # data is a list of lines.split() in the pathensemble.txt file
-        self.cyclenumbers   = np.array([int(dat[0]) for dat in data])
-        self.pathnumbers    = np.array([int(dat[1]) for dat in data])
-        self.newpathnumbers = np.array([int(dat[2]) for dat in data])
-        self.lmrs       = np.array(["".join(dat[3:6]) for dat in data])
-        self.lengths    = np.array([int(dat[6]) for dat in data])
-        self.flags      = np.array([dat[7] for dat in data])
-        self.generation = np.array([dat[8] for dat in data])
+    def __init__(self,data=None):
+        if data is not None:
+            # data is a list of lines.split() in the pathensemble.txt file
+            self.cyclenumbers   = np.array([int(dat[0]) for dat in data])
+            self.pathnumbers    = np.array([int(dat[1]) for dat in data])
+            self.newpathnumbers = np.array([int(dat[2]) for dat in data])
+            self.lmrs       = np.array(["".join(dat[3:6]) for dat in data])
+            self.lengths    = np.array([int(dat[6]) for dat in data])
+            self.flags      = np.array([dat[7] for dat in data])
+            self.generation = np.array([dat[8] for dat in data])
+            self.lambmins   = np.array([float(dat[9]) for dat in data])
+            self.lambmaxs   = np.array([float(dat[10]) for dat in data])
 
-        self.ncycle     = len(self.lengths)
-        self.totaltime  = np.sum(self.lengths)
-        # consistency is automatic
+            self.ncycle     = len(self.lengths)
+            self.totaltime  = np.sum(self.lengths)
+            # consistency is automatic
 
-        self.weights = []
-        self.shootlinks = np.full_like(self.cyclenumbers,None,dtype=object)
-        self.name = ""
-        self.interfaces = [] # [ [L, M, R], string([L,M,R]) ] 2 lists in a list
+            self.weights = []
+            self.shootlinks = np.full_like(self.cyclenumbers,None,dtype=object)
+            self.name = ""
+            self.interfaces = [] # [ [L, M, R], string([L,M,R]) ] 2 lists in a list
+
+            self.has_zero_minus_one = False 
+            self.in_zero_minus = False 
+            self.in_zero_plus = False
 
     def set_name(self, name):
         self.name = name
@@ -76,6 +85,15 @@ class PathEnsemble(object):
 
     def set_interfaces(self, interfaces):
         self.interfaces = interfaces
+
+    def set_zero_minus_one(self, has_zero_minus_one):
+        self.has_zero_minus_one = has_zero_minus_one
+
+    def set_in_zero_minus(self, in_zero_minus):
+        self.in_zero_minus = in_zero_minus
+
+    def set_in_zero_plus(self, in_zero_plus):
+        self.in_zero_plus = in_zero_plus
 
     def update_shootlink(self,cycnum,link):
         cycnumlist = (self.cyclenumbers).tolist()
@@ -91,6 +109,118 @@ class PathEnsemble(object):
         import pickle 
         with open("pe_"+fn+".pkl", 'wb') as g:
             pickle.dump(self, g, pickle.HIGHEST_PROTOCOL)
+
+    def unify_pe(self):
+        """ Unify the pathensemble by replacing the zero weight
+        paths with the previous non-zero weight path. This only
+        works if high_acceptance = False (?). 
+        
+        """
+        new_pe = PathEnsemble()
+        new_pe.cyclenumbers = self.cyclenumbers
+        new_pe.pathnumbers = self.pathnumbers
+        new_pe.newpathnumbers = self.newpathnumbers
+        new_pe.weights = np.ones_like(self.weights)
+        new_pe.lmrs = np.repeat(self.lmrs, self.weights)
+        new_pe.lengths = np.repeat(self.lengths, self.weights)
+        new_pe.flags = np.repeat(self.flags, self.weights)
+        new_pe.generation = np.repeat(self.generation, self.weights)
+        new_pe.lambmins = np.repeat(self.lambmins, self.weights)
+        new_pe.lambmaxs = np.repeat(self.lambmaxs, self.weights)
+        new_pe.interfaces = self.interfaces
+        new_pe.name = self.name
+        new_pe.has_zero_minus_one = self.has_zero_minus_one
+        new_pe.in_zero_minus = self.in_zero_minus
+        new_pe.in_zero_plus = self.in_zero_plus
+
+        print("Are all weights 1? ", np.all(new_pe.weights == 1))
+        print("Are all paths accepted? ", np.all(new_pe.flags == "ACC"))
+
+        return new_pe
+
+    def sample_pe(self, cycle_ids):
+        """ Only keep the cyclenumbers in cycle_ids. """
+        new_pe = PathEnsemble()
+        new_pe.cyclenumbers = self.cyclenumbers[cycle_ids]
+        new_pe.pathnumbers = self.pathnumbers[cycle_ids]
+        new_pe.newpathnumbers = self.newpathnumbers[cycle_ids]
+        new_pe.lmrs = self.lmrs[cycle_ids]
+        new_pe.lengths = self.lengths[cycle_ids]
+        new_pe.flags = self.flags[cycle_ids]
+        new_pe.generation = self.generation[cycle_ids]
+        new_pe.weights = self.weights[cycle_ids]
+        new_pe.lambmins = self.lambmins[cycle_ids]
+        new_pe.lambmaxs = self.lambmaxs[cycle_ids]
+        #new_pe.shootlinks = self.shootlinks[cycle_ids]
+        new_pe.name = self.name
+        new_pe.interfaces = self.interfaces
+        new_pe.has_zero_minus_one = self.has_zero_minus_one
+        new_pe.in_zero_minus = self.in_zero_minus
+        new_pe.in_zero_plus = self.in_zero_plus
+        return new_pe
+
+
+    def bootstrap_pe(self, N, Bcycle, Acycle=0):
+        """Bootstrap the path ensemble by sampling N elements within the cycle 
+        range [Acycle, Bcycle].
+
+        Note1: Weights should already be set for the original path ensemble
+        Note2: Load paths should be removed from the path ensemble before 
+               bootstrapping
+        Note3: We bootstrap indices of the cycles, and then use the indices to
+               bootstrap the path ensemble
+
+        Parameters
+        ----------
+        N : int
+            Number of paths to sample
+        Bcycle : int
+            Upper bound of the cycle range
+        Acycle : int, optional
+            Lower bound of the cycle range. The default is 0.
+        """
+
+        import random
+
+        # 1. Get the indices of cycles within the range [Acycle, Bcycle]. 
+        #    Because of restarts, pe.cyclenumbers may not be a continuous range.
+        #    We only want to select accepted paths, with a probability given by
+        #    the weights. Discard rejected paths, AND load paths. 
+        idx, idx_w = [], []
+        for i in range(len(self.cyclenumbers)):
+            if self.cyclenumbers[i] >= Acycle and \
+               self.cyclenumbers[i] <= Bcycle and \
+               self.flags[i] == 'ACC' and \
+               self.generation[i] != 'ld':
+                idx.append(i)
+                idx_w.append(self.weights[i])
+
+        # 2. Sample N indices from the list of indices, respecting the weights
+        idx_sample = random.choices(idx, weights=idx_w, k=N)
+
+        # 3. Create a new path ensemble object
+        pe_new = PathEnsemble()
+
+        # 4. Update the path ensemble object with the sampled indices
+        pe_new.cyclenumbers = self.cyclenumbers[idx_sample]
+        pe_new.pathnumbers = self.pathnumbers[idx_sample]
+        pe_new.newpathnumbers = self.newpathnumbers[idx_sample]
+        pe_new.lmrs = self.lmrs[idx_sample]
+        pe_new.lengths = self.lengths[idx_sample]
+        pe_new.flags = self.flags[idx_sample]
+        pe_new.generation = self.generation[idx_sample]
+        pe_new.weights = self.weights[idx_sample]
+        pe_new.lambmins = self.lambmins[idx_sample]
+        pe_new.lambmaxs = self.lambmaxs[idx_sample]
+        pe_new.name = self.name
+        pe_new.interfaces = self.interfaces
+        #pe_new.shootlinks = self.shootlinks[idx_sample]
+        pe_new.in_zero_minus = self.in_zero_minus
+        pe_new.in_zero_plus = self.in_zero_plus
+        pe_new.has_zero_minus_one = self.has_zero_minus_one
+
+        return pe_new    
+
 
 class OrderParameter(object):
 

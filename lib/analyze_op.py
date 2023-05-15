@@ -8,7 +8,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from .reading import *
 
-ACCFLAGS,REJFLAGS = set_flags_ACC_REJ() # Hard-coded rejection flags found in output files
+# Hard-coded rejection flags found in output files
+ACCFLAGS,REJFLAGS = set_flags_ACC_REJ() 
 
 
 #---------------------
@@ -319,14 +320,14 @@ def calc_xi(lmrs,weights):
     n_ends_r = n_lmr + n_rmr + n_lstarr + n_rstarr
 
     n_all = np.sum(weights)
-    
+
     # the load path (ld) can be LM* or so, and still be accepted with a weight>0
-￼   # (a bit weird)
-￼   # therefore, I SKIP the load path if this is the case,
-￼   # in the calculation of xi
-￼   if weights[0] > 0:
-￼       if lmrs[0] not in ["LML", "RML", "RMR", "LMR", "L*L", "R*L", "L*R", "R*R"]:
-￼           n_all = np.sum(weights[1:])  # skip this first path
+    # # (a bit weird). Therefore, I SKIP the load path if this is the case, ￼   
+    # in the calculation of xi
+
+    if weights[0] > 0:
+        if lmrs[0] not in ["LML", "RML", "RMR", "LMR", "L*L", "R*L", "L*R", "R*R"]:
+            n_all = np.sum(weights[1:])  # skip this first path
     
     assert n_all == n_ends_r + n_ends_l
     

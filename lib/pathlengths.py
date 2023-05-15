@@ -7,88 +7,41 @@ ACCFLAGS,REJFLAGS = set_flags_ACC_REJ()
 
 def get_lmr_masks(pe, masktype="all"):
     """
-    Returns boolean arrays
+    Return one (or all) boolean array(s) of the paths, based on whether or not
+    path i is of type masktype. 
     """
+    # Define the types of paths 
+    types = ["RML","RMR","LMR","LML","***","**L","**R","*M*","*ML",
+             "*MR","L**","L*L","LM*","R**","R*R","RM*"]
+    
+    # Obtain the boolean masks for each path type
+    masks = [pe.lmrs == t for t in types]
 
-    # Path type masks
-    rml = pe.lmrs == "RML"
-    rmr = pe.lmrs == "RMR"
-    lmr = pe.lmrs == "LMR"
-    lml = pe.lmrs == "LML"
-    sss = pe.lmrs == "***"
-    ssl = pe.lmrs == "**L"
-    ssr = pe.lmrs == "**R"
-    sms = pe.lmrs == "*M*"
-    sml = pe.lmrs == "*ML"
-    smr = pe.lmrs == "*MR"
-    lss = pe.lmrs == "L**"
-    lsl = pe.lmrs == "L*L"
-    lms = pe.lmrs == "LM*"
-    rss = pe.lmrs == "R**"
-    rsr = pe.lmrs == "R*R"
-    rms = pe.lmrs == "RM*"
+    # Create a dictionary of types with their corresponding masks
+    masks = dict(zip(types, masks))
 
     if masktype == "all":
-        return [rml,rmr,lmr,lml,sss,ssl,ssr,sms,sml,smr,lss,lsl,lms,
-                rss,rsr,rms], \
-                ["RML","RMR","LMR","LML","***","**L","**R","*M*","*ML",
-                "*MR","L**","L*L","LM*","R**","R*R","RM*"]
-    elif masktype == "rml":
-        return rml
-    elif masktype == "rmr":
-        return rmr
-    elif masktype == "lmr":
-        return lmr
-    elif masktype == "lml":
-        return lml
-    elif masktype == "sss":
-        return sss
-    elif masktype == "ssl":
-        return ssl
-    elif masktype == "ssr":
-        return ssr
-    elif masktype == "sms":
-        return sms
-    elif masktype == "sml":
-        return sml
-    elif masktype == "smr":
-        return smr
-    elif masktype == "lss":
-        return lss
-    elif masktype == "lsl":
-        return lsl
-    elif masktype == "lms":
-        return lms
-    elif masktype == "rss":
-        return rss
-    elif masktype == "rsr":
-        return rsr
-    elif masktype == "rms":
-        return rms
+        return masks, types
     else:
-        raise ValueError("Invalid masktype")
+        return masks[masktype], masktype
 
-
-def get_acc_mask(pe):
-    """
-    Returns boolean array
-    """
-    acc = pe.flags == "ACC"
-    return acc
 
 def get_flag_mask(pe, status):
     """
     Returns boolean array
     """
-    flagmask = pe.flags == status 
-    return flagmask
+    if status == "REJ":
+        return ~get_flag_mask(pe, "ACC")
+    else:
+        return pe.flags == status 
+
 
 def get_generation_mask(pe, generation):
     """
     Returns boolean array
     """
-    genmask = pe.generation == generation
-    return genmask
+    return pe.generation == generation
+
 
 def select_with_masks(A, masks):
     """
@@ -100,16 +53,15 @@ def select_with_masks(A, masks):
             with the same shape as A
     """
     # first check whether masks are for the same object array, 
-    # meaning they must have the same size as  A
+    # meaning they must have the same shape as A
     for mask in masks:
         assert mask.shape == A.shape
-    # Start with full True array, then take unions with masks
-    union_mask = np.full(A.shape, True)
-    for mask in masks:
-        union_mask = union_mask & mask
+    # now we can use the masks to select the elements of A
+    union_mask = np.all(masks,axis=0).astype(bool)
     return A[union_mask]
 
-def plot_pathlength_distributions_separately(pe, nbins = 50, save=True, dpi=500,\
+
+def plot_pathlength_distributions_separately(pe,nbins = 50, save=True, dpi=500,\
      do_pdf = False, fn = "", status = "ACC", force_bins = False, xmin = 0):
     """
     Plots the pathlength distributions for the given path ensemble.
@@ -117,15 +69,11 @@ def plot_pathlength_distributions_separately(pe, nbins = 50, save=True, dpi=500,
     # get pathlengths
     pl = pe.lengths
     # get weights of the paths
-    w, ncycle_true = get_weights(pe.flags, ACCFLAGS, REJFLAGS)
-    # get acc mask
+    w, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS)
+    # get flag masks
     assert (status == "ACC") or (status == "REJ") or (status in REJFLAGS)
-    if status == "ACC":
-        flag_mask = get_acc_mask(pe)
-    elif status == "REJ":
-        flag_mask = ~get_acc_mask(pe)
-    else:
-        flag_mask = get_flag_mask(pe, status)
+    flag_mask = get_flag_mask(pe, status)
+    # get the number of paths with the given flag
     ncycle_flag = np.sum(flag_mask)
     # get the lmr masks
     masks, mask_names = get_lmr_masks(pe)
@@ -135,57 +83,69 @@ def plot_pathlength_distributions_separately(pe, nbins = 50, save=True, dpi=500,
     for mask, maskname in zip(masks,mask_names):
         pl_mask = select_with_masks(pl, [mask, flag_mask, ~load_mask])
         w_mask = select_with_masks(w, [mask, flag_mask, ~load_mask])
-    
-        if pl_mask.tolist(): # If there are any paths in the mask, we check for better binsize
+        # If there are any paths in the mask, we check for better binsize
+        if pl_mask.tolist(): 
             if nbins > np.max(pl_mask):
                 if force_bins == False:
-                    print('\n'.join(("The amount of bins is larger than the maximum pathlength in the mask.",\
-                    "Setting nbins to {}".format(np.max(pl_mask)))))
-                    nbins_use = np.max(pl_mask)
+                    print('\n'.join(("The amount of bins is larger than the ",\
+                                     "maximum pathlength in the mask.",\
+                                     f"Setting nbins to {np.max(pl_mask)}")))
+                    nbins = np.max(pl_mask)
                 else:
-                    print('\n'.join(("The amount of bins is larger than the maximum pathlength in the mask.",\
-                    "set force_bins=False to allow for variable bin sizes")))
-                    nbins_use = nbins
-            else:
-                nbins_use = nbins
-        else:
-            nbins_use = nbins
-            # If we want to plot rejected paths, we give all paths unit weight...
+                    print('\n'.join(("The amount of bins is larger than the ",\
+                                     "maximum pathlength in the mask.",\
+                                     "set force_bins=False to allow for ",\
+                                     "variable bin sizes")))
+        # If we want to plot rejected paths, we give all paths unit weight...
         if status != "ACC":
             w_mask = np.ones_like(w_mask)
         plot_pathlength_distribution(pl_mask, w_mask, ncycle_flag, maskname, \
-            name=pe.name, nbins=nbins_use, save=save, dpi=dpi, do_pdf=do_pdf, \
+            name=pe.name, nbins=nbins, save=save, dpi=dpi, do_pdf=do_pdf, \
             fn=fn, status = status, xmin = xmin)
 
-def plot_pathlength_distribution(pl, w, ncycle, maskname, nbins=50, \
-    name="", save=True, dpi=500, do_pdf=False, fn="", status = "ACC", xmin = 0):
+
+def plot_pathlength_distribution(pl, w, ncycle, maskname, nbins=50, 
+                                 name="", save=True, dpi=500, do_pdf=False, 
+                                 fn="", status = "ACC", xmin = 0):
     import matplotlib.pyplot as plt
-    ncycle_mask = len(w)
+    ncycle_mask = len(w)  # number of paths having this mask (not the weight)
     hist, bin_centers = get_pathlength_distribution(pl, w, nbins)
     fig,ax = plt.subplots()
     ax.bar(bin_centers, hist, width=bin_centers[-1]/nbins)
     ax.set_xlabel("Pathlength ({} bins, bwidth = {})".format(nbins, \
         np.round(bin_centers[-1]/nbins,2)))
     ax.set_ylabel("Counts")
-    ax.set_title("Pathlength distribution for {} ensemble\n({} of {} paths with status {}) [w = {}]"\
-        .format(name, ncycle_mask, ncycle, maskname,str(np.sum(hist))))
+    ax.set_title(f"Pathlength distribution for {name} ensemble\n" + \
+                 f"({ncycle_mask} of {ncycle} paths with status {maskname})" + \
+                 f" [w = {np.sum(hist)}]")
     ax.set_xlim(left=xmin)
     fig.tight_layout()
     if save:
-        fig.savefig(fn+"pathlength_distribution_{}_{}_{}.png".format(name, maskname, status), dpi=dpi)
+        fig.savefig(fn+f"pathlen_distrib_{name}_{maskname}_{status}.png", 
+                    dpi=dpi)
         if do_pdf:
-            fig.savefig(fn+"pathlength_distribution_{}_{}_{}.pdf".format(name, maskname, status))
+            fig.savefig(fn+f"pathlen_distrib_{name}_{maskname}_{status}.pdf")
     else:
         fig.show()
 
+
 def get_pathlength_distribution(pl, w, nbins=50):
+    """Returns the pathlength distribution for the given path ensemble.
+    pl: pathlengths (np.array)
+    w: weights (np.array)
+    nbins: number of bins (int)
+    """
+    # Subtract two from the pathlengths to get rid of the start and endpoint,
+    # which are not part of the pathensemble
     pl = np.array([el-2 for el in pl])
     hist, bin_edges = np.histogram(pl, bins=nbins, weights=w)
     bin_centers = (bin_edges[1:] + bin_edges[:-1])/2
     return hist, bin_centers
 
-def plot_pathlength_distributions_together(pe, nbins = 50, save=True, dpi=500, do_pdf=False, fn="",\
-     status = "ACC", force_bins=False, xmin = 0):
+
+def plot_pathlength_distributions_together(pe, nbins = 50, save=True, dpi=500, 
+                                           do_pdf=False, fn="", status = "ACC", 
+                                           force_bins=False, xmin = 0):
     """
     Plots the pathlength distributions for the given path ensemble.
     """
@@ -198,12 +158,8 @@ def plot_pathlength_distributions_together(pe, nbins = 50, save=True, dpi=500, d
     w, ncycle_true = get_weights(pe.flags, ACCFLAGS, REJFLAGS)
     # get acc mask
     assert (status == "ACC") or (status == "REJ") or (status in REJFLAGS)
-    if status == "ACC":
-        flagmask = get_acc_mask(pe)
-    if status == "REJ":
-        flagmask = ~get_acc_mask(pe)
-    else: 
-        flagmask = get_flag_mask(pe, status)
+    flagmask = get_flag_mask(pe, status)
+    # get the number of paths with the given flag
     ncycle_flag = np.sum(flagmask)
     # get the lmr masks
     masks, mask_names = get_lmr_masks(pe)
@@ -213,64 +169,71 @@ def plot_pathlength_distributions_together(pe, nbins = 50, save=True, dpi=500, d
     for mask, maskname in zip(masks,mask_names):
         pl_mask = select_with_masks(pl, [mask, flagmask, ~load_mask])
         w_mask = select_with_masks(w, [mask, flagmask, ~load_mask])
-        if pl_mask.tolist(): # If there are any paths in the mask, we check for better binsize
+        # If there are any paths in the mask, we check for better binsize
+        if pl_mask.tolist():
             if nbins > np.max(pl_mask):
                 if force_bins == False:
-                    print('\n'.join(("The amount of bins is larger than the maximum pathlength in the mask.",\
-                    "Setting nbins to {}".format(np.max(pl_mask)))))
-                    nbins_use = np.max(pl_mask)
+                    print('\n'.join(("The amount of bins is larger than the ",
+                                     "maximum pathlength in the mask.",
+                                     f"Setting nbins to {np.max(pl_mask)}")))
+                    nbins = np.max(pl_mask)
                 else:
-                    print('\n'.join(("The amount of bins is larger than the maximum pathlength in the mask.",\
-                    "set force_bins=False to allow for variable bin sizes")))
-                    nbins_use = nbins
-            else: nbins_use = nbins
-        else: nbins_use = nbins
+                    print('\n'.join(("The amount of bins is larger than the ",
+                                     "maximum pathlength in the mask.",
+                                     "set force_bins=False to allow for ",
+                                     "variable bin sizes")))
         # If we want to plot rejected paths, we give all paths unit weight...
         if status != "ACC":
             w_mask = np.ones_like(w_mask)
-        ncycle_mask = len(w_mask)
-        hist, bin_centers = get_pathlength_distribution(pl_mask, w_mask, nbins_use)
-        ax[i//4,i%4].bar(bin_centers, hist, width=bin_centers[-1]/nbins_use)
-        ax[i//4,i%4].set_xlabel("Pathlength ({} bins, bwidth = {})".format(nbins_use,\
-             np.round(bin_centers[-1]/nbins_use, 2)))
+        ncycle_mask = len(w_mask)  # number of paths having this mask
+        hist, bin_centers = get_pathlength_distribution(pl_mask, w_mask, nbins)
+        ax[i//4,i%4].bar(bin_centers, hist, width=bin_centers[-1]/nbins)
+        ax[i//4,i%4].set_xlabel(f"Pathlength ({nbins} bins, bwidth = "+\
+                                f"{np.round(bin_centers[-1]/nbins,2)})")
         ax[i//4,i%4].set_ylabel("Counts")
         ax[i//4,i%4].set_title("{} of {} paths\n status {} [w = {}]"\
             .format(ncycle_mask, ncycle_flag, maskname,str(np.sum(hist))))
         ax[i//4,i%4].set_xlim(left=xmin)
         i += 1
     if status == "ACC":
-        fig.suptitle("Pathlength distributions for {} ensemble, with {} {} paths of {} total."\
-            .format(pe.name, ncycle_flag, status, ncycle_true),fontsize=16)
+        fig.suptitle(f"Pathlength distributions for {pe.name} ensemble, with "+\
+                     f"{ncycle_flag} {status} paths of {ncycle_true} total.",
+                     fontsize=16)
     else:
-        fig.suptitle("Pathlength distributions for {} paths, with {} {} paths of {} total."\
-            .format(pe.name, ncycle_flag, status, ncycle_true),fontsize=16)
+        fig.suptitle(f"Pathlength distributions for {pe.name} paths, with "+\
+                     f"{ncycle_flag} {status} paths of {ncycle_true} total.",
+                     fontsize=16)
     fig.tight_layout()
     if save:
-        fig.savefig(fn+"{}_{}_pathlen_distrib.png".format(pe.name, status), dpi=dpi)
+        fig.savefig(fn+f"{pe.name}_{status}_pathlen_distrib.png", dpi=dpi)
         if do_pdf:
-            fig.savefig(fn+"{}_{}_pathlen_distrib.pdf".format(pe.name, status))
+            fig.savefig(fn+f"{pe.name}_{status}_pathlen_distrib.pdf")
     else:
         fig.show()
 
 
-def create_pathlength_distributions(pathensembles, nbins=50, save=True, dpi=500, do_pdf=False, \
-    fn="",plot_separately=False, status = "ACC", force_bins=False, xmin=0):
+def create_pathlength_distributions(pathensembles, nbins=50, save=True, dpi=500,
+                                    do_pdf=False, fn="", plot_separately=False, 
+                                    status = "ACC", force_bins=False, xmin=0):
     """
     Creates the pathlength distributions for the given path ensembles.
     """
     print(pathensembles)
     for pe in pathensembles:
         if plot_separately:
-            plot_pathlength_distributions_separately(pe, nbins=nbins, save=save, dpi=dpi,\
-                 do_pdf=do_pdf, fn=fn, status=status, force_bins=force_bins, xmin=xmin)
-        plot_pathlength_distributions_together(pe, nbins=nbins, save=save, dpi=dpi,\
-             do_pdf=do_pdf, fn=fn, status=status, force_bins=force_bins, xmin=xmin)
+            plot_pathlength_distributions_separately(pe, nbins=nbins, save=save,
+                dpi=dpi, do_pdf=do_pdf, fn=fn, status=status,
+                force_bins=force_bins, xmin=xmin)
+        plot_pathlength_distributions_together(pe, nbins=nbins, save=save, 
+            dpi=dpi, do_pdf=do_pdf, fn=fn, status=status, force_bins=force_bins,
+            xmin=xmin)
 
 
 
 
 ### CROSSING PROBABILITIES ###
-def get_pptis_shortcross_probabilities(pe,inzero=False,lambda_minone=True,verbose=False):
+def get_pptis_shortcross_probabilities(pe, inzero=False, lambda_minone=True, 
+                                       verbose=False):
     """
     We denote P_a^b by pab, where a is either +(P) or -(N).
     Thus we have 
@@ -284,7 +247,7 @@ def get_pptis_shortcross_probabilities(pe,inzero=False,lambda_minone=True,verbos
     # get weights of the paths
     w, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose = False)
     # get acc mask
-    flagmask = get_acc_mask(pe)
+    flagmask = get_flag_mask(pe, "ACC")
     # get load mask
     load_mask = get_generation_mask(pe, "ld")
     if verbose:
@@ -560,7 +523,7 @@ def get_shortcross_probabilities_blockavg(pe, Nblocks, inzero=False, verbose=Tru
     # get the weights of the paths
     w, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose = False)
     # get acc mask
-    flagmask = get_acc_mask(pe)
+    flagmask = get_flag_mask(pe, "ACC")
     # get load mask
     load_mask = get_generation_mask(pe, "ld")
     if verbose:
@@ -972,7 +935,7 @@ def create_order_distribution(pe,op,nbins=50,verbose=True,flag="ACC"):
     # Get load mask
     loadmask = get_generation_mask(pe, "ld")
     # get acc mask
-    accmask = get_acc_mask(pe)
+    accmask = get_flag_mask(pe,"ACC")
     if flag == "ACC":
         flagmask = accmask
     elif flag == "REJ":
@@ -1052,7 +1015,7 @@ def get_cross_rate(pe, verbose = True):
     w, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS)
     print(np.sum(w))
     # get acc mask
-    flagmask = get_acc_mask(pe)
+    flagmask = get_flag_mask(pe, "ACC")
     # get load mask
     loadmask = get_generation_mask(pe, "ld")
     # get the lmr masks
@@ -1076,4 +1039,17 @@ def get_cross_rate(pe, verbose = True):
             np.sum(lmr_mask)/np.sum(flagmask)))
     return cross_rate
 
-
+def block_average(data, N=10):
+    """
+    Block averages the data. The data is split into N blocks, and the mean of
+    each block is calculated. The mean and standard deviation of the means is 
+    returned.
+    """
+    # Split the data into N blocks
+    blocks = np.array_split(data, N)
+    # Calculate the mean of each block
+    means = np.array([np.mean(block) for block in blocks])
+    # Calculate the mean and standard deviation of the means
+    mean = np.mean(means)
+    std = np.std(means)
+    return mean, std
