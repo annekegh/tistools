@@ -449,8 +449,11 @@ def filter_gmx_trajectory(traj, group_idx, index_file,
     cmd = ["gmx", "trjconv", "-f", traj, "-s", topol_file, "-o", outfn]
     if index_file is not None:
         cmd += ["-n", index_file]
-    p = subprocess.Popen(cmd, stdin=subprocess.Pipe, shell = False)
-    p.communicate(input=b""+str(group_idx)+"\n")
+    print("Doing command: "+str(cmd))
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, shell = False)
+    input_str = str(group_idx)+"\n"
+    input_bytes = input_str.encode()
+    p.communicate(input_bytes)
     p.wait()
     if delete:  
         os.remove(traj)
