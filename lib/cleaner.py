@@ -438,3 +438,19 @@ def get_traj_sizes(trajectories):
     for traj in trajectories:
         size_list.append(os.path.getsize(traj))
     return size_list
+
+def filter_gmx_trajectory(traj, group_idx, index_file,
+                      topol_file, out_ftype = "xtc", delete = True):
+    """
+    Only save the atoms in group_idx for the given trajectory, and save
+    to the requested out_ftype filetype.
+    """
+    outfn = traj[:-4]+"."+out_ftype
+    cmd = ["gmx", "trjconv", "-f", traj, "-s", topol_file, "-o", outfn]
+    if index_file is not None:
+        cmd += ["-n", index_file]
+    p = subprocess.Popen(cmd, stdin=subprocess.Pipe, shell = False)
+    p.communicate(input=b""+str(group_idx)+"\n")
+    p.wait()
+    if delete:  
+        os.remove(traj)
