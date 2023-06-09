@@ -73,12 +73,27 @@ def select_with_masks(A, masks):
     masks: list of masks, where each mask is a boolean array 
             with the same shape as A
     """
-    # first check whether masks are for the same object array, 
-    # meaning they must have the same shape as A
+    # first check whether masks have the same shape as A
     for mask in masks:
         assert mask.shape == A.shape
     # now we can use the masks to select the elements of A
     union_mask = np.all(masks,axis=0).astype(bool)
+    return A[union_mask]
+
+def select_with_OR_masks(A, masks):
+    """
+    Returns the elements of the array A that are True in at least one of 
+    the masks, where each mask is a similarly sized boolean array.
+    
+    A: np.array
+    masks: list of masks, where each mask is a boolean array 
+            with the same shape as A
+    """
+    # first check whether masks have the same shape as A
+    for mask in masks:
+        assert mask.shape == A.shape
+    # now we can use the masks to select the elements of A
+    union_mask = np.any(masks,axis=0).astype(bool)
     return A[union_mask]
 
 
@@ -543,31 +558,50 @@ def running_avg_local_probs(pathtype_cycles, w, tr = False):
 
 def cross_dist_distr(pe):
     """Returns the distribution of lambda values for the """
-    # LML:
-    paths = pe.lambmaxs[pe.lmrs == "LML"]
-    w = pe.weights[pe.lmrs == "LML"]
+    # LM*:
+    paths = select_with_OR_masks(pe.lambmaxs, [pe.lmrs == "LML",
+                                               pe.lmrs == "LMR"])
+    w = select_with_OR_masks(pe.weights, [pe.lmrs == "LML",
+                                          pe.lmrs == "LMR"])
     repeat = np.repeat(paths, w)
     L,M,R = pe.interfaces[0][0], pe.interfaces[0][1], \
         pe.interfaces[0][2]
     percents = []
-    lambs = np.linspace(M, R, 100)
+
+    lambs = np.linspace(M, np.max(paths), 100) if paths.size != 0 else \
+        np.linspace(M, R, 100)
     for i in lambs:
         percents.append(np.sum(repeat[repeat>=i]))
     percents = percents/percents[0] if percents else percents
         
-    # RMR:
-    paths2 = pe.lambmins[pe.lmrs == "RMR"]
-    w2 = pe.weights[pe.lmrs == "RMR"]
+    # RM*:
+    paths2 = select_with_OR_masks(pe.lambmins, [pe.lmrs == "RMR",
+                                                pe.lmrs == "RML"])
+    w2 = select_with_OR_masks(pe.weights, [pe.lmrs == "RMR",
+                                           pe.lmrs == "RML"])
     repeat2 = np.repeat(paths2, w2)
     percents2 = []
-    lambs2 = np.linspace(L,M,100)
+    lambs2 = np.linspace(np.min(paths2), M, 100) if paths2.size != 0 else \
+        np.linspace(L, M, 100)
     for i in lambs2:
         percents2.append(np.sum(repeat2[repeat2<=i]))
     percents2 = percents2/percents2[-1] if percents2 else percents2
     return L, M, R, percents, lambs, percents2, lambs2
 
 def pathlength_distr(upe):
-    """upe: unified path ensemble"""
+    """
+    Create the pathlength distributions for the path types (LML, ...) of a path
+    ensemble. The path ensemble is assumed to be unified already.
+
+    Parameters
+    ----------
+    upe : PathEnsemble object (unified)
+
+    Returns
+    -------
+    data : dict containing the pathlength distributions for each path type
+    """
+
     pathtypes = ("LML", "LMR", "RML", "RMR")
     data = {}
     for ptype in pathtypes:
@@ -584,8 +618,9 @@ def pathlength_distr(upe):
 
 
 def get_local_probs(pe, w = None, tr=False):
-    """Returns the local crossing probabilities for the PPTIS ensemble pe.
-        This is only for the [i^+-] or [0^+-'] ensembles, and not for [0^-'].
+    """
+    Returns the local crossing probabilities for the PPTIS ensemble pe.
+    This is only for the [i^+-] or [0^+-'] ensembles, and NOT for [0^-'].
 
     Parameters
     ----------
@@ -644,7 +679,7 @@ def get_local_probs(pe, w = None, tr=False):
     return p
 
         
-def get_global_probs(ps):
+def get_globall_probs(ps):
     """Returns the global crossing probabilities for the PPTIS simulation, 
     together with the standard deviation of these probabilities.
 
@@ -657,8 +692,9 @@ def get_global_probs(ps):
     ----------
     ps : list of dicts
         A list of dictionaries with the local crossing probabilities for each
-        PPTIS ensemble. The keys are the path types (RMR, RML, LMR, LML), and 
-        the values are the local crossing probabilities.
+        PPTIS ensemble. The keys are the path types (RMR, RML, LMR, LML).
+        ps[i]['LMR']['mean'] and ps[i]['LMR']['std'] are the mean and stdev of
+        p_{i}^{\mp}, respectively.
 
     Returns
     -------
@@ -672,12 +708,95 @@ def get_global_probs(ps):
         Float per ensemble i. Represents the TIS probability of crossing i+1
     """
 
-    Pplus, Pmin, Pcross = [1], [1], [ps[0]['LMR']]
+    Pplus, Pmin, Pcross = [1.], [1.], [1., ps[0]['LMR']]
     for i, p in enumerate(ps):
+        if i == 0: continue  # This is [0^{\pm}'], so skip
         # Calculate the global crossing probabilities
         Pplus.append((p['LMR']*Pplus[-1])/(p['LMR']+p['LML']*Pmin[-1]))
         Pmin.append((p['RML']*Pmin[-1])/(p['LMR']+p['LML']*Pmin[-1]))
         # Calculate the TIS probabilities
         Pcross.append(ps[0]['LMR']*Pplus[-1])
     return Pmin, Pplus, Pcross
+
+def get_global_probs(probs):
+    """
+    Calculates the global crossing probabilities for the (RE)PPTIS simulation. 
+    Errors are derived using standard error propagation. 
+    Strong assumption:
+        - p_{i-1}^{\pm}, p_{i-1}^{\mp}, P_{i-1}^{+} and P_{i-1}^{-} are treated 
+        as independent variables when applying the recursive relation to obtain
+        P_{i}^{+} and P_{i}^{-}.
+
+    Parameters
+    ----------
+    p : list of dicts
+        A list of dictionaries with the local crossing probabilities for each
+        PPTIS ensemble starting from [0^{\pm}]. Keys contain path types (RMR, 
+        RML, LMR, LML) containting the local crossing probabilities, and 
+        (RMRvar, RMLvar, LMRvar, LMLvar) containing the variances of these 
+        probabilities.    
+        
+    Returns
+    -------
+    Pm : list of floats
+        Float per ensemble i. Represents the probability of crossing A earlier
+        than i+1, given that the path crossed i.
+    Pp : list of floats
+        Float per ensemble i. Represents the probability of crossing i+1 earlier
+        than A, given that the path crossed i.
+    Pc : list of floats
+        Float per ensemble i. Represents the TIS probability of crossing i+1
+    """
+
+    Pp, Pm, Pc = [1.], [1.], [1.,probs[0]['LMR']['mean']]
+    Ppe, Pme, Pce = [0.], [0.], [0.,probs[0]['LMR']['std']]
+    for i, p in enumerate(probs):  # Should start from [1^{\pm}]!
+        if i == 0: continue  # This is [0^{\pm}'], so skip
+        u = p['RML']['mean']  # p_{i-1}^{\mp}
+        x = p['LMR']['mean']  # p_{i-1}^{\pm}
+        y = Pp[i-1]  # P_{i-1}^{+}
+        z = Pm[i-1]  # P_{i-1}^{-}
+        su = p['RML']['std']**2  # variance of u (var of estimator of mean..)
+        sx = p['LMR']['std']**2  # variance of x (var of estimator of mean..)
+        sy = Ppe[i-1]**2  # variance of y (var of estimator of mean..)
+        sz = Pme[i-1]**2  # variance of z (var ofestimator of mean..)
+ 
+        # Calculating P^{+}_{i} and P^{-}_{i} and their standarderrors
+        # ------------------------------------------------------------
+        # Pp[i] = f = xy/(x + z - xz)
+        # sf = (df/du)**2 * su + (df/dx)**2 * sx + (df/dy)**2 * sy 
+        #       + (df/dz)**2 * sz
+        # Pm[i] = g = uz/(x + z - xz)
+        # sg = (dg/du)**2 * su + (dg/dx)**2 * sx + (dg/dy)**2 * sy
+        #       + (dg/dz)**2 * sz
+
+        dfdu = 0.
+        dfdx = y*z/(x + z - x*z)**2
+        dfdy = x/(x + z - x*z)
+        dfdz = (x-1)/(x+z-x*z)**2
+
+        dgdu = z/(x + z - x*z)
+        dgdx = u*z*(z-1)/(x + z - x*z)**2
+        dgdy = 0.
+        dgdz = u*x/(x+z-x*z)**2
+
+        f = x*y/(x + z - x*z)
+        g = u*z/(x + z - x*z)
+        sf = (dfdu**2 * su + dfdx**2 * sx + dfdy**2 * sy + dfdz**2 * sz)**0.5
+        sg = (dgdu**2 * su + dgdx**2 * sx + dgdy**2 * sy + dgdz**2 * sz)**0.5
+
+        Pp.append(f)
+        Pm.append(g)
+        Ppe.append(sf)
+        Pme.append(sg)
+        Pc.append(probs[0]['LMR']['mean']*Pp[i])
+        Pce.append((probs[0]['LMR']['std']**2 * Pp[i] + \
+                    Ppe[i]**2 * probs[0]['LMR']['mean'])**0.5)
+        
+    return Pm, Pp, Pc, Pme, Ppe, Pce
+
+
+
+
+
 
