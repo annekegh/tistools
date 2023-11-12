@@ -571,7 +571,7 @@ def cross_dist_distr(pe):
     lambs = np.linspace(M, np.max(paths), 100) if paths.size != 0 else \
         np.linspace(M, R, 100)
     for i in lambs:
-        percents.append(np.sum(repeat[repeat>=i]))
+        percents.append(np.sum(repeat >= i))
     percents = percents/percents[0] if percents else percents
         
     # RM*:
@@ -584,7 +584,7 @@ def cross_dist_distr(pe):
     lambs2 = np.linspace(np.min(paths2), M, 100) if paths2.size != 0 else \
         np.linspace(L, M, 100)
     for i in lambs2:
-        percents2.append(np.sum(repeat2[repeat2<=i]))
+        percents2.append(np.sum(repeat2 <= i))
     percents2 = percents2/percents2[-1] if percents2 else percents2
     return L, M, R, percents, lambs, percents2, lambs2
 
