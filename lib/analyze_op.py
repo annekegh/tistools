@@ -8,7 +8,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from .reading import *
 
-ACCFLAGS,REJFLAGS = set_flags_ACC_REJ() # Hard-coded rejection flags found in output files
+# Hard-coded rejection flags found in output files
+ACCFLAGS,REJFLAGS = set_flags_ACC_REJ() 
 
 
 #---------------------
@@ -41,7 +42,7 @@ def create_figure_trajs(figbasename,data_op,length,accepted,first,acc=True,inter
 
             # plot order parameter:
             # time starts from zero, op is in data col=0
-            plt.plot(da[:,0],linewidth=2)
+            plt.plot(da[:,0],linewidth=1,marker='o',markersize=3)
             # plot other particles alos, these are in col=1...
             for k in range(1,da.shape[1]):
                 plt.plot(da[:,k])
@@ -325,14 +326,14 @@ def calc_xi(lmrs,weights):
     n_all = np.sum(weights)
 
     # the load path (ld) can be LM* or so, and still be accepted with a weight>0
-    # (a bit weird)
-    # therefore, I SKIP the load path if this is the case,
+    # # (a bit weird). Therefore, I SKIP the load path if this is the case, ￼   
     # in the calculation of xi
     if weights[0] > 0:
         if lmrs[0] not in ["LML", "RML", "RMR", "LMR", "L*L", "R*L", "L*R", "R*R"]:
             n_all = np.sum(weights[1:])  # skip this first path
 
     assert n_all == n_ends_r + n_ends_l
+    
     if n_ends_r > 0:
         print("big reweight!!")
         xi = n_all/n_ends_r

@@ -37,7 +37,10 @@ if __name__ == '__main__':
         help = "right of the order parameter histogram")
     parser.add_argument("--maxtraj",dest="maxtraj",default=36,
         help = "number of trajectories to be plotted (default 36)")
+    parser.add_argument("--repptis",dest="repptis_flag",action="store_true",
+        default=False, help = "whether repptis was used or not.")
     args = parser.parse_args()
+
 
     indir, filename = os.path.split(args.inputfile)
     if len(indir) == 0: indir = "./"
@@ -52,12 +55,18 @@ if __name__ == '__main__':
     print("folders",folders)
 
     # construct list_interfaces = [[lambda0],[lambda0],[lambda0,lambda1],...]
-    list_interfaces = [[interfaces[0]]]
-    if zero_left is not None:
-        list_interfaces = [[interfaces[0],zero_left]]
-    list_interfaces += [[interfaces[0]]]
-    for i in range(1,ninterf):
-        list_interfaces += [[interfaces[0],interfaces[i]]]
+    if not args.repptis_flag:
+        list_interfaces = [[interfaces[0]]]
+        if zero_left is not None:
+            list_interfaces = [[interfaces[0],zero_left]]
+        list_interfaces += [[interfaces[0]]]
+        for i in range(1,ninterf):
+            list_interfaces += [[interfaces[0],interfaces[i]]]
+    else:
+        list_interfaces = [[interfaces[0]], [interfaces[0],interfaces[1]]]
+        for i in range(1,ninterf-1):
+            list_interfaces += [[interfaces[i-1], interfaces[i],
+                                 interfaces[i+1]]]
     """
     list_ensembles =["000","001","002","003","004","005"]
     list_interfaces = [[1],[1.],[1,1.2],[1,1.4],[1,1.6],[1,1.8],]

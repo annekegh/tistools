@@ -1,0 +1,101 @@
+#!/usr/bin/env python                                                                              
+from wholemake_scripts import read_chunk_paths, execute_command
+import argparse
+import os
+import glob
+import subprocess
+import mdtraj as md
+import numpy as np
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Subsampling a list of trajectories, one by one.')
+    parser.add_argument("-f", dest="chunk_fn", default=None,
+            help="chunk_fn is the filename where the trajectories to be subsampled are saved.")
+    parser.add_argument("-c", dest="cid", default=None,
+            help="chunk id, integer 0<cid<procs_used")
+    parser.add_argument("-n", dest="ndx_fn", default=None,
+            help="file location of the index.ndx file")
+    parser.add_argument("-s", dest="gro_fn", default=None,
+            help="file location of the conf.gro file")
+    parser.add_argument("-o",dest="outf", default=".",
+            help="output folder where log will be saved")
+
+    # GRO FILE HERE LOOOK
+    args = parser.parse_args()
+    chunk_fn = args.chunk_fn
+    cid = args.cid
+    gro_fn = args.gro_fn
+    ndx_fn = args.ndx_fn
+    outf = args.outf
+
+    print("Working on chunk: "+str(chunk_fn))
+                                                                                                               
+    # Check whether the gromacs files are correctly located
+    assert os.path.isfile(gro_fn), "GRO file not found: "+gro_fn
+    assert os.path.isfile(ndx_fn), "NDX file not found: "+ndx_fn
+    
+    ###################################################
+    # Things that are NOT trajectory-specific go here #
+    ###################################################
+    """
+    Ring1: 4348 4347 4350 4356 4352 4354
+    Ring2: 4359 4360 4364 4363 4361 4357
+    Ring3: 4368 4367 4373 4375 4377 4379
+    Ring4: 4384 4391 4389 4393 4387 4385
+    Ring5: 4412 4406 4403 4400 4394 4409
+    """
+    
+    R1 = [4348, 4347, 4350, 4356, 4352, 4354]
+    R2 = [4359, 4360, 4364, 4363, 4361, 4357]
+    R3 = [4368, 4367, 4373, 4375, 4377, 4379]
+    R4 = [4384, 4391, 4389, 4393, 4387, 4385]
+    R5 = [4412, 4406, 4403, 4400, 4394, 4409]
+    
+    R1_string = "index "+(" or index ".join([str(a) for a in R1]))
+    R2_string = "index "+(" or index ".join([str(a) for a in R2]))
+    R3_string = "index "+(" or index ".join([str(a) for a in R3]))
+    R4_string = "index "+(" or index ".join([str(a) for a in R4]))
+    R5_string = "index "+(" or index ".join([str(a) for a in R5]))
+
+    # Load the trajectory paths
+    traj_files = read_chunk_paths(chunk_fn)
+
+    # Calculate orthogonal DoF:
+    for traj in traj_files:
+        assert os.path.isfile(traj), 'You want to use a non-existing trajectory: '+traj
+        
+        # We will save it to a npy arr file 
+        save_fn = os.path.split(traj)[0]+"/../"+(os.path.split(traj)[1])[:-4]+"_ringdists.npy" 
+
+        traj = md.load(traj,top=gro_fn)
+        traj = traj.remove_solvent()
+        
+        R1traj = md.compute_center_of_mass(traj,R1_string) # [nt x 3]
+        R2traj = md.compute_center_of_mass(traj,R2_string)
+        R3traj = md.compute_center_of_mass(traj,R3_string) 
+        R4traj = md.compute_center_of_mass(traj,R4_string)
+        R5traj = md.compute_center_of_mass(traj,R5_string)
+        
+        ListRingTrajectories = [R1traj,R2traj,R3traj,R4traj,R5traj] # 5 elements of [nt x 3] arrays
+        
+        nt = traj.n_frames # number of frames
+        try:
+            dt = traj.timestep # timestep in ps
+        except:
+            dt = 1.
+        
+        t = np.array([i*dt for i in range(nt)])
+        
+        n_rings = len(ListRingTrajectories) 
+
+        DistanceTrajectories = np.zeros([nt, n_rings * (n_rings-1)])
+        for i in range(n_rings):
+            traj1 = ListRingTrajectories[i]
+            for j in range(i+1,n_rings):
+                traj2 = ListRingTrajectories[j]
+                DistanceTrajectories[:,i*5+j] = np.sqrt(np.sum((traj1 - traj2)**2,axis=-1))
+        np.save(save_fn, DistanceTrajectories)
+        print("I did trajectory: "+str(save_fn))
+        with open(outf+"/donetrajs_"+str(cid)+".txt", 'a+') as tempf:
+            tempf.write("I did yet another traj: "+str(traj)+"\n")
+

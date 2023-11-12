@@ -1,0 +1,71 @@
+#!/usr/bin/env python
+from subprocess import Popen, PIPE
+import shutil
+import argparse
+from wholemake_scripts import *
+import os
+import glob
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Makes molecules whole, indeed.')
+    parser.add_argument("-o",dest="outputfolder", default="logfolder",
+            help="outputfolder is where the log files will be saved")
+    parser.add_argument("-p",dest="procs", default="1",
+            help="The amount of cores to be used for trajectory-subsampling. \
+                    Choose this amount such that PyRETIS has at least one core \
+                    left to handle non-GROMACS tasks.")
+    parser.add_argument("--ndx",dest="ndx_fn",default="ext_input/index.ndx",
+            help="Path to the index.ndx file for the trajectories")
+    parser.add_argument("--gro",dest="gro_fn",default="ext_input/conf.gro",
+            help="gro file for mdtraj toppology")
+    parser.add_argument("--trjdirlist",dest="trajdirs_txtfn",default=None,
+            help=".txt file listing DIRECTORIES where xtc/trr files are found")
+
+    args = parser.parse_args()
+    nprocs = int(args.procs)
+    outf = args.outputfolder
+    ndx_fn = args.ndx_fn
+    gro_fn = args.gro_fn
+    trajdirs_txtfn = args.trajdirs_txtfn
+
+    if not os.path.isdir(outf):
+        os.mkdir(outf)
+    print("Directory log files: "+outf)
+
+    shdirs = list_all_shoot_dirs(trajdirs_txtfn)
+    trajectories = collect_trajectories_from_dirs(shdirs,ext="xtc")
+
+    traj_sizes = get_traj_sizes(trajectories)
+    chunk_list = weighted_split_list(trajectories, nprocs, traj_sizes)
+
+    log_file = outf+"/log_ringdisting.txt"
+
+    commands = []
+
+    for i, chunk in enumerate(chunk_list):
+        grofile_i = shutil.copy(gro_fn,outf+"/conf_"+str(i)+".gro")
+        fn = write_chunk_paths(chunk, str(i),folder=outf)
+        cmd = ["./ringdister", '-f', fn, '-n', ndx_fn, '-s', grofile_i, '-c', str(i), '-o', outf]
+        commands.append(cmd)
+
+    procs = []
+    for i, cmd in enumerate(commands):
+        outlogfile = outf+"/outcommand_"+str(i)+".log"
+        errlogfile = outf+"/errcommand_"+str(i)+".log"
+        with open(outlogfile, 'w') as fout, open(errlogfile, 'w') as ferr:
+            proc = Popen(cmd,stdout=fout,stderr=ferr,shell=False,cwd=os.getcwd())
+            procs.append(proc)
+    for i, proc in enumerate(procs):
+        proc.wait()
+
+    return_codes = [None]*nprocs
+    all_went_well = True
+    for i,proc in enumerate(procs):
+        return_codes[i] = proc.returncode
+        if return_codes[i] is None:
+            print("For proc "+str(i)+" we get return_code NONE")
+        elif return_codes[i] == 0:
+            print("Proc "+str(i)+" went well, return_code 0")
+        else:
+            all_went_well = False
+            print("For proc "+str(i)+" we get return_code "+str(return_codes[i]))

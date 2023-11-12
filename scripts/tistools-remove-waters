@@ -1,0 +1,98 @@
+#!/usr/bin/env python
+
+"""Script to plot the pathlength distribution of the simulation ensembles.
+
+    Usage: python tistools-path-distr 
+"""
+
+import argparse
+from tistools import set_flags_ACC_REJ
+from tistools import filter_gmx_trajectory
+import os
+import glob
+
+# Hard-coded rejection flags found in output files
+ACCFLAGS,REJFLAGS = set_flags_ACC_REJ() 
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Remove waters from trajectory')
+    parser.add_argument("-i",dest="inputfile",default="./retis.rst",
+        help="inputfile retis.rst or out.rst, must be inside the directory \
+              where also the 000/, 001/... folders are stored",)
+    parser.add_argument("-o",dest="outdir",default="",
+        help="dir where the trajectories should be moved to. If not given, they\
+              won't be moved.",)
+    # add boolean flag whether the move trajectories or not. Default is faulse.
+    # called with "-m"
+    parser.add_argument("-m", dest="move", default = False, 
+                        action = "store_true",
+                        help = "Whether to move trajectories. Default is false")
+    parser.add_argument("-r", dest="remove", default = False,
+                        action = "store_true",
+                        help = "Whether to remove waters from trajectories \
+                                default is false.")
+    parser.add_argument("--idx", dest="group_idx", default = None,
+                        help = "Index of the group to keep. Default is None")
+    parser.add_argument("--topol", dest="topol_file", default = None,
+                        help = "Topology file. Default is None")
+    parser.add_argument("--idx_file", dest="index_file", default = None,
+                        help = "Index file. Default is None")
+    args = parser.parse_args()
+
+    print("arguments: ")
+    print(args)
+
+    indir, filename = os.path.split(args.inputfile)
+    if len(indir) == 0: indir = "./"
+    print("indir:",indir)
+    print("filename:",filename)
+
+    print("folders:")
+    folders = glob.glob(indir+"/0[0-9][0-9]")
+    folders = sorted(folders)
+    print(folders)
+    pathensembles = []
+    orderparameters = []
+
+    group_idx = args.group_idx
+    topol_file = args.topol_file
+    index_file = args.index_file
+    outdir = args.outdir
+
+    # .trr files are stored as:
+    # 001/traj/traj-acc/770/traj/XXX.trr
+
+    # We list all the existing .trr files, and then just move/manipulate them.
+    # The reason we first list, and then do an action, is because there might
+    # be new trajectories made while this program is being executed. All sorts
+    # of nastiness might pop up if this were to happen. 
+
+    trajectories = glob.glob(indir+"0*/traj/traj*/*/traj/*.trr")
+    trajdirs = glob.glob(indir+"0*/traj/traj*/*")
+
+    if args.remove:
+        assert group_idx is not None, "group_idx must be given"
+        assert topol_file is not None, "topol_file must be given"
+        for traj in trajectories:
+            group_idx = args.group_idx
+            filter_gmx_trajectory(traj, group_idx, index_file,
+                                  topol_file, out_ftype = "xtc",
+                                  delete = True)
+            print("Filtered trajectory: ", traj)
+
+    if args.move:
+        assert outdir != "", "outdir must be given"
+        assert os.path.exists(outdir), "outdir does not exist"
+        for trajdir in trajdirs:
+            # copy the folder hierarchy to the new directory
+            new_trajdir = trajdir.replace(indir, outdir)
+            os.makedirs(new_trajdir, exist_ok = True)
+            # move the contents of the trajdir to the new directory,
+            # using the mv command in the shell
+            # print the command to the screen
+            print("Doing: mv %s/* %s/" % (trajdir, new_trajdir))
+            os.system("mv %s/* %s/" % (trajdir, new_trajdir))
+
+        
+
+

@@ -1,0 +1,73 @@
+#!/sur/bin/env python
+
+""" Script to get the weights of trajectories, WHERE ONLY the shoot-trajectories have been saved"""
+
+import argparse
+from tistools import read_inputfile
+from tistools import create_distrib
+from tistools import set_flags_ACC_REJ
+from tistools import read_pathensemble
+from tistools import *
+import os
+import glob
+import pickle 
+
+ACCFLAGS,REJFLAGS = set_flags_ACC_REJ()
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='weight the shoot trajectories')
+    parser.add_argument("-i",dest="inputfile",default="./retis.rst",
+            help="inputfile is file rst.rst or out.rst")
+    parser.add_argument("-o",dest="outputfile",default="weighttest",
+            help="outputfile is e.g. weighttest, which will create files weigttest_name..")
+
+    args = parser.parse_args()
+    indir, filename = os.path.split(args.inputfile)
+    if len(indir) == 0: indir="./"
+    print("indir:",indir)
+    print("filename:",filename)
+
+    print("folders")
+    folders = glob.glob(indir+"/0[0-9][0-9]")
+    folders = sorted(folders)
+    for fol in folders:
+        print(fol)
+    assert len(folders)>0
+
+    pes = []
+    for folder in folders:
+        pe = read_pathensemble(folder+"/pathensemble.txt")
+        pes.append(pe)
+    
+    # We collect weights. Comparing with An method for verification
+    weights1 = []
+    weights2 = []
+    for pe in pes:
+        w1 = get_shoot_weights_phase_1(pe)
+        weights1.append(w1)
+        w2 = get_weights(pe.flags,ACCFLAGS,REJFLAGS)[0]
+        weights2.append(w2)
+        
+        pe.set_weights(w1)
+        assert len(w1) == len(w2)
+
+    with open(args.outputfile+"_weights.txt","w+") as f:
+        for a,b in zip(weights1,weights2):
+            assert len(a) == len(b)
+            f.write("Another day, another Doug\n")
+            for a_el, b_el in zip(a,b):
+                assert a_el == b_el
+                f.write(str(a_el)+"\t"+str(b_el)+"\n")
+    f.close()
+
+    # Get the shooting trajectories of each path.
+    print("Start")
+    shootpaths = get_shoot_weights_phase_2(pes, folders)
+    print("Stop")
+    
+    for i,pe in enumerate(pes):
+        with open("shootpaths_"+str(i)+".txt", 'w+') as f:
+            for cycnum, gen, sh_src, flag, weight in zip(pe.cyclenumbers, pe.generation, pe.shootlinks, pe.flags, pe.weights):
+                f.write(str(cycnum)+"\t"+str(gen)+"\t"+str(flag)+"\t"+str(weight)+"\t"+str(sh_src)+"\n")
+        with open("pe_"+str(i)+".pkl", 'wb') as g:
+            pickle.dump(pe, g, pickle.HIGHEST_PROTOCOL)

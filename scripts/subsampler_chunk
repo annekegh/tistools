@@ -1,0 +1,54 @@
+#!/usr/bin/env python
+
+from cleaner import read_chunk_trr, execute_command
+import argparse
+import os
+import glob
+import subprocess
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Subsampling a list of trajectories, one by one.')
+    parser.add_argument("-f", dest="chunk_fn", default=None,
+            help="chunk_fn is the filename where the trajectories to be subsampled are saved.")
+    parser.add_argument("-c", dest="cid", default=None,
+            help="chunk id, integer 0<cid<procs_used")
+    parser.add_argument("-n", dest="ndx_fn", default=None,
+            help="file location of the index.ndx file")
+    parser.add_argument("-s", dest="tpr_fn", default=None,
+            help="file location of the topol.tpr file")
+    parser.add_argument("-t", dest="dt", default=None,
+            help="Subsampling period in ps")
+
+    args = parser.parse_args()
+    chunk_fn = args.chunk_fn
+    cid = args.cid
+    tpr_fn = args.tpr_fn
+    ndx_fn = args.ndx_fn
+    dt = args.dt
+    
+    print("Working on chunk: "+str(chunk_fn))
+    
+    # Check whether the gromacs files are correctly located
+    assert os.path.isfile(tpr_fn), "TPR file not found: "+tpr_fn
+    assert os.path.isfile(ndx_fn), "NDX file not found: "+ndx_fn
+    assert (dt is not None) and (float(dt) > 0.1), "sampling period non-existent or too low: "+dt
+
+    # Load the trajectory paths
+    trr_files = read_chunk_trr(chunk_fn)
+
+    # Do the subsampling
+    for traj in trr_files:
+        assert os.path.isfile(traj), 'You want to subsample non-existing trajectory: '+traj
+        traj_temp = traj[:-4]+".xtc"
+        cmd = ['gmx_mpi', 'trjconv', '-f', traj, '-s', tpr_fn, '-n', ndx_fn, '-dt', dt, '-o', traj_temp]
+        inputs=b'0\n'
+        return_code = execute_command(cmd,inputs=inputs,fn="cleanfolder/"+cid)
+        
+        if return_code is not None and return_code == 0:
+            print("Done subsampling %s", traj)
+            assert os.path.isfile(traj)
+            assert os.path.isfile(traj_temp)
+            os.remove(traj)
+            print("Removed high frequency TRR file, changed with low frequency XTC file.")
+        else:
+            RuntimeError("You should not see me, something went wrong with gmx trjconv, abort deleting files.")
