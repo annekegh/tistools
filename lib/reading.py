@@ -9,7 +9,7 @@ def set_flags_ACC_REJ():
     REJFLAGS += ['MCR']
     REJFLAGS += ['TSS','TSA']
     REJFLAGS += ['HAS','CSA','NSG']
-    REJFLAGS += ['SWD']
+    REJFLAGS += ['SWD', 'SWH']
     """
          MCR': 'Momenta change rejection',
         'BWI': 'Backward trajectory end at wrong interface',
@@ -28,7 +28,8 @@ def set_flags_ACC_REJ():
         'HAS': 'High acceptance swap rejection for SS/CS detailed balance',
         'CSA': 'Common Sense super detailed balance rejection',
         'NSG': 'Path has no suitable segments',
-        'SWD': 'PPTIS swap with incompatible propagation direction'.
+        'SWD': 'PPTIS swap with incompatible propagation direction',
+        'SWH': 'PPTIS swap problems after first extension'
     """
 
     ACCFLAGS = ['ACC',]
@@ -76,6 +77,8 @@ class PathEnsemble(object):
             self.has_zero_minus_one = False 
             self.in_zero_minus = False 
             self.in_zero_plus = False
+
+            self.orders = None
 
     def set_name(self, name):
         self.name = name
@@ -219,8 +222,67 @@ class PathEnsemble(object):
         pe_new.in_zero_plus = self.in_zero_plus
         pe_new.has_zero_minus_one = self.has_zero_minus_one
 
-        return pe_new    
+        return pe_new
 
+    def set_orders(self, load=False, acc_only=True, save=False):
+        print("Setting orders for path ensemble", self.name)
+        orders, cyclenumbers, lengths, flags, generation =\
+            read_orderp(self.name+"/order.txt", load=load, acc_only=acc_only)
+        # If we load from a file, we don't check for consistency.
+        if load:
+            print("Loaded orders from file, NOT CHECKING FOR CONSISTENCY.")
+            self.orders = orders
+            return
+        # In the earlier versions of PPTIS implementation, we had some bad 
+        # reporting of flags for rejected [0+] <--> [0] swap move.
+        # Therefore, some of the flags and lengths do not make sense for the 
+        # 001 paths (that are rejected). If we don't care about the 
+        # rejected trajectories, we can just ignore this, and check 
+        # whether the accepted trajectories match.
+        check_cycnum = (self.cyclenumbers == cyclenumbers).all()
+        check_length = (self.lengths == lengths).all()
+        check_flag = (self.flags == flags).all()
+        check_generation = (self.generation == generation).all()
+        if not acc_only:
+            assert check_cycnum, "cyclenumbers do not match"
+            assert check_length, "lengths do not match"
+            assert check_flag, "flags do not match"
+            assert check_generation, "generations do not match"
+            print("Everything matches, setting orders.")
+            self.orders = orders
+            if save: 
+                print(f"Saving orders to {self.name}/order.npy")
+                np.save(self.name+"/order.npy", orders, allow_pickle=True)
+            return 
+        if check_cycnum and check_length and check_flag and check_generation:
+            print("Everything matches, setting orders.")
+            self.orders = orders
+            if save:
+                print(f"Saving orders to {self.name}/order.npy")
+                np.save(self.name+"/order.npy", orders, allow_pickle=True)
+            return
+        # If we are here, we use acc_only, and some checks failed. We now 
+        # test wether the fails correspond to rejected trajectories only.
+        for el, pe_el, typ in zip([cyclenumbers, lengths, flags, generation],
+                                    [self.cyclenumbers, self.lengths, self.flags,
+                                     self.generation],
+                                    ["cyclenumbers", "lengths", "flags",
+                                     "generation"]):
+            idx_mismatch = np.where(el != pe_el)[0]
+            if len(idx_mismatch) == 0:
+                continue
+            if (flags[idx_mismatch] != "REJ").all():
+                print(f"Mismatch in REJ paths for {typ}, ignoring.")
+                continue
+            else:
+                msg = f"Mismatch in {typ} for accepted paths.\n"
+                msg += f"Mismatching ids: {idx_mismatch}"
+                raise ValueError(msg)
+        print("Everything matched for the ACC paths, setting orders.")
+        self.orders = orders
+        if save:
+            print(f"Saving orders to {self.name}/order.npy")
+            np.save(self.name+"/order.npy", orders, allow_pickle=True)
 
 class OrderParameter(object):
 
@@ -292,128 +354,6 @@ def read_pathensemble(fn,ostart=0):
 
     return pe
 
-
-def read_orderparameter(fn, ostart=0):
-    """read file order.txt
-
-    Format order.txt:
-
-# Cycle: 0, status: ACC, move: ('ld', 0, 0, 0)
-#     Time       Orderp
-         0     0.992591     0.751421     0.122551     1.440613     0.235256     0.625671
-         1     1.002283     0.737442     0.095843     1.420257     0.252691     0.565861
-    ...
-
-    """
-    #data_op = np.loadtxt(fn)
-
-    # now read line per line
-    cyclenumbers = []
-    lengths = []
-    flags = []
-    generation = []
-
-    longtraj = []
-    data = []
-
-    subdata_list = []
-    subdata = []
-
-    ntraj = 0
-    ntraj_started = 0
-    last_length = 0
-
-    # check first line
-    with open(fn,"r+") as f:
-        line = f.readline()
-        if not line.startswith("# Cycle:"):
-            print("First line of orderparameter file %s  didn't start with cycle"%fn)
-            raise ValueError("something wrong")
-
-    with open(fn,'r') as f:        # read this file
-        for i, line in enumerate(f):
-            #if i > ostart:   # NOOOOOO  # TODO
-
-            # header time
-            if line.startswith("#     Time"):
-                pass
-
-            # header Cycle
-            elif line.startswith("# Cycle:"):
-                subdata_list.append(subdata)
-                subdata = []
-                if ntraj_started > 0:  # not the very first traj
-                    if last_length > 0:
-                        # successfully update the previous one
-                        ntraj += 1
-                        lengths[-1] = last_length
-
-                    elif last_length == 0:
-                        print("WARNING"*30)
-                        print("encountered traj with length 0")
-                        print("at cyclenumber",line)
-                        # undo a few things
-                        cyclenumbers = cyclenumbers[:-1]
-                        flags = flags[:-1]
-                        generation = generation[:-1]
-                        ntraj_started -= 1  # previous was fake alarm
-
-                # and reset for new one
-                ntraj_started += 1
-                last_length = 0
-
-                # extract the time, cyclenumber, flag, generation
-                words = line.split()
-                cyclenumbers.append(int(words[2][:-1]))  # remove the last character, which is a comma
-                flags.append(words[4][:-1])         # remove the last character, which is a comma: ACC,
-                generation.append(words[6][2:4])    # remove characters: ('sh',
-                # length to be updated!!!
-                lengths.append(0)
-
-            # Collect order parameter of traj
-            else:
-                words = line.split()
-
-                # words[0] = the time step of the traj, counting starts at 0
-                assert int(words[0])==last_length
-                last_length += 1    # update traj length
-
-                # the order parameters
-                # assume just 1 op: words[1]
-                longtraj.append(float(words[1]))
-                # collect all order parameters: words[1:]
-                if len(words[1:])>1: data.append([float(word) for word in words[1:]])  # skip the time
-                else:
-                    data.append(float(words[1]))  # this is a stupied copy of longtraj
-                    subdata.append(float(words[1]))
-
-    # finish the last trajectory when done with reading
-
-    # if order parameter lines were the last lines of order.txt
-    # then I need to update
-    if last_length > 0:
-        ntraj += 1
-        lengths[-1] = last_length
-
-    # if "# Cycle:" was the last line of order.txt
-    elif ntraj_started == ntraj+1:
-        # undo a few things
-        cyclenumbers = cyclenumbers[:-1]
-        flags = flags[:-1]
-        generation = generation[:-1]
-        lengths = lengths[:-1]
-
-    data = np.array(data)
-    if len(data.shape)==1:
-        data = data.reshape((len(data),1))
-
-    subdata_list.append(subdata)
-    subdata_list = subdata_list[1:]
-
-    # verify lengths:
-    assert_consistent(cyclenumbers,lengths,flags,generation,longtraj,data)
-    return subdata_list
-
 def strip_endpoints(order_list):
     stripped_order_list = []
     for orders in order_list:
@@ -427,7 +367,8 @@ def get_flat_list_and_weights(orders,weights):
         all_ws += [w]*len(o)
     return all_orders, all_ws
 
-def read_order(fn,ostart=0):
+# READ ORDERS AND MAKE ORDERPARAMETER OBJECT
+def read_order(fn, ostart=0):
     """read file order.txt
 
     Format order.txt:
@@ -541,6 +482,138 @@ def read_order(fn,ostart=0):
     op = OrderParameter(cyclenumbers,lengths,flags,generation,longtraj,data)
     return op
 
+# READ ORDER AND RETURN LIST OF ORDERPARAMETERS TO FEED INTO PATH ENSEMBLE
+def read_orderp(fn, load=False, acc_only=True):
+    """Read file order.txt, and return the orderp trajectories as a list of 
+    numpy arrays. 
+    
+    Also returns a list of cyclenumbers, pathlengths, flags, 
+    and generations. This should be consistent with the data extracted from 
+    the pathensemble.txt file. NOTE: this consistency is not checked here, as 
+    we have no access to the pathensemble.txt file here.
+
+    Parameters
+    ----------
+    fn : string
+        Filename of the order.txt file
+    load : bool, optional
+        If True, load the orderp trajectories from a .npy file. The default is
+        False.
+    acc_only : bool, optional
+        If True, only load in the accepted trajectories. Rejected trajectories
+        are given empty arrays. Our poor memory does not like rejections. The
+        default is True.
+
+    Format order.txt:
+    # Cycle: 0, status: ACC, move: ('ld', 0, 0, 0)
+    #     Time       Orderp
+             0     0.992591     0.751421     0.122551
+             1     1.002283     0.737442     0.095843
+    ...
+    # Cycle: 1, status: ACC, move: ('sh', 0, 0, 0)
+    #     Time       Orderp
+             0     0.992591     0.751421     0.122551
+             1     1.002283     0.737442     0.095843
+    
+    """
+    if load:
+        return np.load(fn.replace(".txt",".npy"), allow_pickle=True),\
+                None, None, None, None
+
+    # now read line per line
+    cyclenumbers, lengths, flags, generations = [], [], ["ACC"], []
+    subdata_list, subdata = [], []
+    ntraj, ntraj_started, last_length = 0, 0, 0
+
+    # check first line
+    with open(fn, "r+") as f:
+        if not f.readline().startswith("# Cycle:"):
+            raise ValueError(f"First line of {fn} does not start with cycle.")
+
+    with open(fn, 'r') as f:
+        for i, line in enumerate(f):
+            # header time
+            if line.startswith("#     Time"):
+                continue
+
+            # header Cycle
+            elif line.startswith("# Cycle:"):
+                # Append the previous trajectory, and then reset
+                if not acc_only or (acc_only and flags[-1] == "ACC"):
+                    subdata_list.append(np.array(subdata))
+                else:
+                    subdata_list.append(np.array([]))
+                subdata = []
+                if ntraj_started > 0:  # not the very first traj
+                    if last_length > 0:
+                        # successfully update the previous one
+                        ntraj += 1
+                        lengths[-1] = last_length
+
+                    elif last_length == 0:
+                        msg = "WARNING "*3
+                        msg += f"Traj with len 0 at cyclenumber {line}\n"
+                        msg += "We do not load this one.\n"
+                        msg += "If this happens, something is VERY wrong."
+                        print(msg)
+
+                        # undo a few things
+                        cyclenumbers = cyclenumbers[:-1]
+                        flags = flags[:-1]
+                        generations = generations[:-1]
+                        ntraj_started -= 1  # previous was fake alarm
+                else:
+                    # very first traj, we remove our fake "ACC" flag 
+                    flags = []
+
+                # and reset for new one
+                ntraj_started += 1
+                last_length = 0
+
+                # extract the time, cyclenumber, flag, generation
+                words = line.split()
+                cyclenumbers.append(int(words[2][:-1]))  # remove the last character, which is a comma
+                flags.append(words[4][:-1])         # remove the last character, which is a comma: ACC,
+                generations.append(words[6][2:4])    # remove characters: ('sh',
+                # length to be updated!!!
+                lengths.append(0)
+
+            # Collect order parameter of traj
+            else:
+                words = line.split()
+
+                # words[0] = the time step of the traj, counting starts at 0
+                assert int(words[0]) == last_length
+                last_length += 1  # update traj length
+
+                # collect all order parameters: words[1:]
+                subdata.append([float(word) for word in words[1:]])
+
+    # finish the last trajectory when done with reading
+
+    # if order parameter lines were the last lines of order.txt
+    # then I need to update
+    if last_length > 0:
+        ntraj += 1
+        lengths[-1] = last_length
+
+    # if "# Cycle:" was the last line of order.txt
+    elif ntraj_started == ntraj+1:
+        # undo a few things
+        cyclenumbers = cyclenumbers[:-1]
+        flags = flags[:-1]
+        generation = generation[:-1]
+        lengths = lengths[:-1]
+
+    subdata_list.append(np.array(subdata))
+    subdata_list = subdata_list[1:]
+
+    generations = np.array(generations)
+    cyclenumbers = np.array(cyclenumbers)
+    lengths = np.array(lengths)
+    flags = np.array(flags)
+
+    return subdata_list, cyclenumbers, lengths, flags, generations
 
 def get_weights(flags,ACCFLAGS,REJFLAGS,verbose=True):
     """

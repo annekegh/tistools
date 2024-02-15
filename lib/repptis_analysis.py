@@ -36,7 +36,7 @@ def get_lmr_masks(pe, masktype="all"):
 
 def get_flag_mask(pe, status):
     """
-    Returns boolean array
+    Returns boolean array 
     """
     if status == "REJ":
         return ~get_flag_mask(pe, "ACC")
@@ -557,7 +557,36 @@ def running_avg_local_probs(pathtype_cycles, w, tr = False):
     return p_NN, p_NP, p_PN, p_PP
 
 def cross_dist_distr(pe):
-    """Returns the distribution of lambda values for the """
+    """Return the distribution of lambda values for the LMR and RML paths.
+
+    It calculates the distribution of lambda_max values for LM* paths, and
+    the distribution of lambda_min values for RM* paths.
+
+    Parameters
+    ----------
+    pe : object like :py:class:`.PathEnsemble`
+        A PPTIS path ensemble object (tistools-processed).
+
+    Returns
+    -------
+    L : float
+        The left interface of the pathensemble.
+    M : float
+        The middle interface of the pathensemble.
+    R : float
+        The right interface of the pathensemble.
+    percents : array of floats
+        The distribution of lambda_max values for LM* paths, given at lambda
+        values 'lambs' between middle and right interfaces.
+    lambs : array of floats
+        The lambda values at which the lambda_max distribution is given.
+    percents2 : array of floats
+        The distribution of lambda_min values for RM* paths, given at lambda
+        values 'lambs2' between left and middle interfaces.
+    lambs2 : array of floats
+        The lambda values at which the lambda_min distribution is given.
+
+    """
     # LM*:
     paths = select_with_OR_masks(pe.lambmaxs, [pe.lmrs == "LML",
                                                pe.lmrs == "LMR"])
@@ -718,85 +747,123 @@ def get_globall_probs(ps):
         Pcross.append(ps[0]['LMR']*Pplus[-1])
     return Pmin, Pplus, Pcross
 
-def get_global_probs(probs):
-    """
-    Calculates the global crossing probabilities for the (RE)PPTIS simulation. 
-    Errors are derived using standard error propagation. 
-    Strong assumption:
-        - p_{i-1}^{\pm}, p_{i-1}^{\mp}, P_{i-1}^{+} and P_{i-1}^{-} are treated 
-        as independent variables when applying the recursive relation to obtain
-        P_{i}^{+} and P_{i}^{-}.
+def get_global_probz(pmps, pmms, ppps, ppms):
+    """Return the global crossing probabilities for the PPTIS simulation.
+
+    This follows the recursive relation
+    P_plus[j] = (pLMR[j-1]*P_plus[j-1]) / (pLMR[j-1]+pLML[j-1]*P_min[j-1])
+    P_min[j] = (pRML[j-1]P_min[j-1])/(pLMR[j-1]+pLML[j-1]*P_min[j-1])
+    where P_plus[0] = 1, P_min[0] = 1, and j is the ensemble number.
 
     Parameters
     ----------
-    p : list of dicts
-        A list of dictionaries with the local crossing probabilities for each
-        PPTIS ensemble starting from [0^{\pm}]. Keys contain path types (RMR, 
-        RML, LMR, LML) containting the local crossing probabilities, and 
-        (RMRvar, RMLvar, LMRvar, LMLvar) containing the variances of these 
-        probabilities.    
+    pmps : list of floats
+        The local probability (P) of having type LMR (MinusPlus) for each
+        ensemble (S).
+    pmms : list of floats
+        Local LML
+    ppps : list of floats
+        Local RMR
+    ppms : list of floats
+        Local RML
+
+    Returns
+    -------
+    pmin : list of floats
+        Float per ensemble i. Represents the probability of crossing A earlier
+        than i+1, given that the path crossed i.
+    pplus : list of floats
+        Float per ensemble i. Represents the probability of crossing i+1
+        earlier than A, given that the path crossed i.
+    pcross : list of floats
+        Float per ensemble i. Represents the TIS probability of crossing i+1.
+    """
+    # if there is any NaN in pmps, pmms, ppps, ppms, return NaN
+    if np.isnan(pmps).any() or np.isnan(pmms).any() or \
+            np.isnan(ppps).any() or np.isnan(ppms).any():
+        return [np.nan, np.nan, np.nan]
+    pplus, pmin, pcross = [1.], [1.], [1., pmps[0]]
+    for i, pmp, pmm, _, ppm in zip(range(len(pmps)), pmps, pmms, ppps, ppms):
+        if i == 0:  # This is [0^{\pm}'], so skip
+            continue
+        # Calculate the global crossing probabilities
+        # if divide by zero, or divide by NaN, return NaN
+        if pmp + pmm * pmin[-1] == 0 or\
+                (pmp is np.nan) or\
+                (pmm * pmin[-1] is np.nan):
+            return [np.nan, np.nan, np.nan]
+        pplus.append((pmp*pplus[-1])/(pmp+pmm*pmin[-1]))
+        pmin.append((ppm*pmin[-1])/(pmp+pmm*pmin[-1]))
+        # Calculate the TIS probabilities
+        pcross.append(pmps[0]*pplus[-1])
+    return pmin, pplus, pcross
+
+def set_tau_first_hit_M_distrib(pe):
+    """Set, for each pathtype, the average pathlength before the middle 
+    interface is crossed. The phasepoint at the beginning, and right after 
+    the crossing will still be included.
+    
+    Parameters
+    ----------
+    pe : object like :py:class:`.PathEnsemble`
+        Tistools PathEnsemble object must be from a PPTIS simulation,
+        for which the weights and the orders have been set.
         
     Returns
     -------
-    Pm : list of floats
-        Float per ensemble i. Represents the probability of crossing A earlier
-        than i+1, given that the path crossed i.
-    Pp : list of floats
-        Float per ensemble i. Represents the probability of crossing i+1 earlier
-        than A, given that the path crossed i.
-    Pc : list of floats
-        Float per ensemble i. Represents the TIS probability of crossing i+1
+    Nothing, but sets the attribute pe.tau1 and pe.tau1avg.
+
     """
+    pe.tau1 = []
+    pe.tau1avg = {"LML": None, "LMR": None, "RML": None, "RMR": None}
+    # select the accepted paths
+    accmask = get_flag_mask(pe, "ACC")
+    for i in range(len(pe.cyclenumbers)):
+        if pe.flags[i] != "ACC" or pe.generation[i] == "ld":
+            pe.tau1.append(0)
+            continue 
+        pe.tau1.append(get_tau1_path(pe.orders[i], pe.lmrs[i], pe.interfaces[0]))
+    pe.tau1 = np.array(pe.tau1) 
+    # get the average tau1 for each path type. Each path has a weight w.
+    for ptype in ("LML", "LMR", "RML", "RMR"):
+        pe.tau1avg[ptype] = np.average(pe.tau1[pe.lmrs == ptype], 
+                                       weights=pe.weights[pe.lmrs == ptype])
 
-    Pp, Pm, Pc = [1.], [1.], [1.,probs[0]['LMR']['mean']]
-    Ppe, Pme, Pce = [0.], [0.], [0.,probs[0]['LMR']['std']]
-    for i, p in enumerate(probs):  # Should start from [1^{\pm}]!
-        if i == 0: continue  # This is [0^{\pm}'], so skip
-        u = p['RML']['mean']  # p_{i-1}^{\mp}
-        x = p['LMR']['mean']  # p_{i-1}^{\pm}
-        y = Pp[i-1]  # P_{i-1}^{+}
-        z = Pm[i-1]  # P_{i-1}^{-}
-        su = p['RML']['std']**2  # variance of u (var of estimator of mean..)
-        sx = p['LMR']['std']**2  # variance of x (var of estimator of mean..)
-        sy = Ppe[i-1]**2  # variance of y (var of estimator of mean..)
-        sz = Pme[i-1]**2  # variance of z (var ofestimator of mean..)
- 
-        # Calculating P^{+}_{i} and P^{-}_{i} and their standarderrors
-        # ------------------------------------------------------------
-        # Pp[i] = f = xy/(x + z - xz)
-        # sf = (df/du)**2 * su + (df/dx)**2 * sx + (df/dy)**2 * sy 
-        #       + (df/dz)**2 * sz
-        # Pm[i] = g = uz/(x + z - xz)
-        # sg = (dg/du)**2 * su + (dg/dx)**2 * sx + (dg/dy)**2 * sy
-        #       + (dg/dz)**2 * sz
-
-        dfdu = 0.
-        dfdx = y*z/(x + z - x*z)**2
-        dfdy = x/(x + z - x*z)
-        dfdz = (x-1)/(x+z-x*z)**2
-
-        dgdu = z/(x + z - x*z)
-        dgdx = u*z*(z-1)/(x + z - x*z)**2
-        dgdy = 0.
-        dgdz = u*x/(x+z-x*z)**2
-
-        f = x*y/(x + z - x*z)
-        g = u*z/(x + z - x*z)
-        sf = (dfdu**2 * su + dfdx**2 * sx + dfdy**2 * sy + dfdz**2 * sz)**0.5
-        sg = (dgdu**2 * su + dgdx**2 * sx + dgdy**2 * sy + dgdz**2 * sz)**0.5
-
-        Pp.append(f)
-        Pm.append(g)
-        Ppe.append(sf)
-        Pme.append(sg)
-        Pc.append(probs[0]['LMR']['mean']*Pp[i])
-        Pce.append((probs[0]['LMR']['std']**2 * Pp[i] + \
-                    Ppe[i]**2 * probs[0]['LMR']['mean'])**0.5)
+def get_tau1_path(orders, ptype, intfs):
+    """Return the number of steps it took for this path to cross the M"""
+    if ptype in ("LMR", "LML"):
+        return np.where(orders[:,0] >= intfs[1])[0][0]
+    elif ptype in ("RML", "RMR"):
+        return np.where(orders[:,0] <= intfs[1])[0][0]
+    else:
+        raise ValueError(f"Unknown path type {ptype}")
+    
+def set_tau_distrib(pe):
+    """Set, for each pathtype, the average total pathlength. The phasepoint at
+    the beginning, and right after the crossing will still be included.
+    
+    Parameters
+    ----------
+    pe : object like :py:class:`.PathEnsemble`
+        Tistools PathEnsemble object must be from a PPTIS simulation,
+        for which the weights and the orders have been set.
         
-    return Pm, Pp, Pc, Pme, Ppe, Pce
-
-
-
-
-
-
+    Returns
+    -------
+    Nothing, but sets the attribute pe.tau and pe.tauavg.
+    """
+    pe.tau = []
+    pe.tauavg = {"LML": None, "LMR": None, "RML": None, "RMR": None}
+    # select the accepted paths
+    accmask = get_flag_mask(pe, "ACC")
+    for i in range(len(pe.cyclenumbers)):
+        if pe.flags[i] != "ACC" or pe.generation[i] == "ld":
+            pe.tau.append(0)
+            continue 
+        pe.tau.append(len(pe.orders[i]))
+    pe.tau = np.array(pe.tau) 
+    # get the average tau for each path type. Each path has a weight w.
+    for ptype in ("LML", "LMR", "RML", "RMR"):
+        pe.tauavg[ptype] = np.average(pe.tau[pe.lmrs == ptype], 
+                                      weights=pe.weights[pe.lmrs == ptype])
+        
