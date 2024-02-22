@@ -8,4 +8,5 @@ from .reading import *
 from .pathlengths import *
 from .repptis_analysis import *
 from .pathproperties import *
+from .repptis_msm import *
 
