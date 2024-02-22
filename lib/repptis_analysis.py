@@ -798,7 +798,7 @@ def get_global_probz(pmps, pmms, ppps, ppms):
         pcross.append(pmps[0]*pplus[-1])
     return pmin, pplus, pcross
 
-def set_tau_first_hit_M_distrib(pe):
+def set_tau_first_hit_M_distrib(pe, do_last = True):
     """Set, for each pathtype, the average pathlength before the middle 
     interface is crossed. The phasepoint at the beginning, and right after 
     the crossing will still be included.
@@ -829,12 +829,43 @@ def set_tau_first_hit_M_distrib(pe):
         pe.tau1avg[ptype] = np.average(pe.tau1[pe.lmrs == ptype], 
                                        weights=pe.weights[pe.lmrs == ptype])
 
+    if not do_last:
+        return
+    print("NOT LAST")
+    pe.tau2 = []
+    pe.tau2avg = {"LML": None, "LMR": None, "RML": None, "RMR": None}
+    # select the accepted paths
+    accmask = get_flag_mask(pe, "ACC")
+    for i in range(len(pe.cyclenumbers)):
+        if pe.flags[i] != "ACC" or pe.generation[i] == "ld":
+            pe.tau2.append(0)
+            continue
+        pe.tau2.append(get_tau2_path(pe.orders[i], pe.lmrs[i], pe.interfaces[0]))
+    pe.tau2 = np.array(pe.tau2)
+    # get the average tau2 for each path type. Each path has a weight w.
+    for ptype in ("LML", "LMR", "RML", "RMR"):
+        pe.tau2avg[ptype] = np.average(pe.tau2[pe.lmrs == ptype],
+                                       weights=pe.weights[pe.lmrs == ptype])
+
 def get_tau1_path(orders, ptype, intfs):
     """Return the number of steps it took for this path to cross the M"""
     if ptype in ("LMR", "LML"):
-        return np.where(orders[:,0] >= intfs[1])[0][0]
+        return np.where(orders[:,0] >= intfs[1])[0][0]  # L->M->. cross
     elif ptype in ("RML", "RMR"):
-        return np.where(orders[:,0] <= intfs[1])[0][0]
+        return np.where(orders[:,0] <= intfs[1])[0][0]  # .<-M<-R cross
+    else:
+        raise ValueError(f"Unknown path type {ptype}")
+
+def get_tau2_path(orders, ptype, intfs):
+    """Return the number of steps it took for this path to cross the M"""
+    if ptype in ("LML", "RML"):
+        a = np.where(orders[::-1,0] >= intfs[1])[0][0]  # L<-M<-. cross
+        print(a)
+        return a
+    elif ptype in ("LMR", "RMR"):
+        b = np.where(orders[::-1,0] <= intfs[1])[0][0]  # .->M->R cross
+        print(b)
+        return b
     else:
         raise ValueError(f"Unknown path type {ptype}")
     
