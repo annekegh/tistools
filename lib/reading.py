@@ -252,14 +252,16 @@ class PathEnsemble(object):
             self.orders = orders
             if save: 
                 print(f"Saving orders to {self.name}/order.npy")
-                np.save(self.name+"/order.npy", orders, allow_pickle=True)
+                np.save(self.name+"/order.npy", np.array(orders, dtype=object),
+                        allow_pickle=True)
             return 
         if check_cycnum and check_length and check_flag and check_generation:
             print("Everything matches, setting orders.")
             self.orders = orders
             if save:
                 print(f"Saving orders to {self.name}/order.npy")
-                np.save(self.name+"/order.npy", orders, allow_pickle=True)
+                np.save(self.name+"/order.npy", np.array(orders, dtype=object),
+                        allow_pickle=True)
             return
         # If we are here, we use acc_only, and some checks failed. We now 
         # test wether the fails correspond to rejected trajectories only.
@@ -282,7 +284,8 @@ class PathEnsemble(object):
         self.orders = orders
         if save:
             print(f"Saving orders to {self.name}/order.npy")
-            np.save(self.name+"/order.npy", orders, allow_pickle=True)
+            np.save(self.name+"/order.npy", np.array(orders, dtype=object),
+                                                     allow_pickle=True)
 
 class OrderParameter(object):
 
