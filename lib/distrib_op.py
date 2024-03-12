@@ -114,7 +114,7 @@ def create_distrib(folders,interfaces_input,outputfile,do_pdf,
             for i,(flag0,flag1) in enumerate(zip(flags,flags1)):
                 if flag0!=flag1: raise ValueError("traj",i,flag0,flag1)
 
-            print_lmr_000(lmrs,weights)
+            print_lmr(lmrs,weights)
 
             # compute and print factor xi
             xi = calc_xi(lmrs,weights)

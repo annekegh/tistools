@@ -7,4 +7,5 @@ from .numerical import *
 from .reading import *
 from .pathlengths import *
 from .repptis_analysis import *
+from .pathproperties import *
 

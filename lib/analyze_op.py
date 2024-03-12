@@ -349,10 +349,12 @@ def calc_xi(lmrs,weights):
         xi = 1
     return xi
 
-def print_lmr_000(lmrs,weights):
-    """print the codes of 000, such as LML and RML"""
-    print("count paths in 000")
+def print_lmr(lmrs,weights):
+    """print the codes of ensemble, such as LML and RML"""
+    print("count paths in ensemble")
+    print("code count weighted-count")
     for code in ["LML","LMR","L*R","L*L","RMR","RML","R*R","R*L"] + ["L**","R**","**L","**R","RM*","LM*","*MR","*ML","*M*"]:
+    #for code in ["LML","LMR","L*R","L*L","RMR","RML","R*R","R*L"]:
         n = np.sum(lmrs==code)
         nw = np.sum((lmrs==code)*weights)
         print(code,n,nw)
