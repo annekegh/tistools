@@ -860,11 +860,11 @@ def get_tau2_path(orders, ptype, intfs):
     """Return the number of steps it took for this path to cross the M"""
     if ptype in ("LML", "RML"):
         a = np.where(orders[::-1,0] >= intfs[1])[0][0]  # L<-M<-. cross
-        print(a)
+        #print(a)
         return a
     elif ptype in ("LMR", "RMR"):
         b = np.where(orders[::-1,0] <= intfs[1])[0][0]  # .->M->R cross
-        print(b)
+        #print(b)
         return b
     else:
         raise ValueError(f"Unknown path type {ptype}")
@@ -885,6 +885,17 @@ def set_tau_distrib(pe):
     """
     pe.tau = []
     pe.tauavg = {"LML": None, "LMR": None, "RML": None, "RMR": None}
+    # determine pathtypes
+    if pe.in_zero_minus:
+        if pe.has_zero_minus_one:
+            ptypes = ["LML", "LMR", "RML", "RMR", "L*L", "R*R"]
+        else:
+            ptypes = ["RMR",]
+    else:
+            ptypes = ["LML", "LMR", "RML", "RMR",]
+    pe.tauavg = {}
+    for ptype in ptypes:
+        pe.tauavg[ptype] = None
     # select the accepted paths
     accmask = get_flag_mask(pe, "ACC")
     for i in range(len(pe.cyclenumbers)):
@@ -894,7 +905,11 @@ def set_tau_distrib(pe):
         pe.tau.append(len(pe.orders[i]))
     pe.tau = np.array(pe.tau) 
     # get the average tau for each path type. Each path has a weight w.
-    for ptype in ("LML", "LMR", "RML", "RMR"):
+    #for ptype in ("LML", "LMR", "RML", "RMR"):
+    #print(ptypes)
+    for ptype in ptypes:
+        #print(ptype)
+        #print(np.sum(pe.weights[pe.lmrs == ptype]))
         pe.tauavg[ptype] = np.average(pe.tau[pe.lmrs == ptype], 
                                       weights=pe.weights[pe.lmrs == ptype])
         

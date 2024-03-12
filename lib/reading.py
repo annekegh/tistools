@@ -81,6 +81,7 @@ class PathEnsemble(object):
             self.orders = None
 
     def set_name(self, name):
+        # for instance: 000, 001, ... but can be chosen name too
         self.name = name
 
     def set_weights(self, weights):
@@ -90,12 +91,15 @@ class PathEnsemble(object):
         self.interfaces = interfaces
 
     def set_zero_minus_one(self, has_zero_minus_one):
+        # true if the pathensemble has a lambda_-1 interface to the left
         self.has_zero_minus_one = has_zero_minus_one
 
     def set_in_zero_minus(self, in_zero_minus):
+        # true if the ensemble is [0-] (or [0-'] with lambda_-1 interface)
         self.in_zero_minus = in_zero_minus
 
     def set_in_zero_plus(self, in_zero_plus):
+        # true if the ensemble is [0+] or [0+-]
         self.in_zero_plus = in_zero_plus
 
     def update_shootlink(self,cycnum,link):
