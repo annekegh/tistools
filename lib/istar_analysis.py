@@ -55,12 +55,14 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
         logger.debug(msg)
 
         w_path[i] = {}
+        l_mins = {}
+        l_maxs = {}
         # Get the weights of the RMR, RML, LMR and LML paths
         for pathtype in ["RMR", "LML"]:
             w_path[i][pathtype] = np.sum(select_with_masks(w, [masks[i][pathtype],
                                                             accmask, ~loadmask]))
-            l_mins = select_with_masks(pe.lambmins, [masks[i][pathtype], accmask, ~loadmask])
-            l_maxs = select_with_masks(pe.lambmaxs, [masks[i][pathtype], accmask, ~loadmask])
+            l_mins[pathtype] = select_with_masks(pe.lambmins, [masks[i][pathtype], accmask, ~loadmask])
+            l_maxs[pathtype] = select_with_masks(pe.lambmaxs, [masks[i][pathtype], accmask, ~loadmask])
         msg = "Weights of the different paths:\n"+f"wRMR = {w_path[i]['RMR']}\n"+\
                 f"wRML = {w_path[i]['RML']}\nwLMR = {w_path[i]['LMR']}\n"+\
                 f"wLML = {w_path[i]['LML']}"
@@ -76,9 +78,12 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
         # Compute indices of rows with end turn
         w_path[i]["end"] = {}
         for int_i, int in enumerate(interfaces):
-            if int != pe.interfaces[0][1]:
-                w_path[i]["end"][int_i] = 
+            if int_i < i:
+                w_path[i]["end"][int_i] = [el[0] for el in enumerate(l_mins["LML"]) if el[1] <= int and el[1] >= interfaces[int_i-1]]
+            elif int_i > i:
+                w_path[i]["end"][int_i] = [el[0] for el in enumerate(l_mins["RMR"]) if el[1] >= int and el[1] <= interfaces[int_i+1]]
             else:
+                w_path[i]["end"][int_i] = (w_path[i]["LML"], w_path[i]["RMR"])
 
 
     # Get the total weight of paths starting from left, or from right
