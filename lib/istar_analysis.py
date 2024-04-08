@@ -58,7 +58,7 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
         l_mins = {}
         l_maxs = {}
         # Get the weights of the RMR, RML, LMR and LML paths
-        for pathtype in ["RMR", "LML"]:
+        for pathtype in ["RMR", "RML", "LMR", "LML"]:
             w_path[i][pathtype] = np.sum(select_with_masks(w, [masks[i][pathtype],
                                                             accmask, ~loadmask]))
             l_mins[pathtype] = select_with_masks(pe.lambmins, [masks[i][pathtype], accmask, ~loadmask])
@@ -67,24 +67,72 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
                 f"wRML = {w_path[i]['RML']}\nwLMR = {w_path[i]['LMR']}\n"+\
                 f"wLML = {w_path[i]['LML']}"
         print(msg)
-
-        if tr:  # TR reweighting. Note this is not block-friendly TODO
-            w_path[i]['RMR'] *= 2
-            w_path[i]['LML'] *= 2
-            temp = w_path[i]['RML'] + w_path[i]['LMR']
-            w_path[i]['RML'] = temp
-            w_path[i]['LMR'] = temp
         
         # Compute indices of rows with end turn
-        w_path[i]["end"] = {}
-        for int_i, int in enumerate(interfaces):
-            if int_i < i:
-                w_path[i]["end"][int_i] = [el[0] for el in enumerate(l_mins["LML"]) if el[1] <= int and el[1] >= interfaces[int_i-1]]
-            elif int_i > i:
-                w_path[i]["end"][int_i] = [el[0] for el in enumerate(l_mins["RMR"]) if el[1] >= int and el[1] <= interfaces[int_i+1]]
-            else:
-                w_path[i]["end"][int_i] = (w_path[i]["LML"], w_path[i]["RMR"])
+        # w_path[i]["end"] = [0 for i in interfaces]
+        # for int_i, int in enumerate(interfaces):
+        #     if int_i < i:
+        #         w_path[i]["end"][int_i] = np.asarray([el[0] for el in enumerate(l_mins["LML"]) if el[1] <= int and el[1] >= interfaces[int_i-1]])
+        #     elif int_i > i:
+        #         w_path[i]["end"][int_i] = np.asarray([el[0] for el in enumerate(l_maxs["RMR"]) if el[1] >= int and el[1] <= interfaces[int_i+1]])
+            # else:
+            #     w_path[i]["end"][int_i] = (w_path[i]["LML"], w_path[i]["RMR"])
 
+        # idx_ends[i] = {}
+        # for pathtype in ["RML", "LML"]:
+        #     idx_ends[i][pathtype] = [0 for i in interfaces]
+        #     for int_i, int in enumerate(interfaces):
+        #         idx_ends[i][pathtype][int_i] = np.asarray([el[0] for el in enumerate(l_mins[pathtype]) if el[1] <= int and el[1] >= interfaces[int_i-1]])
+        # for pathtype in ["RMR", "LMR"]:
+        #     idx_ends[i][pathtype] = [0 for i in interfaces]
+        #     for int_i, int in enumerate(interfaces):
+        #         idx_ends[i][pathtype][int_i] = np.asarray([el[0] for el in enumerate(l_maxs[pathtype]) if el[1] >= int and el[1] <= interfaces[int_i+1]])
+
+        w_path[i]["ends"] = np.empty([len(interfaces),len(interfaces)])
+        for j in range(len(interfaces)):
+            for k in range(len(interfaces)):
+                if j == k:
+                    w_path[i]["ends"][j][k] = 0
+                elif j < k:
+                    w_path[i]["ends"][j][k] = np.sum(w, [pe.lambmins <= interfaces[j], pe.lambmaxs >= interfaces[k],
+                                                 masks[i]["LMR"], masks[i]["RMR"], accmask, ~loadmask])
+                else:
+                    w_path[i]["ends"][j][k] = np.sum(w, [pe.lambmins <= interfaces[k], pe.lambmaxs >= interfaces[j],
+                                                 masks[i]["LML"], masks[i]["RML"], accmask, ~loadmask])
+                    
+
+        # if tr:  # TR reweighting. Note this is not block-friendly TODO
+        #     w_path[i]['RMR'] *= 2
+        #     w_path[i]['LML'] *= 2
+        #     temp = w_path[i]['RML'] + w_path[i]['LMR']
+        #     w_path[i]['RML'] = temp
+        #     w_path[i]['LMR'] = temp
+
+    p = np.empty([2*len(pes)-3, 2*len(pes)-3])
+    for i in range(len(interfaces)):
+        for k in range(len(interfaces)):
+            if i == k:
+                p[i][k] = 0
+            elif i < k:
+                p_reachedj = np.empty(k-i)
+                p_jtillend = np.empty(k-i)
+                for j in range(i+1, k+1):
+                    p_reachedj.append(np.sum([w.size for w in idx_ends[i]["RMR"][j:]]) / w_path[i]["RMR"])
+                    p_jtillend.append((idx_ends[j]["RMR"][k].size + idx_ends[j]["LMR"][k].size) / (w_path[j]["RMR"] + w_path[j]["LMR"]))
+                print(p_reachedj)
+                print(p_jtillend)
+                print(p_reachedj*p_jtillend)
+                p[i][k] = np.average(p_reachedj * p_jtillend)
+            elif i > k:
+                p_reachedj = np.empty(i-k)
+                p_jtillend = np.empty(i-k)
+                for j in range(k, i):
+                    p_reachedj.append(np.sum([w.size for w in idx_ends[i]["LML"][j:]]) / w_path[i]["LML"])
+                    p_jtillend.append((idx_ends[j]["RMR"][k].size + idx_ends[j]["LMR"][k].size) / (w_path[j]["RMR"] + w_path[j]["LMR"]))
+                print(p_reachedj)
+                print(p_jtillend)
+                print(p_reachedj*p_jtillend)
+                p[i][k] = np.average(p_reachedj * p_jtillend)
 
     # Get the total weight of paths starting from left, or from right
     wR = w_path['RMR'] + w_path['RML']
