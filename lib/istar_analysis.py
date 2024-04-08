@@ -3,7 +3,7 @@ import numpy as np
 from .reading import *
 import logging
 import bisect
-from repptis_analysis import *
+from .repptis_analysis import *
 
 # Created file and added transition function
 # EW - April 2024
@@ -93,11 +93,11 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
                 if j == k:
                     w_path[i]["ends"][j][k] = 0
                 elif j < k:
-                    w_path[i]["ends"][j][k] = np.sum(w, [pe.lambmins <= interfaces[j], pe.lambmaxs >= interfaces[k],
-                                                 masks[i]["LMR"], masks[i]["RMR"], accmask, ~loadmask])
+                    w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [pe.lambmins <= interfaces[j], pe.lambmaxs >= interfaces[k],
+                                                 masks[i]["LMR"], masks[i]["RMR"], accmask, ~loadmask]))
                 else:
-                    w_path[i]["ends"][j][k] = np.sum(w, [pe.lambmins <= interfaces[k], pe.lambmaxs >= interfaces[j],
-                                                 masks[i]["LML"], masks[i]["RML"], accmask, ~loadmask])
+                    w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [pe.lambmins <= interfaces[k], pe.lambmaxs >= interfaces[j],
+                                                 masks[i]["LML"], masks[i]["RML"], accmask, ~loadmask]))
                     
 
         # if tr:  # TR reweighting. Note this is not block-friendly TODO
@@ -118,9 +118,10 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
                 for j in range(i+1, k+1):
                     p_reachedj.append(np.sum(w_path[i]["ends"][i][j:]) / np.sum(w_path[i]["ends"][i]) if np.sum(w_path[i]["ends"][i]) != 0 else np.nan)
                     p_jtillend.append(np.sum(w_path[j]["ends"][i][k]) / np.sum(w_path[j]["ends"][i]) if np.sum(w_path[j]["ends"][i]) != 0 else np.nan)
-                print(p_reachedj)
-                print(p_jtillend)
-                print(p_reachedj*p_jtillend)
+                print(f"i={interfaces[i]}, #j = {k-i}, k={interfaces[k]}")
+                print("P_i(j reached) =", p_reachedj)
+                print("P_j(k) =", p_jtillend)
+                print("full P_i(k) =", p_reachedj*p_jtillend)
                 p[i][k] = np.average(p_reachedj * p_jtillend)
             elif i > k:
                 p_reachedj = np.empty(i-k)
@@ -128,9 +129,10 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
                 for j in range(k, i):
                     p_reachedj.append(np.sum(w_path[i]["ends"][i][j:]) / np.sum(w_path[i]["ends"][i]) if np.sum(w_path[i]["ends"][i]) != 0 else np.nan)
                     p_jtillend.append(np.sum(w_path[j]["ends"][i][k]) / np.sum(w_path[j]["ends"][i]) if np.sum(w_path[j]["ends"][i]) != 0 else np.nan)
-                print(p_reachedj)
-                print(p_jtillend)
-                print(p_reachedj*p_jtillend)
+                print(f"i={interfaces[i]}, #j = {k-i}, k={interfaces[k]}")
+                print("P_i(j reached) =", p_reachedj)
+                print("P_j(k) =", p_jtillend)
+                print("full P_i(k) =", p_reachedj*p_jtillend)
                 p[i][k] = np.average(p_reachedj * p_jtillend)
 
     msg = "Local crossing probabilities computed"

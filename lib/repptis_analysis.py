@@ -723,7 +723,7 @@ def get_globall_probs(ps):
         A list of dictionaries with the local crossing probabilities for each
         PPTIS ensemble. The keys are the path types (RMR, RML, LMR, LML).
         ps[i]['LMR']['mean'] and ps[i]['LMR']['std'] are the mean and stdev of
-        p_{i}^{\mp}, respectively.
+        p_{i}^{mp}, respectively.
 
     Returns
     -------
