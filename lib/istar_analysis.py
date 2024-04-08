@@ -30,10 +30,9 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
         If True, infinite time-reversal reweighting is performed.
     Returns
     -------
-    p : dict
-        A dictionary with the local crossing probabilities for the PPTIS
-        ensemble pe. The keys are the path types (RMR, RML, LMR, LML), and 
-        the values are the local crossing probabilities.
+    p : ndarray(2, 2)
+        Matrix of all local crossing probabilities from one turn to another,
+        in both directions.
     """
     masks = {}
     w_path = {}
@@ -55,18 +54,18 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
         logger.debug(msg)
 
         w_path[i] = {}
-        l_mins = {}
-        l_maxs = {}
-        # Get the weights of the RMR, RML, LMR and LML paths
-        for pathtype in ["RMR", "RML", "LMR", "LML"]:
-            w_path[i][pathtype] = np.sum(select_with_masks(w, [masks[i][pathtype],
-                                                            accmask, ~loadmask]))
-            l_mins[pathtype] = select_with_masks(pe.lambmins, [masks[i][pathtype], accmask, ~loadmask])
-            l_maxs[pathtype] = select_with_masks(pe.lambmaxs, [masks[i][pathtype], accmask, ~loadmask])
-        msg = "Weights of the different paths:\n"+f"wRMR = {w_path[i]['RMR']}\n"+\
-                f"wRML = {w_path[i]['RML']}\nwLMR = {w_path[i]['LMR']}\n"+\
-                f"wLML = {w_path[i]['LML']}"
-        print(msg)
+        # l_mins = {}
+        # l_maxs = {}
+        # # Get the weights of the RMR, RML, LMR and LML paths
+        # for pathtype in ["RMR", "RML", "LMR", "LML"]:
+        #     w_path[i][pathtype] = np.sum(select_with_masks(w, [masks[i][pathtype],
+        #                                                     accmask, ~loadmask]))
+        #     l_mins[pathtype] = select_with_masks(pe.lambmins, [masks[i][pathtype], accmask, ~loadmask])
+        #     l_maxs[pathtype] = select_with_masks(pe.lambmaxs, [masks[i][pathtype], accmask, ~loadmask])
+        # msg = "Weights of the different paths:\n"+f"wRMR = {w_path[i]['RMR']}\n"+\
+        #         f"wRML = {w_path[i]['RML']}\nwLMR = {w_path[i]['LMR']}\n"+\
+        #         f"wLML = {w_path[i]['LML']}"
+        # print(msg)
         
         # Compute indices of rows with end turn
         # w_path[i]["end"] = [0 for i in interfaces]
@@ -117,8 +116,8 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
                 p_reachedj = np.empty(k-i)
                 p_jtillend = np.empty(k-i)
                 for j in range(i+1, k+1):
-                    p_reachedj.append(np.sum([w.size for w in idx_ends[i]["RMR"][j:]]) / w_path[i]["RMR"])
-                    p_jtillend.append((idx_ends[j]["RMR"][k].size + idx_ends[j]["LMR"][k].size) / (w_path[j]["RMR"] + w_path[j]["LMR"]))
+                    p_reachedj.append(np.sum(w_path[i]["ends"][i][j:]) / np.sum(w_path[i]["ends"][i]) if np.sum(w_path[i]["ends"][i]) != 0 else np.nan)
+                    p_jtillend.append(np.sum(w_path[j]["ends"][i][k]) / np.sum(w_path[j]["ends"][i]) if np.sum(w_path[j]["ends"][i]) != 0 else np.nan)
                 print(p_reachedj)
                 print(p_jtillend)
                 print(p_reachedj*p_jtillend)
@@ -127,23 +126,14 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
                 p_reachedj = np.empty(i-k)
                 p_jtillend = np.empty(i-k)
                 for j in range(k, i):
-                    p_reachedj.append(np.sum([w.size for w in idx_ends[i]["LML"][j:]]) / w_path[i]["LML"])
-                    p_jtillend.append((idx_ends[j]["RMR"][k].size + idx_ends[j]["LMR"][k].size) / (w_path[j]["RMR"] + w_path[j]["LMR"]))
+                    p_reachedj.append(np.sum(w_path[i]["ends"][i][j:]) / np.sum(w_path[i]["ends"][i]) if np.sum(w_path[i]["ends"][i]) != 0 else np.nan)
+                    p_jtillend.append(np.sum(w_path[j]["ends"][i][k]) / np.sum(w_path[j]["ends"][i]) if np.sum(w_path[j]["ends"][i]) != 0 else np.nan)
                 print(p_reachedj)
                 print(p_jtillend)
                 print(p_reachedj*p_jtillend)
                 p[i][k] = np.average(p_reachedj * p_jtillend)
 
-    # Get the total weight of paths starting from left, or from right
-    wR = w_path['RMR'] + w_path['RML']
-    wL = w_path['LMR'] + w_path['LML']
-    # And calculate local crossing probabilities
-    p = {}
-    for pathtype, direc_w in zip(("RMR", "RML", "LMR", "LML"),
-                                (wR, wR, wL, wL)):
-        p[pathtype] = w_path[pathtype]/direc_w if direc_w != 0 else np.nan
-    msg = "Local crossing probabilities:\n"+f"pRMR = {p['RMR']}\n"+\
-            f"pRML = {p['RML']}\npLMR = {p['LMR']}\npLML = {p['LML']}"
+    msg = "Local crossing probabilities computed"
     print(msg)
 
     return p
