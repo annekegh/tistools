@@ -10,6 +10,7 @@ def set_flags_ACC_REJ():
     REJFLAGS += ['TSS','TSA']
     REJFLAGS += ['HAS','CSA','NSG']
     REJFLAGS += ['SWD', 'SWH']
+    REJFLAGS += ['ILL']
     """
          MCR': 'Momenta change rejection',
         'BWI': 'Backward trajectory end at wrong interface',
