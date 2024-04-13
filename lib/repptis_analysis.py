@@ -705,6 +705,19 @@ def get_local_probs(pe, w = None, tr=False):
             f"pRML = {p['RML']}\npLMR = {p['LMR']}\npLML = {p['LML']}"
     print(msg)
 
+    # Extra for milestoning
+    #----------------------
+    # Get the total weight of paths arriving to left, or to right
+    w2R = w_path['LMR'] + w_path['RMR']
+    w2L = w_path['LML'] + w_path['RML']
+    w_tot = w2R + w2L
+    # And calculate local crossing probabilities
+    p["2R"] = w2R/w_tot if w_tot != 0 else np.nan
+    p["2L"] = w2L/w_tot if w_tot != 0 else np.nan
+    msg = "Local crossing probabilities:\n"+f"p2R = {p['2R']}\n"+\
+            f"p2L = {p['2L']}"
+    print(msg)
+
     return p
 
         
