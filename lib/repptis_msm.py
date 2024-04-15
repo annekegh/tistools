@@ -102,7 +102,7 @@ def global_cross_prob(M, doprint=False):
     # take pieces of transition matrix
     Mp = M[1:-1,1:-1]
     a = np.identity(NS-2)-Mp    # 1-Mp
-    a1 = np.linalg.inv(a)       # (1-Mp)^(-1)
+    # a1 = np.linalg.inv(a)       # (1-Mp)^(-1)  --> bad practice!
 
     # other pieces
     D = M[1:-1, np.array([0,-1])]
@@ -111,7 +111,8 @@ def global_cross_prob(M, doprint=False):
 
     # compute Z vector
     z1 = np.array([[0],[1]])
-    z2 = np.dot(a1,np.dot(D,z1))
+    # z2 = np.dot(a1,np.dot(D,z1))
+    z2 = np.linalg.solve(a, np.dot(D,z1))
 
     # compute H vector
     y1 = np.dot(M11,z1) + np.dot(E,z2)
