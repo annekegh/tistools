@@ -54,50 +54,39 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
         logger.debug(msg)
 
         w_path[i] = {}
-        # l_mins = {}
-        # l_maxs = {}
-        # # Get the weights of the RMR, RML, LMR and LML paths
-        # for pathtype in ["RMR", "RML", "LMR", "LML"]:
-        #     w_path[i][pathtype] = np.sum(select_with_masks(w, [masks[i][pathtype],
-        #                                                     accmask, ~loadmask]))
-        #     l_mins[pathtype] = select_with_masks(pe.lambmins, [masks[i][pathtype], accmask, ~loadmask])
-        #     l_maxs[pathtype] = select_with_masks(pe.lambmaxs, [masks[i][pathtype], accmask, ~loadmask])
-        # msg = "Weights of the different paths:\n"+f"wRMR = {w_path[i]['RMR']}\n"+\
-        #         f"wRML = {w_path[i]['RML']}\nwLMR = {w_path[i]['LMR']}\n"+\
-        #         f"wLML = {w_path[i]['LML']}"
-        # print(msg)
-        
-        # Compute indices of rows with end turn
-        # w_path[i]["end"] = [0 for i in interfaces]
-        # for int_i, int in enumerate(interfaces):
-        #     if int_i < i:
-        #         w_path[i]["end"][int_i] = np.asarray([el[0] for el in enumerate(l_mins["LML"]) if el[1] <= int and el[1] >= interfaces[int_i-1]])
-        #     elif int_i > i:
-        #         w_path[i]["end"][int_i] = np.asarray([el[0] for el in enumerate(l_maxs["RMR"]) if el[1] >= int and el[1] <= interfaces[int_i+1]])
-            # else:
-            #     w_path[i]["end"][int_i] = (w_path[i]["LML"], w_path[i]["RMR"])
-
-        # idx_ends[i] = {}
-        # for pathtype in ["RML", "LML"]:
-        #     idx_ends[i][pathtype] = [0 for i in interfaces]
-        #     for int_i, int in enumerate(interfaces):
-        #         idx_ends[i][pathtype][int_i] = np.asarray([el[0] for el in enumerate(l_mins[pathtype]) if el[1] <= int and el[1] >= interfaces[int_i-1]])
-        # for pathtype in ["RMR", "LMR"]:
-        #     idx_ends[i][pathtype] = [0 for i in interfaces]
-        #     for int_i, int in enumerate(interfaces):
-        #         idx_ends[i][pathtype][int_i] = np.asarray([el[0] for el in enumerate(l_maxs[pathtype]) if el[1] >= int and el[1] <= interfaces[int_i+1]])
 
         w_path[i]["ends"] = np.empty([len(interfaces),len(interfaces)])
         for j in range(len(interfaces)):
             for k in range(len(interfaces)):
                 if j == k:
-                    w_path[i]["ends"][j][k] = 0
+                        if i == 1 and j == 0:
+                            w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask]))
+                        else:
+                            w_path[i]["ends"][j][k] = 0  
                 elif j < k:
-                    w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [pe.lambmins <= interfaces[j], pe.lambmaxs >= interfaces[k],
-                                                 masks[i]["LMR"], masks[i]["RMR"], accmask, ~loadmask]))
+                    dir_mask = pe.dirs == 1
+                    if j == 0:
+                        start_cond = pe.lambmins <= interfaces[j]
+                    else: 
+                        start_cond = np.logical_and(pe.lambmins <= interfaces[j], pe.lambmins >= interfaces[j-1])
+                    if k == len(interfaces)-1:
+                        end_cond = pe.lambmaxs >= interfaces[k]
+                    else: 
+                        end_cond = np.logical_and(pe.lambmaxs >= interfaces[k], pe.lambmaxs <= interfaces[k+1])
+                
+                    w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
                 else:
-                    w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [pe.lambmins <= interfaces[k], pe.lambmaxs >= interfaces[j],
-                                                 masks[i]["LML"], masks[i]["RML"], accmask, ~loadmask]))
+                    dir_mask = pe.dirs == -1
+                    if k == 0:
+                        start_cond = pe.lambmins <= interfaces[k]
+                    else: 
+                        start_cond = np.logical_and(pe.lambmins <= interfaces[k], pe.lambmins >= interfaces[k-1])
+                    if j == len(interfaces)-1:
+                        end_cond = pe.lambmaxs >= interfaces[j]
+                    else: 
+                        end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
+
+                    w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
                     
 
         # if tr:  # TR reweighting. Note this is not block-friendly TODO
@@ -107,35 +96,97 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
         #     w_path[i]['RML'] = temp
         #     w_path[i]['LMR'] = temp
 
-    p = np.empty([2*len(pes)-3, 2*len(pes)-3])
+    p = np.empty([len(interfaces), len(interfaces)])
     for i in range(len(interfaces)):
         for k in range(len(interfaces)):
             if i == k:
-                p[i][k] = 0
+                if i == 0:
+                    p[i][k] = np.sum(w_path[i+1]["ends"][i][k]) / np.sum(w_path[i+1]["ends"][i][i:]) if np.sum(w_path[i+1]["ends"][i][i:]) != 0 else 0
+                else:
+                    p[i][k] = 0
             elif i < k:
-                p_reachedj = np.empty(k-i)
-                p_jtillend = np.empty(k-i)
-                for j in range(i+1, k+1):
-                    p_reachedj.append(np.sum(w_path[i]["ends"][i][j:]) / np.sum(w_path[i]["ends"][i]) if np.sum(w_path[i]["ends"][i]) != 0 else np.nan)
-                    p_jtillend.append(np.sum(w_path[j]["ends"][i][k]) / np.sum(w_path[j]["ends"][i]) if np.sum(w_path[j]["ends"][i]) != 0 else np.nan)
+                p_reachedj = np.empty(k-i+1)
+                p_jtillend = np.empty(k-i+1)
+                w_reachedj = np.empty(k-i+1)
+                w_jtillend = np.empty(k-i+1)
+                for j in range(i, k+1):
+                    p_reachedj[j-i] = np.sum(w_path[i+1]["ends"][i][j:]) / np.sum(w_path[i+1]["ends"][i][i:]) if np.sum(w_path[i+1]["ends"][i][i:]) != 0 else 0
+                    w_reachedj[j-i] = np.sum(w_path[i+1]["ends"][i][i:])
+                    if j < len(interfaces)-1:
+                        p_jtillend[j-i] = np.sum(w_path[j+1]["ends"][i][k]) / np.sum(w_path[j+1]["ends"][i][i:]) if np.sum(w_path[j+1]["ends"][i][i:]) != 0 else 0
+                        w_jtillend[j-i] = np.sum(w_path[j+1]["ends"][i][i:])
+                    else: 
+                        p_jtillend[j-i] = 1
+                        w_jtillend[j-i] = 1
                 print(f"i={interfaces[i]}, #j = {k-i}, k={interfaces[k]}")
                 print("P_i(j reached) =", p_reachedj)
                 print("P_j(k) =", p_jtillend)
                 print("full P_i(k) =", p_reachedj*p_jtillend)
-                p[i][k] = np.average(p_reachedj * p_jtillend)
+                print("weights: ", w_reachedj*w_jtillend)
+                print("weighted P_i(k) =", np.average(p_reachedj * p_jtillend, weights=w_reachedj*w_jtillend) if np.sum(w_reachedj*w_jtillend) != 0 else 0)
+                print("vs normal avg: ", np.average(p_reachedj * p_jtillend))
+                p[i][k] = np.average(p_reachedj * p_jtillend, weights=w_reachedj*w_jtillend) if np.sum(w_reachedj*w_jtillend) != 0 else 0                
+                # p[i][k] = np.average(p_reachedj * p_jtillend)
             elif i > k:
-                p_reachedj = np.empty(i-k)
-                p_jtillend = np.empty(i-k)
-                for j in range(k, i):
-                    p_reachedj.append(np.sum(w_path[i]["ends"][i][j:]) / np.sum(w_path[i]["ends"][i]) if np.sum(w_path[i]["ends"][i]) != 0 else np.nan)
-                    p_jtillend.append(np.sum(w_path[j]["ends"][i][k]) / np.sum(w_path[j]["ends"][i]) if np.sum(w_path[j]["ends"][i]) != 0 else np.nan)
+                p_reachedj = np.empty(i-k+1)
+                p_jtillend = np.empty(i-k+1)
+                w_reachedj = np.empty(i-k+1)
+                w_jtillend = np.empty(i-k+1)
+                for j in range(k, i+1):
+                    if i < len(interfaces)-1:
+                        p_reachedj[j-k] = np.sum(w_path[i+1]["ends"][i][:j+1]) / np.sum(w_path[i+1]["ends"][i][:i+1]) if np.sum(w_path[i+1]["ends"][i][:i+1]) != 0 else 0
+                        p_jtillend[j-k] = np.sum(w_path[j+1]["ends"][i][k]) / np.sum(w_path[j+1]["ends"][i][:i+1]) if np.sum(w_path[j+1]["ends"][i][:i+1]) != 0 else 0
+                        w_reachedj[j-k] = np.sum(w_path[i+1]["ends"][i][:i+1])
+                        w_jtillend[j-k] = np.sum(w_path[j+1]["ends"][i][:i+1])
+                    else: 
+                        p_reachedj[j-k] = 0
+                        p_jtillend[j-k] = 0
+                        w_reachedj[j-k] = 0
+                        w_jtillend[j-k] = 0
+                    
                 print(f"i={interfaces[i]}, #j = {k-i}, k={interfaces[k]}")
                 print("P_i(j reached) =", p_reachedj)
                 print("P_j(k) =", p_jtillend)
                 print("full P_i(k) =", p_reachedj*p_jtillend)
-                p[i][k] = np.average(p_reachedj * p_jtillend)
+                print("weights: ", w_reachedj*w_jtillend)
+                print("weighted P_i(k) =", np.average(p_reachedj * p_jtillend, weights=w_reachedj*w_jtillend) if np.sum(w_reachedj*w_jtillend) != 0 else 0)
+                print("vs normal avg: ", np.average(p_reachedj * p_jtillend))
+                p[i][k] = np.average(p_reachedj * p_jtillend, weights=w_reachedj*w_jtillend) if np.sum(w_reachedj*w_jtillend) != 0 else 0
+                # p[i][k] = np.average(p_reachedj * p_jtillend)
 
     msg = "Local crossing probabilities computed"
     print(msg)
 
     return p
+
+def construct_M_istar(P, NS, N):
+    """Construct transition matrix M"""
+    # N -- number of interfaces
+    # NS -- dimension of MSM, 4*N-5 when N>=4
+    # P -- ndarray of probabilities for paths between end turns
+    
+    # assert N>=4
+    assert N==P.shape[0]
+    assert N==P.shape[1]
+    assert NS==2*N
+
+    # construct transition matrix
+    M = np.zeros((NS,NS))
+    
+    # states [0-] and [0*+-]
+    M[0,2] = 1
+    M[2,0] = P[0,0]
+    M[2,N+1:] = P[0, 1:]
+    M[1,0] = 1
+    M[-1,0] = 1
+    M[N+1:,2] = P[1:, 0]
+
+    for i in range(1,N):
+        #print("starting from state i",i)
+        M[2+i, N+i:2*N] = P[i,i:]
+        M[N+i, 3:2+i] = P[i, 1:i]
+
+    for i in range(NS):
+        M[i] = M[i]/np.sum(M[i])
+
+    return M
