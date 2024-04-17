@@ -48,10 +48,28 @@ pip install numpy matplotlib
 
 ### Download and Install tistools
 
+First, download the code and go to the directory with the code.
+
 ```
 git clone https://github.com/annekegh/tistools.git
 cd tistools
-python setup.py install
+```
+
+Next, use one of the installation commands
+
+```
+pip install .
+```
+or when doing code development in tistools:
+```
+pip install -e .    # code is editable
+```
+
+In case you want to be sure that pip installs
+in the correct environment (pip can be unpredictable)
+```
+which python   # check that this is the python you want to use
+python -m pip install -e .   # code is editable, leave out -e if that's not needed.
 ```
 
 ### Executables and Examples
