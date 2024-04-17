@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tistools"
+description = 'Tools to deal with the output of PyRETIS and RETIS projects'
+#version='0.1'   # if fixed
+dynamic = ["version"]   # let backend decide code by itself
+authors = [
+  { name="An Ghysels", email="an.ghysels@ugent.be" },
+]
+keywords = ["path sampling", "transition interface sampling", "RETIS", "TIS",
+    "PPTIS", "REPPTIS", "PyRETIS", "analysis"]
+readme = "README.md"
+license = {file = "LICENSE"}    # TODO remove license as a file and use Approved file
+requires-python = ">=3.8"
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "Topic :: Science/Engineering :: Molecular Science",
+    #"License :: OSI Approved :: BSD License",
+    #'License :: OSI Approved :: GNU General Public License (GPL)',
+    "Natural Language :: English",
+    "Operating System :: POSIX",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3"
+]
+#dependencies = [
+#    "numpy",
+#]
+
+#[project.scripts]
+#qcalc = "qcalc.__main__:main"
+
+[project.urls]
+"Research group" = "https://biommeda.ugent.be"
+Repository = "https://github.com/annekegh/tistools.git"
+#Issues = "https://github.com/annekegh/tistools/issues"
+#Documentation = "https://readthedocs.org"
+
+#[tool.setuptools.packages.find]
+#where = ["lib"]
+
+#https://setuptools.pypa.io/en/latest/userguide/package_discovery.html
+[tool.setuptools.package-dir]
+tistools = "lib"    # modulename = "location"   # setup.py: package_dir = {'tistools': 'lib'},
+    # directory containing all the packages (e.g.  src/mypkg1, src/mypkg2)
+
+#[tool.setuptools.package-data]
+#"" = ['my_data/*']    # <- empty string means: all packages
+
+# formatting of code
+#[tool.black]
+#line-length = 100
+#target-version = ['py311']
