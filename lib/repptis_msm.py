@@ -1,4 +1,9 @@
+# functions to construct and analyse an MSM based on the ensembles
 import numpy as np
+
+#======================================
+# PPTIS
+#======================================
 
 def construct_M(p_mm, p_mp, p_pm, p_pp, N):
     """Construct transition matrix M"""
@@ -69,84 +74,76 @@ def construct_M_N3(p_mm, p_mp, p_pm, p_pp, NS):
 
     return M
 
+#======================================
+# Milestoning
+#======================================
 
-def construct_M_milestoning_dir(p_mm, p_mp, p_pm, p_pp, N):
-    #TODO
-    """Construct transition matrix M"""
-    # N -- number of interfaces
-    # NS -- dimension of MSM, N when N>=3
-    # p_mp -- list shape (N-1,) with local crossing probability minus-to-plus (mp)
+def construct_M_milestoning(p_min, p_plus, N):
+    """Construct transition matrix M
+
+    N -- number of interfaces: 0,..,N-1
+    NS -- dimension of MSM, N when N>=3
+    p_mp -- list shape (N-1,) with local crossing probability minus-to-plus (mp)
     
-    assert N>=4 # maybe N=3??? TODO
-    assert N==len(p_mm)+1
-    assert N==len(p_mp)+1
-    assert N==len(p_pm)+1
-    assert N==len(p_pp)+1
+    States:
+    0-, 0+, 1, .., N-1=B => this is N+1=NS
+
+    Sampled ensembles:
+    0+, 1, 2, .., N-2    => this is N-1  
+    """
+    assert N>=3
+    assert N==len(p_min)+1
+    assert N==len(p_plus)+1
     
     # NS: 0 to 0, 0 to 1, 1 to 2, ..., N-2 to N-1 (=B)
-    # and in two directions
-    NS = 2*N
-
-    #if N==3:
-    #    return construct_M_N3(p_mm, p_mp, p_pm, p_pp, NS)
+    NS = N+1
 
     # construct transition matrix
     M = np.zeros((NS,NS))
     
-    # states = lambda0-, lambda0+, lambda1-, lambda+, ...
-    # lambda0
+    # states = lambda0-, lambda0+, lambda1, lambda2, ...
+    # lambda0 special
     M[0,1] = 1
-    M[1,0] = p_mm[0]
-    M[1,2] = p_mp[0]
+    M[1,0] = p_min[0]
+    M[1,2] = p_plus[0]
+    # lambda1 special
+    M[2,0] = p_min[1]
+    M[2,3] = p_plus[1]
     
-    # lambda1
-    # lambda i- becomes lambda (i-1)- or lambda (i+1)+
-    # index 2*i        index 2*(i-1)     index 2*(i+1)+1
-    # lambda i+ becomes lambda (i-1)- or lambda (i+1)+
-    for i in range(1,N-1):
-        M[2*i,2*(i-1)]   = p_mm[1]
-        M[2*i,2*(i+1)+1] = p_mp[1]
-        M[3,3] = p_pm[1]
-        M[3,3] = p_pp[1]
+    # lambda2...lambda(N-2)
+    for i in range(2,N-1): # shift index by 1, because lambda0 has 2 rows/cols
+        M[i+1,i-1+1] = p_min[i]
+        M[i+1,i+1+1] = p_plus[i]
     
-    # for i=N-2
-    [p_mm[0],p_mp[0],0]
-    M[1,0] = 1
-    M[2,4:8] = [p_mm[1],p_mp[1],0,0]
-    M[3,0] = 1
-
-    # states [1+-] special
-    M[4,3] = 1
-    M[6,3] = 1
-
-    # states [(N-2)+-] special
-    M[(N-2)*4,-5:-3] = [p_pm[N-3],p_pp[N-3]]
-    M[(N-2)*4+1,-1] = 1
-
-    # state B=N-1 special
-    M[-1,0] = 1
-
-    for i in range(1,N-2):
-        #print("starting from state i",i)
-        M[1+4*i,4*(i+1):4*(i+1)+2] = [p_mm[i+1],p_mp[i+1]]
-        M[3+4*i,4*(i+1):4*(i+1)+2] = [p_mm[i+1],p_mp[i+1]]
-
-    for i in range(2,N-2):
-        #print("starting from state i",i)
-        M[4*i,  4*i-2:4*i] = [p_pm[i-1],p_pp[i-1]]
-        M[4*i+2,4*i-2:4*i] = [p_pm[i-1],p_pp[i-1]]
+    # state B, lambda N-1 special
+    M[N,0] = 1
 
     return M
 
-
-
+#======================================
+# crossing probabilities
+#======================================
 
 def global_cross_prob(M, doprint=False):
-    # probability to arrive in -1 before 0
-    # given that you are at 0 now and that you are leaving 0
-    # = crossing probability from 0 to -1
-    # The interesting answer is y1[0] = Pcross-global
+    """Probabilities to arrive in -1 before 0, various conditions
 
+    Z = probability to arrive in -1 before 0
+    Y = probability to arrive in -1 before 0, given that you are leaving your current state
+
+    Arguments:
+    M -- transition matrix
+
+    Optional:
+    doprint -- print intermediate results (default: False)
+
+    Returns:
+    z1 -- array with 2 elements for states 0 and -1
+    z2 -- array with NS-2 elements for other states
+    y1 -- array with 2 elements for states 0 and -1
+    y2 -- array with NS-2 elements for other states
+    The interesting answer is y1[0] = global crossing probability from 0 to -1
+    given that you are at 0 now and that you are leaving 0
+    """
     NS = len(M)
     assert NS>=3
 
@@ -164,7 +161,7 @@ def global_cross_prob(M, doprint=False):
     z1 = np.array([[0],[1]])
     z2 = np.dot(a1,np.dot(D,z1))
 
-    # compute H vector
+    # compute Y vector
     y1 = np.dot(M11,z1) + np.dot(E,z2)  # y1[0] = Prcross
     y2 = np.dot(D,z1) + np.dot(Mp,z2)
 
@@ -190,12 +187,45 @@ def global_cross_prob(M, doprint=False):
     return z1, z2, y1, y2
 
 
+#======================================
+# Mean first passage times
+#======================================
 
-def vector_GH(M, tau1, taum, tau2, absor, kept, doprint=False):
+def mfpt_to_absorbing_states(M, tau1, taum, tau2, absor, kept, doprint=False,
+                              remove="m"):
+    """Compute MFPT to arrive in any of the absorbing states, indices absor
+
+    G = MFPT to arrive in absor states
+    H = MFPT to arrive in absor states, given that you are leaving your current state
+    
+    Time is measured in number of steps. Endpoints are not included.
+    Only parts (m) and (2) are included in the time.
+
+    Arguments:
+    M -- transition matrix
+    tau1 -- array with time before first hit of M
+    taum -- array with time between hitting M first and last
+    tau2 -- array with time after last hit of M
+    absor -- array with indices of absorbing states
+    kept -- array with indices of non-absorbing states
+
+    Optional:
+    doprint -- print intermediate results (default: False)
+    remove -- whether to remove some time from the starting state in H
+              (default: "m", remove middle part m of starting state)
+
+    Returns:
+    g1 -- array with n_absorb elements
+    g2 -- array with n_kept elements
+    h1 -- array with n_absorb elements
+    h2 -- array with n_kept elements
+    """
     taum2 = taum + tau2
     NS = len(M)
     assert NS>=3
+    check_valid_indices(M, absor, kept)
     
+    # n_absorb + n_kept = n_states
     assert len(M) == len(absor)+len(kept)
 
     # take pieces of transition matrix    
@@ -204,7 +234,6 @@ def vector_GH(M, tau1, taum, tau2, absor, kept, doprint=False):
     D   = np.take(np.take(M, kept, axis=0), absor, axis=1)
     E   = np.take(np.take(M, absor, axis=0), kept, axis=1)
     M11 = np.take(np.take(M, absor, axis=0), absor, axis=1)
-    #print(D.shape, E.shape, M11.shape, Mp.shape, absor.shape, kept.shape)
 
     a = np.identity(len(Mp))-Mp   # 1-Mp
     a1 = np.linalg.inv(a)         # compute (1-Mp)^(-1)
@@ -225,8 +254,11 @@ def vector_GH(M, tau1, taum, tau2, absor, kept, doprint=False):
     h2 = np.dot(D,g1) + np.dot(Mp,g2)  + tp
 
     # EXTRA: remove middle part m of first time
-    h1 -= st1
-    h2 -= stp
+    #-------------------------------------------
+    # TODO write documentation here
+    if remove=="m":
+        h1 -= st1
+        h2 -= stp
 
     if doprint:
         print("Mp eigenvals")
@@ -253,166 +285,45 @@ def vector_GH(M, tau1, taum, tau2, absor, kept, doprint=False):
     return g1, g2, h1, h2
 
 
-def vector_G(M, tau1, taum, tau2, doprint=False):
-    taum2 = taum + tau2
+def mfpt_to_first_last_state(M, tau1, taum, tau2, doprint=False):
+    """Compute MFPT to arrive in 0 or -1
+
+    The interesting answer is h1[0] = MFPT to absor states 0 or -1
+    given that you are at 0 now and that you are leaving 0
+    """
     NS = len(M)
-    assert NS>2
+    assert NS>=3
 
     absor = np.array([0,NS-1])
     kept  = np.array([i for i in range(NS) if i not in absor])
 
-    g1, g2, h1, h2 = vector_GH(M, tau1, taum, tau2, absor, kept, doprint=doprint)
+    g1, g2, h1, h2 = mfpt_to_absorbing_states(M, tau1, taum, tau2, absor, kept, 
+                                              doprint=doprint, remove="m")
     return g1, g2, h1, h2
 
 
 #======================================
-# Trying other MFPTs
+# help functions
 #======================================
 
-# NOT FINISHED
-def mfpt_one_target(M, tau1, taum, tau2, target, doprint=False):
+def check_valid_indices(M, absor, kept):
     NS = len(M)
-    assert NS>=3
-    assert isinstance(target,int)
-
-    absor = np.array([target])
-    #print("special absor", absor)
-    kept  = np.array([i for i in range(NS) if i not in absor])
-    #print("special kept", kept)
-
-    g1, g2, h1, h2 = vector_GH(M, tau1, taum, tau2, absor, kept, doprint=doprint)
-    return g1, g2, h1, h2
-
-
-def vector_Gbis2(M, tau1, taum, tau2, i, j, doprint=False):
-    NS = len(M)
-    assert NS>=3
-    assert isinstance(i,int)
-    assert isinstance(j,int)
-
-    absor = [i,j]
-    if True:
-        absor.append(0)
-        absor.append(NS-1)
-    absor = list(set(absor))
-    absor = sorted(absor)
-    kept  = np.array([i for i in range(NS) if i not in absor])
-    g1, g2, h1, h2 = vector_GH(M, tau1, taum, tau2, absor, kept, doprint=doprint)
-    return g1, g2, h1, h2, absor, kept
-
-
-def vector_Gbis(M, tau1, taum, tau2, i, j, doprint=False):
-    taum2 = taum + tau2
-    NS = len(M)
-    assert NS>=3
-    N = int((NS+5)/4)
-    
-    #assert i<j   # TODO
-
-    indices = []
-    bounds = []
-    cut = []
-    # convert i lambda_i [i+-] to indices in M
-    
-    # maybe put i==0 also into i=1..N-3 range!!!!
-    if i==0:   # cross lambda_0
-        bounds.append(0)
-        first = 1        #=>practically
-    elif i==N-2:
-        bounds.append(4*i)    # (N-2)+- LML
-        bounds.append(4*i+1)  # (N-2)+- LMR
-        first = NS-1  # weird!!!
-        first = 90000
-        cut.extend(range(4*i))
-    elif i==N-1:
-        bounds.append(NS-1)
-        first = 10000000000
-    else:   # i=1..N-3
-        bounds.append(4*i)    # i+- LML
-        bounds.append(4*i+1)  # i+- LMR
-        bounds.append(4*i+2)  # i+- RML
-        bounds.append(4*i+3)  # i+- RMR
-        first = 4*i+4
-        cut.extend(range(4*i))
-    #elif i>=N-2:
-    #    raise ValueError("value too high")
-    #elif i==1:  # cross lambda_1
-    #    bounds.append(2)
-    #    first = 3
-
-    if j==0:   # cross lambda_0
-        bounds.append(0)
-        last = 1        #=>practically
-    elif j==N-2:
-        bounds.append(4*j)    # (N-2)+- LML
-        bounds.append(4*j+1)  # (N-2)+- LMR
-        last = NS-4
-        cut.extend(range(4*j+1,NS))
-    elif j==N-1:
-        bounds.append(NS-1)
-        last = NS-2
-    else:    #j=1...N-3
-        bounds.append(4*j)    # j+- LML
-        bounds.append(4*j+1)  # j+- LMR
-        bounds.append(4*j+2)  # j+- RML
-        bounds.append(4*j+3)  # j+- RMR
-        last = 4*j-1
-
-    bounds.append(0)
-    bounds.append(NS-1)
-    #first = min(bounds)
-    #last = max(bounds)
-    
-    absor = list(set(bounds))
-    absor = sorted(absor)
-    
-    #if NS-1 not in absor:
-        
-    
-    #if first==last:
-    kept  = np.array([i for i in range(NS) if i not in absor])
-    #else:
-    #kept  = np.array([i for i in range(first,last+1) if i not in absor])
-    print(kept)
-    print(absor)
-    
-    #absor = np.array(indices)
-    #kept = np.array(select)
-    g1, g2, h1, h2 = vector_GH(M, tau1, taum, tau2, absor, kept, doprint=doprint)
-    return g1, g2, h1, h2, absor, kept
-
-if False: 
-    # take pieces of transition matrix
-    Mp = np.take(np.take(M, select, axis=0), select, axis=1)
-    print(Mp)
-    a = np.identity(NS-len(indices))-Mp   # 1-Mp
-    a1 = np.linalg.inv(a)      # compute (1-Mp)^(-1)
-
-    # other pieces
-    D   = np.take(np.take(M, select, axis=0), indices, axis=1) #as if M[select, indices]
-    E   = np.take(np.take(M, indices, axis=0), select, axis=1)
-    M11 = np.take(np.take(M, indices, axis=0), indices, axis=1)
-
-    # part tau
-    tau_1 = np.take(taum2, indices, axis=0).reshape(len(indices),-1)
-    tau_p = np.take(taum2, select, axis=0).reshape(len(select),-1)
-
-    # compute G vector
-    g1 = np.array([[0],[0]])    # + tau_1            # not filled in correctly!! so zero anyways
-    g1 = np.zeros((len(indices),1))
-    g2 = np.dot(a1, np.dot(D,g1) + tau_p)
-
-
-
-    
-def get_pieces_matrix(M, absor, kept):
-    NS = len(M)
-    assert len(set(absor))==len(absor)
-    assert min(absor)>=0
+    assert len(set(absor))==len(absor)   # no accidental duplicates
+    assert min(absor)>=0     # valid indices
     assert max(absor)<NS
 
-    # TODO check kept
+    assert len(set(kept))==len(kept)
+    assert min(kept)>=0
+    assert max(kept)<NS
+    
+    # at least once somewhere but not twice
+    for i in range(NS):
+        assert (i in absor) != (i in kept)
 
+def get_pieces_matrix(M, absor, kept):
+    """take blocks of a square matrix, corresponding to absor and kept states"""
+    check_valid_indices(M, absor, kept)
+    
     # take pieces of transition matrix
     Mp  = np.take(np.take(M, kept, axis=0), kept, axis=1)
     # other pieces
@@ -430,16 +341,8 @@ def get_pieces_matrix(M, absor, kept):
     return Mp, D, E, M11
 
 def get_pieces_vector(vec, absor, kept):
-    NS = len(vec)
-    # check no double indices
-    assert len(set(absor))==len(absor)
-    assert len(set(kept))==len(kept)
-    # check no indices in both sets TOOD
-    
-    assert min(absor)>=0
-    assert max(absor)<NS
-
-    assert len(kept)+len(absor)==NS
+    """take blocks of a vector, corresponding to absor and kept states"""
+    check_valid_indices(M, absor, kept)
 
     # take pieces of vector
     v1 = vec[absor].reshape(len(absor),1)
@@ -447,6 +350,10 @@ def get_pieces_vector(vec, absor, kept):
     return v1, v2
 
 def create_labels_states(N):
+    """create list of labels of all states
+    Returns:
+    labels1 -- list with labels of 2 absorbing states 0- and B
+    labels2 -- list with labels of NS-2 non-absorbing states"""
     assert N>=3
     labels1 = ["0-     ","B      "]
     labels2 = ["0+- LML","0+- LMR","0+- RML","1+- LML","1+- LMR"]
@@ -459,6 +366,7 @@ def create_labels_states(N):
     return labels1, labels2
 
 def create_labels_states_all(N):
+    """create list of labels of all states"""
     assert N>=3
     labels = ["0-     ","0+- LML","0+- LMR","0+- RML",
         "1+- LML","1+- LMR"]
@@ -473,9 +381,13 @@ def create_labels_states_all(N):
 
 
 def print_vector(g, states=None, sel=None):
-    #print(g)
-    #print(states)
-    #print(sel)
+    """print the vector g nicely with the corresponding states
+
+    states -- list with labels of all the states
+    sel -- list with indices, select only certain states
+    """
+    if sel is not None: assert len(g)==len(sel)
+
     for i in range(len(g)):
         if states is None:
             print("state", i, g[i])
