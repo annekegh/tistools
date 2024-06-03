@@ -705,6 +705,19 @@ def get_local_probs(pe, w = None, tr=False):
             f"pRML = {p['RML']}\npLMR = {p['LMR']}\npLML = {p['LML']}"
     print(msg)
 
+    # Extra for milestoning
+    #----------------------
+    # Get the total weight of paths arriving to left, or to right
+    w2R = w_path['LMR'] + w_path['RMR']
+    w2L = w_path['LML'] + w_path['RML']
+    w_tot = w2R + w2L
+    # And calculate local crossing probabilities
+    p["2R"] = w2R/w_tot if w_tot != 0 else np.nan
+    p["2L"] = w2L/w_tot if w_tot != 0 else np.nan
+    msg = "Local crossing probabilities:\n"+f"p2R = {p['2R']}\n"+\
+            f"p2L = {p['2L']}"
+    print(msg)
+
     return p
 
         
@@ -798,118 +811,3 @@ def get_global_probz(pmps, pmms, ppps, ppms):
         pcross.append(pmps[0]*pplus[-1])
     return pmin, pplus, pcross
 
-def set_tau_first_hit_M_distrib(pe, do_last = True):
-    """Set, for each pathtype, the average pathlength before the middle 
-    interface is crossed. The phasepoint at the beginning, and right after 
-    the crossing will still be included.
-    
-    Parameters
-    ----------
-    pe : object like :py:class:`.PathEnsemble`
-        Tistools PathEnsemble object must be from a PPTIS simulation,
-        for which the weights and the orders have been set.
-        
-    Returns
-    -------
-    Nothing, but sets the attribute pe.tau1 and pe.tau1avg.
-
-    """
-    pe.tau1 = []
-    pe.tau1avg = {"LML": None, "LMR": None, "RML": None, "RMR": None}
-    # select the accepted paths
-    accmask = get_flag_mask(pe, "ACC")
-    for i in range(len(pe.cyclenumbers)):
-        if pe.flags[i] != "ACC" or pe.generation[i] == "ld":
-            pe.tau1.append(0)
-            continue 
-        pe.tau1.append(get_tau1_path(pe.orders[i], pe.lmrs[i], pe.interfaces[0]))
-    pe.tau1 = np.array(pe.tau1) 
-    # get the average tau1 for each path type. Each path has a weight w.
-    for ptype in ("LML", "LMR", "RML", "RMR"):
-        pe.tau1avg[ptype] = np.average(pe.tau1[pe.lmrs == ptype], 
-                                       weights=pe.weights[pe.lmrs == ptype])
-
-    if not do_last:
-        return
-    print("NOT LAST")
-    pe.tau2 = []
-    pe.tau2avg = {"LML": None, "LMR": None, "RML": None, "RMR": None}
-    # select the accepted paths
-    accmask = get_flag_mask(pe, "ACC")
-    for i in range(len(pe.cyclenumbers)):
-        if pe.flags[i] != "ACC" or pe.generation[i] == "ld":
-            pe.tau2.append(0)
-            continue
-        pe.tau2.append(get_tau2_path(pe.orders[i], pe.lmrs[i], pe.interfaces[0]))
-    pe.tau2 = np.array(pe.tau2)
-    # get the average tau2 for each path type. Each path has a weight w.
-    for ptype in ("LML", "LMR", "RML", "RMR"):
-        pe.tau2avg[ptype] = np.average(pe.tau2[pe.lmrs == ptype],
-                                       weights=pe.weights[pe.lmrs == ptype])
-
-def get_tau1_path(orders, ptype, intfs):
-    """Return the number of steps it took for this path to cross the M"""
-    if ptype in ("LMR", "LML"):
-        return np.where(orders[:,0] >= intfs[1])[0][0]  # L->M->. cross
-    elif ptype in ("RML", "RMR"):
-        return np.where(orders[:,0] <= intfs[1])[0][0]  # .<-M<-R cross
-    else:
-        raise ValueError(f"Unknown path type {ptype}")
-
-def get_tau2_path(orders, ptype, intfs):
-    """Return the number of steps it took for this path to cross the M"""
-    if ptype in ("LML", "RML"):
-        a = np.where(orders[::-1,0] >= intfs[1])[0][0]  # L<-M<-. cross
-        #print(a)
-        return a
-    elif ptype in ("LMR", "RMR"):
-        b = np.where(orders[::-1,0] <= intfs[1])[0][0]  # .->M->R cross
-        #print(b)
-        return b
-    else:
-        raise ValueError(f"Unknown path type {ptype}")
-    
-def set_tau_distrib(pe):
-    """Set, for each pathtype, the average total pathlength. The phasepoint at
-    the beginning, and right after the crossing will still be included.
-    
-    Parameters
-    ----------
-    pe : object like :py:class:`.PathEnsemble`
-        Tistools PathEnsemble object must be from a PPTIS simulation,
-        for which the weights and the orders have been set.
-        
-    Returns
-    -------
-    Nothing, but sets the attribute pe.tau and pe.tauavg.
-    """
-    pe.tau = []
-    pe.tauavg = {"LML": None, "LMR": None, "RML": None, "RMR": None}
-    # determine pathtypes
-    if pe.in_zero_minus:
-        if pe.has_zero_minus_one:
-            ptypes = ["LML", "LMR", "RML", "RMR", "L*L", "R*R"]
-        else:
-            ptypes = ["RMR",]
-    else:
-            ptypes = ["LML", "LMR", "RML", "RMR",]
-    pe.tauavg = {}
-    for ptype in ptypes:
-        pe.tauavg[ptype] = None
-    # select the accepted paths
-    accmask = get_flag_mask(pe, "ACC")
-    for i in range(len(pe.cyclenumbers)):
-        if pe.flags[i] != "ACC" or pe.generation[i] == "ld":
-            pe.tau.append(0)
-            continue 
-        pe.tau.append(len(pe.orders[i]))
-    pe.tau = np.array(pe.tau) 
-    # get the average tau for each path type. Each path has a weight w.
-    #for ptype in ("LML", "LMR", "RML", "RMR"):
-    #print(ptypes)
-    for ptype in ptypes:
-        # print(ptype)
-        # print(np.sum(pe.weights[pe.lmrs == ptype]))
-        pe.tauavg[ptype] = np.average(pe.tau[pe.lmrs == ptype], 
-                                      weights=pe.weights[pe.lmrs == ptype])
-        
