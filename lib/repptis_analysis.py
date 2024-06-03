@@ -908,8 +908,8 @@ def set_tau_distrib(pe):
     #for ptype in ("LML", "LMR", "RML", "RMR"):
     #print(ptypes)
     for ptype in ptypes:
-        #print(ptype)
-        #print(np.sum(pe.weights[pe.lmrs == ptype]))
+        # print(ptype)
+        # print(np.sum(pe.weights[pe.lmrs == ptype]))
         pe.tauavg[ptype] = np.average(pe.tau[pe.lmrs == ptype], 
                                       weights=pe.weights[pe.lmrs == ptype])
         
