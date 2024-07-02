@@ -65,7 +65,7 @@ class PathEnsemble(object):
             self.generation = np.array([dat[8] for dat in data])
             self.lambmins   = np.array([float(dat[9]) for dat in data])
             self.lambmaxs   = np.array([float(dat[10]) for dat in data])
-            self.dirs        = np.array([float(dat[11]) for dat in data])
+            self.dirs        = np.array([float(dat[15]) for dat in data])
 
             self.ncycle     = len(self.lengths)
             self.totaltime  = np.sum(self.lengths)
