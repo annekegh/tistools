@@ -14,6 +14,150 @@ ACCFLAGS,REJFLAGS = set_flags_ACC_REJ()
 # logger
 logger = logging.getLogger(__name__)
 
+def get_transition_probzz(pes, interfaces, weights = None, tr=False):
+    """
+    Returns the local crossing probabilities for the PPTIS ensemble pe.
+    This is only for the [i^+-] or [0^+-'] ensembles, and NOT for [0^-'].
+
+    Parameters
+    ----------
+    pes : List of PathEnsemble objects
+        The PathEnsemble object must be from an [i*] simulation.
+    w : array-like, optional
+        The weights of the paths. If None, the weights are calculated from
+        the flags. The default is None.
+    tr : bool, optional
+        If True, infinite time-reversal reweighting is performed.
+    Returns
+    -------
+    p : ndarray(2, 2)
+        Matrix of all local crossing probabilities from one turn to another,
+        in both directions.
+    """
+    masks = {}
+    w_path = {}
+
+    for i, pe in enumerate(pes):
+        # Get the lmr masks, weights, ACCmask, and loadmask of the paths
+        masks[i] = get_lmr_masks(pe)
+        if weights is None:
+            w, ncycle_true = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose = False)
+            assert ncycle_true == pe.ncycle
+        else:
+            w = weights[i]
+        accmask = get_flag_mask(pe, "ACC")
+        loadmask = get_generation_mask(pe, "ld")
+        msg = f"Ensemble {pe.name[-3:]} has {len(w)} paths.\n The total "+\
+                    f"weight of the ensemble is {np.sum(w)}\nThe total amount of "+\
+                    f"accepted paths is {np.sum(accmask)}\nThe total amount of "+\
+                    f"load paths is {np.sum(loadmask)}"
+        logger.debug(msg)
+
+        w_path[i] = {}
+
+        w_path[i]["ends"] = np.empty([len(interfaces),len(interfaces)])
+        for j in range(len(interfaces)):
+            for k in range(len(interfaces)):
+                if j == k:
+                        if i == 1 and j == 0:
+                            w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask]))
+                        else:
+                            w_path[i]["ends"][j][k] = 0  
+                elif j < k:
+                    if i in {1,2} and j == 0 and k == 1:
+                        dir_mask = pe.dirs < 2
+                    else:
+                        dir_mask = pe.dirs == 1
+                    if j == 0:
+                        start_cond = pe.lambmins <= interfaces[j]
+                    else: 
+                        start_cond = np.logical_and(pe.lambmins <= interfaces[j], pe.lambmins >= interfaces[j-1])
+                    if k == len(interfaces)-1:
+                        end_cond = pe.lambmaxs >= interfaces[k]
+                    else: 
+                        end_cond = np.logical_and(pe.lambmaxs >= interfaces[k], pe.lambmaxs <= interfaces[k+1])
+                
+                    w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+                else:
+                    if i in {1,2} and j == 1 and k == 0:
+                        dir_mask = pe.dirs > 2
+                    else:
+                        dir_mask = pe.dirs == -1
+                    if k == 0:
+                        start_cond = pe.lambmins <= interfaces[k]
+                    else: 
+                        start_cond = np.logical_and(pe.lambmins <= interfaces[k], pe.lambmins >= interfaces[k-1])
+                    if j == len(interfaces)-1:
+                        end_cond = pe.lambmaxs >= interfaces[j]
+                    else: 
+                        end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
+
+                    w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+                    
+    p = np.empty([len(interfaces), len(interfaces)])
+    q = np.ones([len(interfaces), len(interfaces)])
+    wq = np.empty([len(interfaces), len(interfaces)])
+    for i in range(len(interfaces)):
+        for k in range(len(interfaces)):
+            counts = np.zeros(2)
+            if i == k:
+                if i == 0:
+                    q[i][k] = 1
+                    continue
+                else:
+                    q[i][k] = 0
+                    continue
+            elif i == 0 and k == 1:
+                q[i][k] = (np.sum(w_path[i+1]["ends"][i][k:])) / (np.sum(w_path[i+1]["ends"][i][k-1:]))
+                continue
+            elif i < k:
+                for pe_i in range(i+1,k+1):
+                    if pe_i > len(interfaces)-1:
+                        break
+                    # if k-i > 2 and pe_i >= k-1:
+                    #     continue
+                    counts += [np.sum(w_path[pe_i]["ends"][i][k:]), np.sum(w_path[pe_i]["ends"][i][k-1:])]
+                    print(pe_i-1,i,k,np.sum(w_path[pe_i]["ends"][i][k:])/np.sum(w_path[pe_i]["ends"][i][k-1:]), np.sum(w_path[pe_i]["ends"][i][k-1:]))
+            elif i > k:
+                for pe_i in range(k+2,i+2):
+                    if pe_i > len(interfaces)-1:
+                        break
+                    # if i-k > 2 and pe_i <= k+3:
+                    #     continue
+                    counts += [np.sum(w_path[pe_i]["ends"][i][:k+1]), np.sum(w_path[pe_i]["ends"][i][:k+2])]
+                    print (pe_i-1,i,k,np.sum(w_path[pe_i]["ends"][i][:k+1])/np.sum(w_path[pe_i]["ends"][i][:k+2]), np.sum(w_path[pe_i]["ends"][i][:k+2]))
+
+            q[i][k] = counts[0] / counts[1] if counts[1] > 0 else 0
+            if 0 in counts:
+                print(q[i][k], counts, i,k)
+    print("q: ", q)
+
+    for i in range(len(interfaces)):
+        for k in range(len(interfaces)):
+            if i < k:
+                if k == len(interfaces)-1:
+                    p[i][k] = np.prod(q[i][i+1:k+1])
+                else:
+                    p[i][k] = np.prod(q[i][i+1:k+1]) * (1-q[i][k+1])
+            elif k < i:
+                if k == 0:
+                    p[i][k] = np.prod(q[i][k:i])
+                else:
+                    p[i][k] = np.prod(q[i][k:i]) * (1-q[i][k-1])
+                if i == len(interfaces)-1:
+                    p[i][k] = 0
+            else:
+                if i == 0:
+                    p[i][k] = 1-q[i][1]
+                else:
+                    p[i][k] = 0
+    print("p: ", p)
+
+    msg = "Local crossing probabilities computed"
+    print(msg)
+
+    return p
+
 def get_transition_probs(pes, interfaces, weights = None, tr=False):
     """
     Returns the local crossing probabilities for the PPTIS ensemble pe.
@@ -158,6 +302,116 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
     print(msg)
 
     return p
+
+
+def get_simple_probs(pes, interfaces, weights = None, dbens=False):
+    """
+    Returns the local crossing probabilities for the PPTIS ensemble pe.
+    This is only for the [i^+-] or [0^+-'] ensembles, and NOT for [0^-'].
+
+    Parameters
+    ----------
+    pes : List of PathEnsemble objects
+        The PathEnsemble object must be from an [i*] simulation.
+    w : array-like, optional
+        The weights of the paths. If None, the weights are calculated from
+        the flags. The default is None.
+    tr : bool, optional
+        If True, infinite time-reversal reweighting is performed.
+    Returns
+    -------
+    p : ndarray(2, 2)
+        Matrix of all local crossing probabilities from one turn to another,
+        in both directions.
+    """
+    masks = {}
+    w_path = {}
+
+    for i, pe in enumerate(pes):
+        # Get the lmr masks, weights, ACCmask, and loadmask of the paths
+        masks[i] = get_lmr_masks(pe)
+        if weights is None:
+            w, ncycle_true = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose = False)
+            assert ncycle_true == pe.ncycle
+        else:
+            w = weights[i]
+        accmask = get_flag_mask(pe, "ACC")
+        loadmask = get_generation_mask(pe, "ld")
+        msg = f"Ensemble {pe.name[-3:]} has {len(w)} paths.\n The total "+\
+                    f"weight of the ensemble is {np.sum(w)}\nThe total amount of "+\
+                    f"accepted paths is {np.sum(accmask)}\nThe total amount of "+\
+                    f"load paths is {np.sum(loadmask)}"
+        logger.debug(msg)
+
+        w_path[i] = {}
+
+        w_path[i]["ends"] = np.empty([len(interfaces),len(interfaces)])
+        for j in range(len(interfaces)):
+            for k in range(len(interfaces)):
+                if j == k:
+                        if i == 1 and j == 0:
+                            w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask]))
+                        else:
+                            w_path[i]["ends"][j][k] = 0  
+                elif j < k:
+                    if i in {1,2} and j == 0 and k == 1:
+                        dir_mask = pe.dirs < 2
+                    else:
+                        dir_mask = pe.dirs == 1
+                    if j == 0:
+                        start_cond = pe.lambmins <= interfaces[j]
+                    else: 
+                        start_cond = np.logical_and(pe.lambmins <= interfaces[j], pe.lambmins >= interfaces[j-1])
+                    if k == len(interfaces)-1:
+                        end_cond = pe.lambmaxs >= interfaces[k]
+                    else: 
+                        end_cond = np.logical_and(pe.lambmaxs >= interfaces[k], pe.lambmaxs <= interfaces[k+1])
+                
+                    w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+                else:
+                    if i in {1,2} and j == 1 and k == 0:
+                        dir_mask = pe.dirs > 2
+                    else:
+                        dir_mask = pe.dirs == -1
+                    if k == 0:
+                        start_cond = pe.lambmins <= interfaces[k]
+                    else: 
+                        start_cond = np.logical_and(pe.lambmins <= interfaces[k], pe.lambmins >= interfaces[k-1])
+                    if j == len(interfaces)-1:
+                        end_cond = pe.lambmaxs >= interfaces[j]
+                    else: 
+                        end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
+
+                    w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+                    
+
+    p = np.empty([len(interfaces), len(interfaces)])
+
+    for i in range(len(interfaces)):
+        for k in range(len(interfaces)):
+            if i < k:
+                if i == 0 or i >= len(interfaces)-2:
+                    p[i][k] = (w_path[i+1]["ends"][i][k]) / np.sum(w_path[i+1]["ends"][i][i:])
+                else:
+                    p[i][k] = (w_path[i+1]["ends"][i][k] + w_path[i+2]["ends"][i][k]) / (np.sum(w_path[i+1]["ends"][i][i:]) + np.sum(w_path[i+2]["ends"][i][i:]))
+            elif k < i:
+                if i == len(interfaces)-1:
+                    p[i][k] = 0
+                else:
+                    p[i][k] = (w_path[i+1]["ends"][i][k] + w_path[i]["ends"][i][k]) / (np.sum(w_path[i+1]["ends"][i][:i]) + np.sum(w_path[i]["ends"][i][:i]))
+            else:
+                if i == 0:
+                    p[i][k] = w_path[i+1]["ends"][i][k] / np.sum(w_path[i+1]["ends"][i][i:])
+                else:
+                    p[i][k] = 0
+    print("p: ", p)
+    
+
+    msg = "Local crossing probabilities computed"
+    print(msg)
+
+    return p
+
 
 def construct_M_istar(P, NS, N):
     """Construct transition matrix M"""
