@@ -63,14 +63,23 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
         for j in range(len(interfaces)):
             for k in range(len(interfaces)):
                 if j == k:
-                        if i == 1 and j == 0:
-                            w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask]))
+                        if j == 0:
+                            if i == 1:
+                                start_cond = pe.lambmins <= interfaces[j]
+                                end_cond = np.logical_and(pe.lambmaxs >= interfaces[1], pe.lambmaxs <= interfaces[2])
+                                w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask])) +\
+                                np.sum(select_with_masks(w, [start_cond, end_cond, accmask, ~loadmask]))
+                            elif i == 2:
+                                w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask]))
+                            continue
                         else:
                             w_path[i]["ends"][j][k] = 0  
                 elif j < k:
                     dir_mask = pe.dirs == 1
                     if j == 0:
                         start_cond = pe.lambmins <= interfaces[j]
+                        if k == 1:
+                            continue
                     else: 
                         start_cond = np.logical_and(pe.lambmins <= interfaces[j], pe.lambmins >= interfaces[j-1])
                     if k == len(interfaces)-1:
@@ -494,11 +503,15 @@ def get_transition_probzz(pes, interfaces, weights = None, tr=False):
                 if j == k:
                         if i == 1 and j == 0:
                             w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask]))
+                            continue
                         else:
                             w_path[i]["ends"][j][k] = 0  
                 elif j < k:
-                    if i in {1,2} and j == 0 and k == 1:
-                        dir_mask = pe.dirs < 2
+                    if j == 0 and k == 1:
+                        if i == 1:
+                            dir_mask = pe.dirs < 2
+                        else:
+                            dir_mask = pe.dirs < 2
                     else:
                         dir_mask = pe.dirs == 1
                     if j == 0:
@@ -512,8 +525,11 @@ def get_transition_probzz(pes, interfaces, weights = None, tr=False):
                 
                     w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
                 else:
-                    if i in {1,2} and j == 1 and k == 0:
-                        dir_mask = pe.dirs > 2
+                    if j == 1 and k == 0:
+                        if i == 1:
+                            dir_mask = pe.dirs > 2
+                        else:
+                            dir_mask = pe.dirs < 2
                     else:
                         dir_mask = pe.dirs == -1
                     if k == 0:
@@ -526,7 +542,8 @@ def get_transition_probzz(pes, interfaces, weights = None, tr=False):
                         end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
 
                     w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
-                    
+        print(f"sunzz {i}=", np.sum(w_path[i]["ends"]))
+
     p = np.empty([len(interfaces), len(interfaces)])
     q = np.ones([len(interfaces), len(interfaces)])
     wq = np.empty([len(interfaces), len(interfaces)])
@@ -642,8 +659,11 @@ def get_transition_probss(pes, interfaces, weights = None, tr=False):
                         else:
                             n_path[i]["ends"][j][k] = 0  
                 elif j < k:
-                    if i in {1,2} and j == 0 and k == 1:
-                        dir_mask = pe.dirs < 2
+                    if j == 0 and k == 1:
+                        if i == 1:
+                            dir_mask = pe.dirs < 2
+                        elif i == 2:
+                            dir_mask = pe.dirs > 2
                     else:
                         dir_mask = pe.dirs == 1
                     if j == 0:
@@ -657,8 +677,11 @@ def get_transition_probss(pes, interfaces, weights = None, tr=False):
                 
                     n_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
                 else:
-                    if i in {1,2} and j == 1 and k == 0:
-                        dir_mask = pe.dirs > 2
+                    if j == 1 and k == 0:
+                        if i == 1:
+                            dir_mask = pe.dirs > 2
+                        elif i == 2:
+                            dir_mask = pe.dirs < 2
                     else:
                         dir_mask = pe.dirs == -1
                     if k == 0:
@@ -794,21 +817,28 @@ def get_simple_probs(pes, interfaces, weights = None, dbens=False):
 
         w_path[i] = {}
 
-        w_path[i]["ends"] = np.empty([len(interfaces),len(interfaces)])
+        w_path[i]["ends"] = np.zeros([len(interfaces),len(interfaces)])
         for j in range(len(interfaces)):
             for k in range(len(interfaces)):
                 if j == k:
-                        if i == 1 and j == 0:
-                            w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask]))
+                        if j == 0:
+                            if i == 1:
+                                start_cond = pe.lambmins <= interfaces[j]
+                                end_cond = np.logical_and(pe.lambmaxs >= interfaces[1], pe.lambmaxs <= interfaces[2])
+                                w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask])) +\
+                                np.sum(select_with_masks(w, [start_cond, end_cond, accmask, ~loadmask]))
+                            elif i == 2:
+                                w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask]))
+                            continue
                         else:
                             w_path[i]["ends"][j][k] = 0  
+                            continue
                 elif j < k:
-                    if i in {1,2} and j == 0 and k == 1:
-                        dir_mask = pe.dirs < 2
-                    else:
-                        dir_mask = pe.dirs == 1
+                    dir_mask = pe.dirs == 1
                     if j == 0:
                         start_cond = pe.lambmins <= interfaces[j]
+                        if k == 1:
+                            continue
                     else: 
                         start_cond = np.logical_and(pe.lambmins <= interfaces[j], pe.lambmins >= interfaces[j-1])
                     if k == len(interfaces)-1:
@@ -818,12 +848,11 @@ def get_simple_probs(pes, interfaces, weights = None, dbens=False):
                 
                     w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
                 else:
-                    if i in {1,2} and j == 1 and k == 0:
-                        dir_mask = pe.dirs > 2
-                    else:
-                        dir_mask = pe.dirs == -1
+                    dir_mask = pe.dirs == -1
                     if k == 0:
                         start_cond = pe.lambmins <= interfaces[k]
+                        if j == 1:
+                            continue
                     else: 
                         start_cond = np.logical_and(pe.lambmins <= interfaces[k], pe.lambmins >= interfaces[k-1])
                     if j == len(interfaces)-1:
@@ -832,6 +861,7 @@ def get_simple_probs(pes, interfaces, weights = None, dbens=False):
                         end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
 
                     w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+        print(f"sun {i}=", np.sum(w_path[i]["ends"]))
                     
 
     p = np.empty([len(interfaces), len(interfaces)])
@@ -903,21 +933,28 @@ def get_summed_probs(pes, interfaces, weights = None, dbens=False):
 
         w_path[i] = {}
 
-        w_path[i]["ends"] = np.empty([len(interfaces),len(interfaces)])
+        w_path[i]["ends"] = np.zeros([len(interfaces),len(interfaces)])
         for j in range(len(interfaces)):
             for k in range(len(interfaces)):
                 if j == k:
-                        if i == 1 and j == 0:
-                            w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask]))
+                        if j == 0:
+                            if i == 1:
+                                start_cond = pe.lambmins <= interfaces[j]
+                                end_cond = np.logical_and(pe.lambmaxs >= interfaces[1], pe.lambmaxs <= interfaces[2])
+                                w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask])) +\
+                                np.sum(select_with_masks(w, [start_cond, end_cond, accmask, ~loadmask]))
+                            elif i == 2:
+                                w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask]))
+                            continue
                         else:
                             w_path[i]["ends"][j][k] = 0  
+                            continue
                 elif j < k:
-                    if i in {1,2} and j == 0 and k == 1:
-                        dir_mask = pe.dirs < 2
-                    else:
-                        dir_mask = pe.dirs == 1
+                    dir_mask = pe.dirs == 1
                     if j == 0:
                         start_cond = pe.lambmins <= interfaces[j]
+                        if k == 1:
+                            continue
                     else: 
                         start_cond = np.logical_and(pe.lambmins <= interfaces[j], pe.lambmins >= interfaces[j-1])
                     if k == len(interfaces)-1:
@@ -927,12 +964,11 @@ def get_summed_probs(pes, interfaces, weights = None, dbens=False):
                 
                     w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
                 else:
-                    if i in {1,2} and j == 1 and k == 0:
-                        dir_mask = pe.dirs > 2
-                    else:
-                        dir_mask = pe.dirs == -1
+                    dir_mask = pe.dirs == -1
                     if k == 0:
                         start_cond = pe.lambmins <= interfaces[k]
+                        if j == 1:
+                            continue
                     else: 
                         start_cond = np.logical_and(pe.lambmins <= interfaces[k], pe.lambmins >= interfaces[k-1])
                     if j == len(interfaces)-1:
@@ -941,6 +977,7 @@ def get_summed_probs(pes, interfaces, weights = None, dbens=False):
                         end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
 
                     w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+        print(f"sun {i}=", np.sum(w_path[i]["ends"]))
                     
 
     p = np.zeros([len(interfaces), len(interfaces)])
@@ -966,7 +1003,7 @@ def get_summed_probs(pes, interfaces, weights = None, dbens=False):
                     counts += [w_path[1]["ends"][i][k], np.sum(w_path[1]["ends"][i][i:])]
                 else:
                     counts[1] += 1
-            p[i][k] = counts[0] / counts[1]
+            p[i][k] = counts[0] / counts[1] if counts[1] != 0 else 0
             if 0 in counts:
                 print("zerooo ", p[i][k], counts, i,k)
     print("p: ", p)
