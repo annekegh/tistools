@@ -59,7 +59,7 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
 
         w_path[i] = {}
 
-        w_path[i]["ends"] = np.empty([len(interfaces),len(interfaces)])
+        w_path[i]["ends"] = np.zeros([len(interfaces),len(interfaces)])
         for j in range(len(interfaces)):
             for k in range(len(interfaces)):
                 if j == k:
@@ -74,6 +74,7 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
                             continue
                         else:
                             w_path[i]["ends"][j][k] = 0  
+                            continue
                 elif j < k:
                     dir_mask = pe.dirs == 1
                     if j == 0:
@@ -92,6 +93,8 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
                     dir_mask = pe.dirs == -1
                     if k == 0:
                         start_cond = pe.lambmins <= interfaces[k]
+                        if j == 1:
+                            continue
                     else: 
                         start_cond = np.logical_and(pe.lambmins <= interfaces[k], pe.lambmins >= interfaces[k-1])
                     if j == len(interfaces)-1:
@@ -100,7 +103,8 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
                         end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
 
                     w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
-                    
+        print(f"suns {i}=", np.sum(w_path[i]["ends"]))
+
 
         # if tr:  # TR reweighting. Note this is not block-friendly TODO
         #     w_path[i]['RMR'] *= 2
@@ -529,7 +533,7 @@ def get_transition_probzz(pes, interfaces, weights = None, tr=False):
                         if i == 1:
                             dir_mask = pe.dirs > 2
                         else:
-                            dir_mask = pe.dirs < 2
+                            dir_mask = pe.dirs > 2
                     else:
                         dir_mask = pe.dirs == -1
                     if k == 0:
