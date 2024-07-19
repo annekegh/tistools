@@ -460,7 +460,7 @@ def get_transition_probzz2(pes, interfaces, weights = None, tr=False):
     return p
 
 
-def get_transition_probzz(w_path, interfaces):
+def get_transition_probzz(w_path):
     """
     Returns the local crossing probabilities for the PPTIS ensemble pe.
     This is only for the [i^+-] or [0^+-'] ensembles, and NOT for [0^-'].
@@ -480,11 +480,10 @@ def get_transition_probzz(w_path, interfaces):
         Matrix of all local crossing probabilities from one turn to another,
         in both directions.
     """
-    p = np.empty([len(interfaces), len(interfaces)])
-    q = np.ones([len(interfaces), len(interfaces)])
-    wq = np.empty([len(interfaces), len(interfaces)])
-    for i in range(len(interfaces)):
-        for k in range(len(interfaces)):
+    p = np.empty([w_path[0].shape[0], w_path[0].shape[0]])
+    q = np.ones([w_path[0].shape[0], w_path[0].shape[0]])
+    for i in range(w_path[0].shape[0]):
+        for k in range(w_path[0].shape[0]):
             counts = np.zeros(2)
             if i == k:
                 if i == 0:
@@ -498,7 +497,7 @@ def get_transition_probzz(w_path, interfaces):
                 continue
             elif i < k:
                 for pe_i in range(i+1,k+1):
-                    if pe_i > len(interfaces)-1:
+                    if pe_i > w_path[0].shape[0]-1:
                         break
                     # if k-i > 2 and pe_i >= k-1:
                     #     continue
@@ -506,7 +505,7 @@ def get_transition_probzz(w_path, interfaces):
                     print(pe_i-1,i,k,np.sum(w_path[pe_i][i][k:])/np.sum(w_path[pe_i][i][k-1:]), np.sum(w_path[pe_i][i][k-1:]))
             elif i > k:
                 for pe_i in range(k+2,i+2):
-                    if pe_i > len(interfaces)-1:
+                    if pe_i > w_path[0].shape[0]-1:
                         break
                     # if i-k > 2 and pe_i <= k+3:
                     #     continue
@@ -518,10 +517,10 @@ def get_transition_probzz(w_path, interfaces):
                 print(q[i][k], counts, i,k)
     print("q: ", q)
 
-    for i in range(len(interfaces)):
-        for k in range(len(interfaces)):
+    for i in range(w_path[0].shape[0]):
+        for k in range(w_path[0].shape[0]):
             if i < k:
-                if k == len(interfaces)-1:
+                if k == w_path[0].shape[0]-1:
                     p[i][k] = np.prod(q[i][i+1:k+1])
                 else:
                     p[i][k] = np.prod(q[i][i+1:k+1]) * (1-q[i][k+1])
@@ -530,7 +529,7 @@ def get_transition_probzz(w_path, interfaces):
                     p[i][k] = np.prod(q[i][k:i])
                 else:
                     p[i][k] = np.prod(q[i][k:i]) * (1-q[i][k-1])
-                if i == len(interfaces)-1:
+                if i == w_path[0].shape[0]-1:
                     p[i][k] = 0
             else:
                 if i == 0:
@@ -712,7 +711,7 @@ def get_transition_probss(pes, interfaces, weights = None, tr=False):
 
 
 
-def get_simple_probs(w_path, interfaces):
+def get_simple_probs(w_path):
     """
     Returns the local crossing probabilities for the PPTIS ensemble pe.
     This is only for the [i^+-] or [0^+-'] ensembles, and NOT for [0^-'].
@@ -732,20 +731,20 @@ def get_simple_probs(w_path, interfaces):
         Matrix of all local crossing probabilities from one turn to another,
         in both directions.
     """
-    p = np.empty([len(interfaces), len(interfaces)])
+    p = np.empty([w_path[0].shape[0], w_path[0].shape[0]])
 
-    for i in range(len(interfaces)):
-        for k in range(len(interfaces)):
+    for i in range(w_path[0].shape[0]):
+        for k in range(w_path[0].shape[0]):
             if i < k:
-                if i == 0 or i >= len(interfaces)-2:
-                    if k == len(interfaces)-1:
+                if i == 0 or i >= w_path[0].shape[0]-2:
+                    if k == w_path[0].shape[0]-1:
                         p[i][k] = np.sum(w_path[i+1][i][k:]) / np.sum(w_path[i+1][i][i:])
                     else:
                         p[i][k] = (w_path[i+1][i][k]) / np.sum(w_path[i+1][i][i:])
                 else:
                     p[i][k] = (w_path[i+1][i][k] + w_path[i+2][i][k]) / (np.sum(w_path[i+1][i][i:]) + np.sum(w_path[i+2][i][i:]))
             elif k < i:
-                if i == len(interfaces)-1:
+                if i == w_path[0].shape[0]-1:
                     p[i][k] = 0
                 else:
                     p[i][k] = (w_path[i+1][i][k] + w_path[i][i][k]) / (np.sum(w_path[i+1][i][:i]) + np.sum(w_path[i][i][:i]))
@@ -954,3 +953,71 @@ def compute_weight_matrices(pes, interfaces, weights = None):
         print(f"sum weights ensemble {i}=", np.sum(w_path[i]))
 
     return w_path
+
+
+def compute_weight_matrix(pe, pe_id, interfaces, weights = None):
+
+    # Get the lmr masks, weights, ACCmask, and loadmask of the paths
+    masks = get_lmr_masks(pe)
+    if weights is None:
+        w, ncycle_true = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose = False)
+        assert ncycle_true == pe.ncycle
+    else:
+        w = weights
+    accmask = get_flag_mask(pe, "ACC")
+    loadmask = get_generation_mask(pe, "ld")
+    msg = f"Ensemble {pe.name[-3:]} has {len(w)} paths.\n The total "+\
+                f"weight of the ensemble is {np.sum(w)}\nThe total amount of "+\
+                f"accepted paths is {np.sum(accmask)}\nThe total amount of "+\
+                f"load paths is {np.sum(loadmask)}"
+    logger.debug(msg)
+
+    X_path = np.empty([len(interfaces),len(interfaces)])
+
+    for j in range(len(interfaces)):
+        for k in range(len(interfaces)):
+            if j == k:
+                    if pe_id == 1 and j == 0:
+                        X_path[j][k] = np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))
+                        continue
+                    else:
+                        X_path[j][k] = 0  
+            elif j < k:
+                if j == 0 and k == 1:
+                    if pe_id == 1:
+                        dir_mask = pe.dirs < 2
+                    else:
+                        dir_mask = pe.dirs < 2
+                else:
+                    dir_mask = pe.dirs == 1
+                if j == 0:
+                    start_cond = pe.lambmins <= interfaces[j]
+                else: 
+                    start_cond = np.logical_and(pe.lambmins <= interfaces[j], pe.lambmins >= interfaces[j-1])
+                if k == len(interfaces)-1:
+                    end_cond = pe.lambmaxs >= interfaces[k]
+                else: 
+                    end_cond = np.logical_and(pe.lambmaxs >= interfaces[k], pe.lambmaxs <= interfaces[k+1])
+            
+                X_path[j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+            else:
+                if j == 1 and k == 0:
+                    if pe_id == 1:
+                        dir_mask = pe.dirs > 2
+                    else:
+                        dir_mask = pe.dirs > 2
+                else:
+                    dir_mask = pe.dirs == -1
+                if k == 0:
+                    start_cond = pe.lambmins <= interfaces[k]
+                else: 
+                    start_cond = np.logical_and(pe.lambmins <= interfaces[k], pe.lambmins >= interfaces[k-1])
+                if j == len(interfaces)-1:
+                    end_cond = pe.lambmaxs >= interfaces[j]
+                else: 
+                    end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
+
+                X_path[j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+    print(f"sum weights ensemble {pe_id}=", np.sum(X_path))
+
+    return X_path

@@ -160,8 +160,10 @@ class PathEnsemble(object):
         new_pe.weights = self.weights[cycle_ids]
         new_pe.lambmins = self.lambmins[cycle_ids]
         new_pe.lambmaxs = self.lambmaxs[cycle_ids]
+        new_pe.dirs = self.dirs[cycle_ids]
         #new_pe.shootlinks = self.shootlinks[cycle_ids]
         new_pe.name = self.name
+        new_pe.ncycle = len(cycle_ids)
         new_pe.interfaces = self.interfaces
         new_pe.has_zero_minus_one = self.has_zero_minus_one
         new_pe.in_zero_minus = self.in_zero_minus
