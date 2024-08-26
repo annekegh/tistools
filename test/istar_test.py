@@ -2,6 +2,7 @@ from json import load
 import numpy as np
 import numpy as np
 import logging
+import matplotlib.pyplot as plt
 #%matplotlib qt   # doesn't work on my laptop
 from tistools import read_inputfile, get_LMR_interfaces, read_pathensemble, get_weights
 from tistools import set_tau_distrib, set_tau_first_hit_M_distrib, cross_dist_distr, pathlength_distr
@@ -864,7 +865,7 @@ def get_summed_probs(pes, interfaces, weights = None, dbens=False):
                 if i == len(interfaces)-1:
                     p[i][k] = 0
                     continue
-                for pe_i in range(k+1,i+2):
+                for pe_i in range(min(k+1,i+1),i+2):
                     if pe_i > len(interfaces)-1:
                         break
                     counts += [w_path[pe_i][i][k], np.sum(w_path[pe_i][i][:i+1])]
@@ -887,7 +888,9 @@ def get_summed_probs(pes, interfaces, weights = None, dbens=False):
 def compute_weight_matrices(pes, interfaces, weights = None):
     masks = {}
     w_path = {}
-
+    X = {}
+    if pes[-1].orders is not None:
+        ax = plt.figure().add_subplot()
     for i, pe in enumerate(pes):
         # Get the lmr masks, weights, ACCmask, and loadmask of the paths
         masks[i] = get_lmr_masks(pe)
@@ -904,24 +907,31 @@ def compute_weight_matrices(pes, interfaces, weights = None):
                     f"load paths is {np.sum(loadmask)}"
         logger.debug(msg)
 
-        w_path[i] = np.empty([len(interfaces),len(interfaces)])
+        w_path[i] = np.zeros([len(interfaces),len(interfaces)])
+        X[i] = np.zeros([len(interfaces),len(interfaces)])
 
         for j in range(len(interfaces)):
             for k in range(len(interfaces)):
                 if j == k:
                         if i == 1 and j == 0:
+                            # np.logical_and(pe.lambmaxs >= interfaces[1], pe.lambmaxs <= interfaces[2])
                             w_path[i][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask]))
-                            continue
+                                #   + np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+                            pass
                         else:
-                            w_path[i][j][k] = 0  
+                            w_path[i][j][k] = 0
                 elif j < k:
                     if j == 0 and k == 1:
-                        if i == 1:
-                            dir_mask = pe.dirs < 2
-                        else:
-                            dir_mask = pe.dirs < 2
+                        if i != 2:
+                            # dir_mask = np.logical_or(pe.dirs == 1, masks[i]["LML"])
+                            dir_mask = pe.dirs == 1
+                        elif i == 2:
+                            dir_mask = masks[i]["LML"]
+                    elif j == 3 and k == 4:
+                        dir_mask = masks[i]["RMR"]
                     else:
                         dir_mask = pe.dirs == 1
+                        # dir_mask = np.logical_or(pe.dirs == 1, masks[i]["LML"])
                     if j == 0:
                         start_cond = pe.lambmins <= interfaces[j]
                     else: 
@@ -934,12 +944,16 @@ def compute_weight_matrices(pes, interfaces, weights = None):
                     w_path[i][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
                 else:
                     if j == 1 and k == 0:
-                        if i == 1:
-                            dir_mask = pe.dirs > 2
-                        else:
-                            dir_mask = pe.dirs > 2
+                        if i != 2:
+                            dir_mask = pe.dirs == -1
+                            # dir_mask = np.logical_or(pe.dirs == -1, masks[i]["RMR"])
+                        elif i == 2:
+                            dir_mask = masks[i]["LML"]
+                    elif j == 4 and k == 3:
+                        dir_mask = masks[i]["RMR"]
                     else:
                         dir_mask = pe.dirs == -1
+                        # dir_mask = np.logical_or(pe.dirs == -1, masks[i]["RMR"])
                     if k == 0:
                         start_cond = pe.lambmins <= interfaces[k]
                     else: 
@@ -950,7 +964,45 @@ def compute_weight_matrices(pes, interfaces, weights = None):
                         end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
 
                     w_path[i][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+
+            # color = next(ax._get_lines.prop_cycler)['color']
+                if j == 1 and k == 3 and pe.orders is not None:
+                    # idxs = select_with_masks(pe.cyclenumbers, [masks[i]["LML"], accmask, ~loadmask])
+                    idxs = select_with_masks(pe.cyclenumbers, [start_cond, end_cond, dir_mask,accmask, ~loadmask])
+                    for p in np.random.choice(idxs, min(1, len(idxs))):
+                        if len(pe.orders[p][0]) > 1:
+                            ax.plot([pe.orders[p][i][0] for i in range(len(pe.orders[p]))], [pe.orders[p][i][0] for i in range(len(pe.orders[p]))], "-x")
+                        else:
+                            ax.plot([i  for i in range(len(pe.orders[p]))],
+                                    [ph[0] for ph in pe.orders[p]], "-x")
+                        ax.plot(0, pe.orders[p][0][0], "^",
+                                    color=ax.lines[-1].get_color(), ms = 7)
+                        ax.plot(len(pe.orders[p]) - 1,
+                                pe.orders[p][-1][0], "v",
+                                color=ax.lines[-1].get_color(), ms = 7)
+                            # plot the first and last point again to highlight start/end phasepoints
+                            # it must have the same color as the line for the path
+                    if interfaces is not None:
+                        for intf in interfaces:
+                            ax.axhline(intf, color="k", ls="--", lw=.5)
+        if pe.orders is not None:
+            plt.tight_layout()
+            plt.show()
         print(f"sum weights ensemble {i}=", np.sum(w_path[i]))
+
+    # weighting: consistent within ensemble by doubling forward and backwards LML/RMR paths (except in [0*] and [N-1*])
+    #            consistent between different ensembles, more sampled paths in some ensembles appropriately weighted as a consequence of internal weighting
+    for i in range(1,len(pes)):
+        for j in range(len(interfaces)):
+            for k in range(len(interfaces)):
+                if (i == 1) or \
+                   (i == 2 and j in [0,1] and k in [0,1]) or \
+                   (i == len(pes)-1 and j in [len(pes)-2, len(pes)-1] and k in [len(pes)-2, len(pes)-1]) or \
+                   (j != i-1 and k != i-1):
+                    continue
+                w_path[i][j][k] *= 2
+                # if (j == 0 and k == len(pes)-1) or (j == len(pes)-1 and k == 0):
+                #     w_path[i][j][k] /= 2
 
     return w_path
 
@@ -961,6 +1013,7 @@ def compute_weight_matrix(pe, pe_id, interfaces, weights = None):
     masks = get_lmr_masks(pe)
     if weights is None:
         w, ncycle_true = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose = False)
+        w, ncycle_true = get_weights(pe.flags, pe.dirs, ACCFLAGS, REJFLAGS, verbose = False)
         assert ncycle_true == pe.ncycle
     else:
         w = weights
@@ -1021,3 +1074,87 @@ def compute_weight_matrix(pe, pe_id, interfaces, weights = None):
     print(f"sum weights ensemble {pe_id}=", np.sum(X_path))
 
     return X_path
+
+
+def get_weights_staple(flags,dirs,ACCFLAGS,REJFLAGS,verbose=True):
+    """
+    Returns:
+      weights -- array with weight of each trajectory, 0 if not accepted
+      ncycle_true -- sum of weights
+    """
+
+    ntraj = len(flags)
+    assert len(flags) == len(dirs)
+    weights_f = np.zeros(ntraj,int)
+    weights_b = np.zeros(ntraj,int)
+
+    accepted = 0
+    rejected = 0
+    omitted = 0
+
+    acc_w = 0
+    acc_index = 0
+    tot_w = 0
+    assert flags[0] == 'ACC'
+    for i,fd in zip(enumerate(zip(flags,dirs))):
+        flag, dir = fd
+        if flag in ACCFLAGS and dir == 1:
+            # store previous traj with accumulated weight
+            weights_f[acc_index] = acc_w
+            tot_w += acc_w
+            # info for new traj
+            acc_index = i
+            acc_w = 1
+            accepted += 1
+        elif flag in REJFLAGS or dir == -1:
+            acc_w += 1    # weight of previous accepted traj increased
+            rejected += 1
+        else:
+            omitted += 1
+    #if flag[-1] in REJFLAGS:
+        # I did not store yet the weight of the previous accepted path
+        # because I do not have the next accepted path yet
+        # so neglect this path, I guess.
+    # at the end: store the last accepted path with its weight
+    weights_f[acc_index] = acc_w
+    tot_w += acc_w
+
+    for i,fd in zip(enumerate(zip(flags,dirs))):
+        flag, dir = fd
+        if flag in ACCFLAGS and dir == 1:
+            # store previous traj with accumulated weight
+            weights_f[acc_index] = acc_w
+            tot_w += acc_w
+            # info for new traj
+            acc_index = i
+            acc_w = 1
+            accepted += 1
+        elif flag in REJFLAGS or dir == -1:
+            acc_w += 1    # weight of previous accepted traj increased
+            rejected += 1
+        else:
+            omitted += 1
+    #if flag[-1] in REJFLAGS:
+        # I did not store yet the weight of the previous accepted path
+        # because I do not have the next accepted path yet
+        # so neglect this path, I guess.
+    # at the end: store the last accepted path with its weight
+    weights_b[acc_index] = acc_w
+    tot_w += acc_w
+
+    if verbose:
+        print("weights:")
+        print("accepted     ",accepted)
+        print("rejected     ",rejected)
+        print("omitted      ",omitted)
+        print("total trajs  ",ntraj)
+        print("total weights",np.sum(weights))
+
+    assert omitted == 0
+    ncycle_f = np.sum(weights_f)
+    miss_f = len(flags)-1 - ncycle_f
+    for i in range(miss_f):
+        assert flags[-(i+1)] in REJFLAGS
+        # the reason why this could happen
+
+    return weights, ncycle_true
