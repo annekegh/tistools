@@ -19,7 +19,7 @@ from pprint import pprint    # to print the vars of the pathensemble object
 
 logger = logging.getLogger(__name__)
 
-def get_transition_probs(pes, interfaces, weights = None, tr=False):
+def get_transition_probs(w_path, weights = None, tr=False):
     """
     Returns the local crossing probabilities for the PPTIS ensemble pe.
     This is only for the [i^+-] or [0^+-'] ensembles, and NOT for [0^-'].
@@ -39,84 +39,10 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
         Matrix of all local crossing probabilities from one turn to another,
         in both directions.
     """
-    masks = {}
-    w_path = {}
-
-    for i, pe in enumerate(pes):
-        # Get the lmr masks, weights, ACCmask, and loadmask of the paths
-        masks[i] = get_lmr_masks(pe)
-        if weights is None:
-            w, ncycle_true = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose = False)
-            assert ncycle_true == pe.ncycle
-        else:
-            w = weights[i]
-        accmask = get_flag_mask(pe, "ACC")
-        loadmask = get_generation_mask(pe, "ld")
-        msg = f"Ensemble {pe.name[-3:]} has {len(w)} paths.\n The total "+\
-                    f"weight of the ensemble is {np.sum(w)}\nThe total amount of "+\
-                    f"accepted paths is {np.sum(accmask)}\nThe total amount of "+\
-                    f"load paths is {np.sum(loadmask)}"
-        logger.debug(msg)
-
-        w_path[i] = {}
-
-        w_path[i] = np.zeros([len(interfaces),len(interfaces)])
-        for j in range(len(interfaces)):
-            for k in range(len(interfaces)):
-                if j == k:
-                        if j == 0:
-                            if i == 1:
-                                start_cond = pe.lambmins <= interfaces[j]
-                                end_cond = np.logical_and(pe.lambmaxs >= interfaces[1], pe.lambmaxs <= interfaces[2])
-                                w_path[i][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask])) +\
-                                np.sum(select_with_masks(w, [start_cond, end_cond, accmask, ~loadmask]))
-                            elif i == 2:
-                                w_path[i][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask]))
-                            continue
-                        else:
-                            w_path[i][j][k] = 0  
-                            continue
-                elif j < k:
-                    dir_mask = pe.dirs == 1
-                    if j == 0:
-                        start_cond = pe.lambmins <= interfaces[j]
-                        if k == 1:
-                            continue
-                    else: 
-                        start_cond = np.logical_and(pe.lambmins <= interfaces[j], pe.lambmins >= interfaces[j-1])
-                    if k == len(interfaces)-1:
-                        end_cond = pe.lambmaxs >= interfaces[k]
-                    else: 
-                        end_cond = np.logical_and(pe.lambmaxs >= interfaces[k], pe.lambmaxs <= interfaces[k+1])
-                
-                    w_path[i][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
-                else:
-                    dir_mask = pe.dirs == -1
-                    if k == 0:
-                        start_cond = pe.lambmins <= interfaces[k]
-                        if j == 1:
-                            continue
-                    else: 
-                        start_cond = np.logical_and(pe.lambmins <= interfaces[k], pe.lambmins >= interfaces[k-1])
-                    if j == len(interfaces)-1:
-                        end_cond = pe.lambmaxs >= interfaces[j]
-                    else: 
-                        end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
-
-                    w_path[i][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
-        print(f"suns {i}=", np.sum(w_path[i]))
-
-
-        # if tr:  # TR reweighting. Note this is not block-friendly TODO
-        #     w_path[i]['RMR'] *= 2
-        #     w_path[i]['LML'] *= 2
-        #     temp = w_path[i]['RML'] + w_path[i]['LMR']
-        #     w_path[i]['RML'] = temp
-        #     w_path[i]['LMR'] = temp
-
-    p = np.empty([len(interfaces), len(interfaces)])
-    for i in range(len(interfaces)):
-        for k in range(len(interfaces)):
+    sh = w_path[0].shape
+    p = np.empty([sh[0], sh[0]])
+    for i in range(sh[0]):
+        for k in range(sh[1]):
             if i == k:
                 if i == 0:
                     p[i][k] = np.sum(w_path[i+1][i][k]) / np.sum(w_path[i+1][i][i:]) if np.sum(w_path[i+1][i][i:]) != 0 else 0
@@ -130,13 +56,13 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
                 for j in range(i, k+1):
                     p_reachedj[j-i] = np.sum(w_path[i+1][i][j:]) / np.sum(w_path[i+1][i][i:]) if np.sum(w_path[i+1][i][i:]) != 0 else 0
                     w_reachedj[j-i] = np.sum(w_path[i+1][i][i:])
-                    if j < len(interfaces)-1:
+                    if j < sh[0]-1:
                         p_jtillend[j-i] = np.sum(w_path[j+1][i][k]) / np.sum(w_path[j+1][i][i:]) if np.sum(w_path[j+1][i][i:]) != 0 else 0
                         w_jtillend[j-i] = np.sum(w_path[j+1][i][i:])
                     else: 
                         p_jtillend[j-i] = 1
                         w_jtillend[j-i] = 1
-                print(f"i={interfaces[i]}, #j = {k-i}, k={interfaces[k]}")
+                print(f"i={i}, #j = {k-i}, k={k}")
                 print("P_i(j reached) =", p_reachedj)
                 print("P_j(k) =", p_jtillend)
                 print("full P_i(k) =", p_reachedj*p_jtillend)
@@ -151,7 +77,7 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
                 w_reachedj = np.empty(i-k+1)
                 w_jtillend = np.empty(i-k+1)
                 for j in range(k, i+1):
-                    if i < len(interfaces)-1:
+                    if i < sh[0]-1:
                         p_reachedj[j-k] = np.sum(w_path[i+1][i][:j+1]) / np.sum(w_path[i+1][i][:i+1]) if np.sum(w_path[i+1][i][:i+1]) != 0 else 0
                         p_jtillend[j-k] = np.sum(w_path[j+1][i][k]) / np.sum(w_path[j+1][i][:i+1]) if np.sum(w_path[j+1][i][:i+1]) != 0 else 0
                         w_reachedj[j-k] = np.sum(w_path[i+1][i][:i+1])
@@ -162,7 +88,7 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False):
                         w_reachedj[j-k] = 0
                         w_jtillend[j-k] = 0
                     
-                print(f"i={interfaces[i]}, #j = {k-i}, k={interfaces[k]}")
+                print(f"i={i}, #j = {k-i}, k={k}")
                 print("P_i(j reached) =", p_reachedj)
                 print("P_j(k) =", p_jtillend)
                 print("full P_i(k) =", p_reachedj*p_jtillend)
@@ -895,8 +821,9 @@ def compute_weight_matrices(pes, interfaces, weights = None):
         # Get the lmr masks, weights, ACCmask, and loadmask of the paths
         masks[i] = get_lmr_masks(pe)
         if weights is None:
-            w, ncycle_true = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose = False)
-            assert ncycle_true == pe.ncycle
+            # w, ncycle_true = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose = True)
+            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, len(pes), ACCFLAGS, REJFLAGS, verbose = True)
+            # assert ncycle_true == pe.ncycle
         else:
             w = weights[i]
         accmask = get_flag_mask(pe, "ACC")
@@ -992,19 +919,34 @@ def compute_weight_matrices(pes, interfaces, weights = None):
 
     # weighting: consistent within ensemble by doubling forward and backwards LML/RMR paths (except in [0*] and [N-1*])
     #            consistent between different ensembles, more sampled paths in some ensembles appropriately weighted as a consequence of internal weighting
-    for i in range(1,len(pes)):
-        for j in range(len(interfaces)):
-            for k in range(len(interfaces)):
-                if (i == 1) or \
-                   (i == 2 and j in [0,1] and k in [0,1]) or \
-                   (i == len(pes)-1 and j in [len(pes)-2, len(pes)-1] and k in [len(pes)-2, len(pes)-1]) or \
-                   (j != i-1 and k != i-1):
-                    continue
-                w_path[i][j][k] *= 2
-                # if (j == 0 and k == len(pes)-1) or (j == len(pes)-1 and k == 0):
-                #     w_path[i][j][k] /= 2
+    # for i in range(1,len(pes)):
+    #     for j in range(len(interfaces)):
+    #         for k in range(len(interfaces)):
+    #             if (i == 1) or \
+    #                (i == 2 and j in [0,1] and k in [0,1]) or \
+    #                (i == len(pes)-1 and j in [len(pes)-2, len(pes)-1] and k in [len(pes)-2, len(pes)-1]) or \
+    #                (j != i-1 and k != i-1):
+    #                 X[i][j][k] = w_path[i][j][k]
+    #                 continue
+    #             X[i][j][k] = 2*w_path[i][j][k]
 
-    return w_path
+    # for i in range(1,len(pes)):
+    #     for j in range(len(interfaces)):
+    #         for k in range(len(interfaces)):
+    #             if (i == 1) or \
+    #                (i == 2 and j in [0,1] and k in [0,1]) or \
+    #                (i == len(pes)-1 and j in [len(pes)-2, len(pes)-1] and k in [len(pes)-2, len(pes)-1]) or \
+    #                (j != i-1 and k != i-1):
+    #                 X[i][j][k] = w_path[i][j][k]
+    #                 continue
+    #             X[i][j][k] = w_path[i][j][k] + w_path[i][k][j]
+    
+    X = w_path
+
+    # for i in range(1,len(pes)):
+    #     X[i] += X[i].T
+
+    return X
 
 
 def compute_weight_matrix(pe, pe_id, interfaces, weights = None):
@@ -1076,7 +1018,7 @@ def compute_weight_matrix(pe, pe_id, interfaces, weights = None):
     return X_path
 
 
-def get_weights_staple(flags,dirs,ACCFLAGS,REJFLAGS,verbose=True):
+def get_weights_staple(pe_i, flags,gen,ptypes,n_pes,ACCFLAGS,REJFLAGS,verbose=True):
     """
     Returns:
       weights -- array with weight of each trajectory, 0 if not accepted
@@ -1084,9 +1026,8 @@ def get_weights_staple(flags,dirs,ACCFLAGS,REJFLAGS,verbose=True):
     """
 
     ntraj = len(flags)
-    assert len(flags) == len(dirs)
-    weights_f = np.zeros(ntraj,int)
-    weights_b = np.zeros(ntraj,int)
+    assert len(flags) == len(gen) == len (ptypes)
+    weights = np.zeros(ntraj,int)
 
     accepted = 0
     rejected = 0
@@ -1095,18 +1036,26 @@ def get_weights_staple(flags,dirs,ACCFLAGS,REJFLAGS,verbose=True):
     acc_w = 0
     acc_index = 0
     tot_w = 0
+    prev_ha = 1
     assert flags[0] == 'ACC'
-    for i,fd in zip(enumerate(zip(flags,dirs))):
-        flag, dir = fd
-        if flag in ACCFLAGS and dir == 1:
+    for i,fgp in enumerate(zip(flags,gen, ptypes)):
+        flag, gg, ptype = fgp
+        if flag in ACCFLAGS:
             # store previous traj with accumulated weight
-            weights_f[acc_index] = acc_w
-            tot_w += acc_w
+            weights[acc_index] = prev_ha*acc_w
+            tot_w += prev_ha*acc_w
             # info for new traj
             acc_index = i
             acc_w = 1
             accepted += 1
-        elif flag in REJFLAGS or dir == -1:
+            if gg == 'sh' and \
+                ((pe_i == 2 and ptype == "RMR") or\
+                (pe_i == n_pes-1 and ptype == "LML") or\
+                (2 < pe_i < n_pes-1 and ptype in ["LML", "RMR"])) :
+                prev_ha = 2
+            else:
+                prev_ha = 1
+        elif flag in REJFLAGS:
             acc_w += 1    # weight of previous accepted traj increased
             rejected += 1
         else:
@@ -1116,31 +1065,8 @@ def get_weights_staple(flags,dirs,ACCFLAGS,REJFLAGS,verbose=True):
         # because I do not have the next accepted path yet
         # so neglect this path, I guess.
     # at the end: store the last accepted path with its weight
-    weights_f[acc_index] = acc_w
-    tot_w += acc_w
-
-    for i,fd in zip(enumerate(zip(flags,dirs))):
-        flag, dir = fd
-        if flag in ACCFLAGS and dir == 1:
-            # store previous traj with accumulated weight
-            weights_f[acc_index] = acc_w
-            tot_w += acc_w
-            # info for new traj
-            acc_index = i
-            acc_w = 1
-            accepted += 1
-        elif flag in REJFLAGS or dir == -1:
-            acc_w += 1    # weight of previous accepted traj increased
-            rejected += 1
-        else:
-            omitted += 1
-    #if flag[-1] in REJFLAGS:
-        # I did not store yet the weight of the previous accepted path
-        # because I do not have the next accepted path yet
-        # so neglect this path, I guess.
-    # at the end: store the last accepted path with its weight
-    weights_b[acc_index] = acc_w
-    tot_w += acc_w
+    weights[acc_index] = prev_ha*acc_w
+    tot_w += prev_ha*acc_w
 
     if verbose:
         print("weights:")
@@ -1151,10 +1077,141 @@ def get_weights_staple(flags,dirs,ACCFLAGS,REJFLAGS,verbose=True):
         print("total weights",np.sum(weights))
 
     assert omitted == 0
-    ncycle_f = np.sum(weights_f)
-    miss_f = len(flags)-1 - ncycle_f
-    for i in range(miss_f):
-        assert flags[-(i+1)] in REJFLAGS
+    # ncycle_true = np.sum(weights)
+    # miss = len(flags)-1 - ncycle_true
+    # for i in range(miss):
+    #     assert flags[-(i+1)] in REJFLAGS
         # the reason why this could happen
 
-    return weights, ncycle_true
+    return weights
+
+
+def plot_rv_star(pes, interfaces, numberof):
+    cycle_nrs = {}
+    fig, ax = plt.subplots()
+
+    for i, pe in enumerate(pes):
+        accmask = get_flag_mask(pe, "ACC")
+        loadmask = get_generation_mask(pe, "ld")
+        start_cond = pe.lambmins <= interfaces[0]
+        end_cond = pe.lambmaxs >= interfaces[-1]
+        dir_mask = pe.dirs == 1
+
+        cycle_nrs[i] = select_with_masks(pe.cyclenumbers, [start_cond, end_cond, dir_mask, accmask, ~loadmask])
+
+        ax.vlines(interfaces, -4, 4, color='black')
+        linecolor = None
+        count = 0 
+        while True and i > 0:
+            id = np.random.choice(cycle_nrs[i])
+            if np.all(pe.orders[id][:, 1] >= 0):
+                lines = ax.plot(pe.orders[id][:, 0], pe.orders[id][:, 1], color=linecolor, label=i)
+                linecolor = lines[0].get_color()
+                count += 1
+            if count == numberof:
+                break
+    fig.legend()
+    fig.show()
+
+def plot_rv_repptis(pes, interfaces, numberof):
+    cycle_nrs = {}
+    fig, ax = plt.subplots()
+
+    for i, pe in enumerate(pes):
+        accmask = get_flag_mask(pe, "ACC")
+        loadmask = get_generation_mask(pe, "ld")
+        start_cond = pe.lambmins <= pe.interfaces[0][0]
+        end_cond = pe.lambmaxs >= pe.interfaces[0][2]
+
+        cycle_nrs[i] = select_with_masks(pe.cyclenumbers, [start_cond, end_cond, accmask, ~loadmask])
+
+        ax.vlines(interfaces, -4, 4, color='black')
+        linecolor = None
+        count = 0
+        while True and i > 0:
+            id = np.random.choice(cycle_nrs[i])
+            if np.all(pe.orders[id][:, 1] >= 0):
+                lines = ax.plot(pe.orders[id][:, 0], pe.orders[id][:, 1], color=linecolor, label=i)
+                linecolor = lines[0].get_color()
+                count += 1
+            if count == numberof:
+                break
+    fig.legend()
+    fig.show()
+
+def plot_rv_comp(pes, interfaces, n_repptis, n_staple, pe_idxs=None):
+    if pe_idxs is None:
+        pe_idxs = (0, len(pes)-1)
+    assert pe_idxs[0] <= pe_idxs[1]
+    cycle_nrs_repptis = {}
+    cycle_nrs_staple = {}
+    fig, ax = plt.subplots()
+
+    for i, pe in enumerate(pes):
+        if i not in range(pe_idxs[0],pe_idxs[1]+1):
+            continue
+        accmask = get_flag_mask(pe, "ACC")
+        loadmask = get_generation_mask(pe, "ld")
+        start_cond_repptis = pe.lambmins >= interfaces[0] if i > 2 else pe.lambmins <= interfaces[0]
+        end_cond_repptis = pe.lambmaxs < interfaces[-1] if i < len(interfaces)-1 else pe.lambmaxs >= interfaces[-1]
+        start_cond_staple = pe.lambmins <= interfaces[0]
+        end_cond_staple =  pe.lambmaxs >= interfaces[-1]
+        dir_mask = pe.dirs == 1
+
+        cycle_nrs_repptis[i] = select_with_masks(pe.cyclenumbers, [pe.lmrs == "LMR", start_cond_repptis, end_cond_repptis, dir_mask, accmask, ~loadmask])
+        cycle_nrs_staple[i] = select_with_masks(pe.cyclenumbers, [pe.lmrs == "LMR", start_cond_staple, end_cond_staple, dir_mask, accmask, ~loadmask])
+
+        ax.vlines(interfaces, -4, 4, color='black')
+        linecolor = None
+        count = 0 
+        while True and i > 0:
+            if count == n_staple:
+                break
+            id = np.random.choice(cycle_nrs_staple[i])
+            if np.all(pe.orders[id][:, 1] >= 0):
+                lines = ax.plot(pe.orders[id][:, 0], pe.orders[id][:, 1], ".-", color=linecolor, label=i)
+                linecolor = lines[0].get_color()
+                count += 1
+
+        count = 0 
+        it = 0
+        while True and i > 0:
+            if count == n_repptis:
+                break
+            id = np.random.choice(cycle_nrs_repptis[i])
+            # l_cond = pe.orders[id][:, 0] <= interfaces[max(0, i-2)]
+            # r_cond = pe.orders[id][:, 0] >= interfaces[i]
+            # m_cond = np.logical_and(interfaces[i] >= pe.orders[id][:, 0], pe.orders[id][:, 0] >= interfaces[max(0, i-2)])
+            # l_piece = pe.orders[id][l_cond, :]
+            # m_piece = pe.orders[id][m_cond, :]
+            # r_piece = pe.orders[id][r_cond, :]
+            l_piece = pe.orders[id][:pe.istar_idx[id][0]+1, :]
+            m_piece = pe.orders[id][pe.istar_idx[id][0]-1:pe.istar_idx[id][1]+2, :]
+            r_piece = pe.orders[id][pe.istar_idx[id][1]:, :]
+            # if np.all(m_piece[:, 1] >= 0):
+            if len(m_piece) <= 100 and len(l_piece)+len(r_piece) <= 150:
+                ax.plot(m_piece[:, 0], m_piece[:, 1], "*-", color=linecolor, label=i)
+                ax.plot(l_piece[:, 0], l_piece[:, 1], "--", alpha=0.5, color=linecolor)
+                ax.plot(r_piece[:, 0], r_piece[:, 1], "--", alpha=0.5, color=linecolor)
+                # linecolor = lines[0].get_color()
+                count += 1
+            it += 1
+            if it > 200000:
+                id = np.random.choice(pe.cyclenumbers[pe.lmrs == "LMR"])
+                # l_cond = pe.orders[id][:, 0] <= interfaces[max(0, i-2)]
+                # r_cond = pe.orders[id][:, 0] >= interfaces[i]
+                # m_cond = np.logical_and(interfaces[i] >= pe.orders[id][:, 0], pe.orders[id][:, 0] >= interfaces[max(0, i-2)])
+                # l_piece = pe.orders[id][l_cond, :]
+                # m_piece = pe.orders[id][m_cond, :]
+                # r_piece = pe.orders[id][r_cond, :]
+                l_piece = pe.orders[id][:pe.istar_idx[id][0]+1, :]
+                m_piece = pe.orders[id][pe.istar_idx[id][0]-1:pe.istar_idx[id][1]+2, :]
+                r_piece = pe.orders[id][pe.istar_idx[id][1]:, :]
+                if np.all(m_piece[:, 1] >= 0):
+                    ax.plot(m_piece[:, 0], m_piece[:, 1], color=linecolor, label=i)
+                    ax.plot(l_piece[:, 0], l_piece[:, 1], "--", alpha=0.5, color=linecolor)
+                    ax.plot(r_piece[:, 0], r_piece[:, 1], "--", alpha=0.5, color=linecolor)
+                    # linecolor = lines[0].get_color()
+                    count += 1
+    fig.legend()
+    fig.show()

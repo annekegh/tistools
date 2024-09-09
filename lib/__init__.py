@@ -11,4 +11,3 @@ from .pathproperties import *
 from .repptis_msm import *
 from .istar_analysis import *
 from .repptis_pathlengths import *
-
