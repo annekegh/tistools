@@ -854,7 +854,7 @@ def compute_weight_matrices(pes, interfaces, weights = None):
                             dir_mask = pe.dirs == 1
                         elif i == 2:
                             dir_mask = masks[i]["LML"]
-                    elif j == 3 and k == 4:
+                    elif j == len(interfaces)-2 and k == len(interfaces)-1:
                         dir_mask = masks[i]["RMR"]
                     else:
                         dir_mask = pe.dirs == 1
@@ -876,7 +876,7 @@ def compute_weight_matrices(pes, interfaces, weights = None):
                             # dir_mask = np.logical_or(pe.dirs == -1, masks[i]["RMR"])
                         elif i == 2:
                             dir_mask = masks[i]["LML"]
-                    elif j == 4 and k == 3:
+                    elif j == len(interfaces)-2 and k == len(interfaces)-1:
                         dir_mask = masks[i]["RMR"]
                     else:
                         dir_mask = pe.dirs == -1
@@ -943,8 +943,8 @@ def compute_weight_matrices(pes, interfaces, weights = None):
     
     X = w_path
 
-    # for i in range(1,len(pes)):
-    #     X[i] += X[i].T
+    for i in range(1,len(pes)):
+        X[i] += X[i].T
 
     return X
 
