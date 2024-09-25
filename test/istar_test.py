@@ -811,18 +811,20 @@ def get_summed_probs(pes, interfaces, weights = None, dbens=False):
     return p
 
 
-def compute_weight_matrices(pes, interfaces, weights = None):
+def compute_weight_matrices(pes, interfaces, n_int=None, tr = False, weights = None):
     masks = {}
     w_path = {}
     X = {}
-    if pes[-1].orders is not None:
-        ax = plt.figure().add_subplot()
+    if n_int is None:
+        n_int = len(pes)
+    # if pes[-1].orders is not None:
+    #     ax = plt.figure().add_subplot()
     for i, pe in enumerate(pes):
         # Get the lmr masks, weights, ACCmask, and loadmask of the paths
         masks[i] = get_lmr_masks(pe)
         if weights is None:
             # w, ncycle_true = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose = True)
-            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, len(pes), ACCFLAGS, REJFLAGS, verbose = True)
+            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, n_int, ACCFLAGS, REJFLAGS, verbose = True)
             # assert ncycle_true == pe.ncycle
         else:
             w = weights[i]
@@ -893,28 +895,28 @@ def compute_weight_matrices(pes, interfaces, weights = None):
                     w_path[i][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
 
             # color = next(ax._get_lines.prop_cycler)['color']
-                if j == 1 and k == 3 and pe.orders is not None:
-                    # idxs = select_with_masks(pe.cyclenumbers, [masks[i]["LML"], accmask, ~loadmask])
-                    idxs = select_with_masks(pe.cyclenumbers, [start_cond, end_cond, dir_mask,accmask, ~loadmask])
-                    for p in np.random.choice(idxs, min(1, len(idxs))):
-                        if len(pe.orders[p][0]) > 1:
-                            ax.plot([pe.orders[p][i][0] for i in range(len(pe.orders[p]))], [pe.orders[p][i][0] for i in range(len(pe.orders[p]))], "-x")
-                        else:
-                            ax.plot([i  for i in range(len(pe.orders[p]))],
-                                    [ph[0] for ph in pe.orders[p]], "-x")
-                        ax.plot(0, pe.orders[p][0][0], "^",
-                                    color=ax.lines[-1].get_color(), ms = 7)
-                        ax.plot(len(pe.orders[p]) - 1,
-                                pe.orders[p][-1][0], "v",
-                                color=ax.lines[-1].get_color(), ms = 7)
-                            # plot the first and last point again to highlight start/end phasepoints
-                            # it must have the same color as the line for the path
-                    if interfaces is not None:
-                        for intf in interfaces:
-                            ax.axhline(intf, color="k", ls="--", lw=.5)
-        if pe.orders is not None:
-            plt.tight_layout()
-            plt.show()
+        #         if j == 1 and k == 3 and pe.orders is not None:
+        #             # idxs = select_with_masks(pe.cyclenumbers, [masks[i]["LML"], accmask, ~loadmask])
+        #             idxs = select_with_masks(pe.cyclenumbers, [start_cond, end_cond, dir_mask,accmask, ~loadmask])
+        #             for p in np.random.choice(idxs, min(1, len(idxs))):
+        #                 if len(pe.orders[p][0]) > 1:
+        #                     ax.plot([pe.orders[p][i][0] for i in range(len(pe.orders[p]))], [pe.orders[p][i][0] for i in range(len(pe.orders[p]))], "-x")
+        #                 else:
+        #                     ax.plot([i  for i in range(len(pe.orders[p]))],
+        #                             [ph[0] for ph in pe.orders[p]], "-x")
+        #                 ax.plot(0, pe.orders[p][0][0], "^",
+        #                             color=ax.lines[-1].get_color(), ms = 7)
+        #                 ax.plot(len(pe.orders[p]) - 1,
+        #                         pe.orders[p][-1][0], "v",
+        #                         color=ax.lines[-1].get_color(), ms = 7)
+        #                     # plot the first and last point again to highlight start/end phasepoints
+        #                     # it must have the same color as the line for the path
+        #             if interfaces is not None:
+        #                 for intf in interfaces:
+        #                     ax.axhline(intf, color="k", ls="--", lw=.5)
+        # if pe.orders is not None:
+        #     plt.tight_layout()
+        #     plt.show()
         print(f"sum weights ensemble {i}=", np.sum(w_path[i]))
 
     # weighting: consistent within ensemble by doubling forward and backwards LML/RMR paths (except in [0*] and [N-1*])
@@ -943,8 +945,9 @@ def compute_weight_matrices(pes, interfaces, weights = None):
     
     X = w_path
 
-    for i in range(1,len(pes)):
-        X[i] += X[i].T
+    if tr:
+        for i in range(1,len(pes)):
+            X[i] += X[i].T
 
     return X
 
@@ -1085,6 +1088,173 @@ def get_weights_staple(pe_i, flags,gen,ptypes,n_pes,ACCFLAGS,REJFLAGS,verbose=Tr
 
     return weights
 
+def cprobs_repptis_istar(pes, interfaces, n_int=None):
+    if n_int is None:
+        n_int = len(interfaces)
+    
+    X = compute_weight_matrices(pes, interfaces, len(interfaces), tr=True)
+    print("\n\n")
+
+    plocrepptis = {}
+    plocistar = {}
+    for i, pe in enumerate(pes):
+        print(f"Ensemble {i} ([{max(0,i-1)}{"+-" if i > 0 else "-"}]):")
+        plocrepptis[i] = get_local_probs(pe, tr=False)
+        print("\n")
+
+        plocistar[i] = {}
+        if i == 0:
+            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, len(interfaces), ACCFLAGS, REJFLAGS, verbose = False)
+            masks= get_lmr_masks(pe)
+            accmask = get_flag_mask(pe, "ACC")
+            loadmask = get_generation_mask(pe, "ld")
+            plocistar[i]["LML"] = [np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))/(np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))), np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))]
+            plocistar[i]["LMR"] = [np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))/(np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))), np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))]
+            plocistar[i]["RMR"] = [np.sum(select_with_masks(w, [masks["RMR"], accmask, ~loadmask]))/(np.sum(select_with_masks(w, [masks["RML"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["RMR"], accmask, ~loadmask]))), np.sum(select_with_masks(w, [masks["RMR"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["RML"], accmask, ~loadmask]))]
+            plocistar[i]["RML"] = [1 - plocistar[i]["RMR"][0], np.sum(select_with_masks(w, [masks["RMR"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["RML"], accmask, ~loadmask]))]
+            print(f"REPPTIS pLMR approx: {plocistar[i]["LML"][0]}\nREPPTIS pLML approx: {plocistar[i]["LML"][0]} with # weights = {plocistar[i]["LMR"][1]}\n")
+            print(f"REPPTIS pRML approx: {plocistar[i]["RML"][0]}\nREPPTIS pRMR approx: {plocistar[i]["RMR"][0]} with # weights = {plocistar[i]["RML"][1]}")
+            continue
+        plocistar[i]["LML"] = [np.sum(X[i][:max(1,i-1), i-1])/np.sum(X[i][:max(1,i-1), i-1:]), np.sum(X[i][:max(1,i-1), i-1:])]
+        plocistar[i]["LMR"] = [1-plocistar[i]["LML"][0], np.sum(X[i][:max(1,i-1), i-1:])]
+        plocistar[i]["RMR"] = [np.sum(X[i][i:, max(1, i-1)])/np.sum(X[i][i:, :i]), np.sum(X[i][i:, :i])]
+        plocistar[i]["RML"] = [1-plocistar[i]["RMR"][0], np.sum(X[i][i:, :i])]
+
+        plocistar[i]["startLMR"] = np.zeros(max(2, i))
+        wsum = np.sum(X[i][:max(1,i-1), i-1:])
+        # plocistar[i]["startLMR"][1] = np.array([np.sum(X[i][j, max(0,i-2):]) for j in range(max(1, i-2))])
+        plocistar[i]["startLMR"][:-1] = np.array([np.sum(X[i][j, i:]) for j in range(max(1, i-1))]) / wsum
+        plocistar[i]["startLMR"][-1] = wsum
+        plocistar[i]["startLMLf"] = plocistar[i]["startLMR"].copy()
+        plocistar[i]["startLMLf"][:-1] = np.array([np.sum(X[i][j, i-1]) for j in range(max(1, i-1))]) / wsum
+        plocistar[i]["startLMLf"][-1] = wsum
+        plocistar[i]["startRML"] = np.zeros(len(interfaces)-i+1)
+        wsum = np.sum(X[i][i:, :i])
+        # plocistar[i]["startRML"][1] = np.array([np.sum(X[i][j, :i]) for j in range(i, len(interfaces))])
+        plocistar[i]["startRML"][:-1] = np.array([np.sum(X[i][j, :max(1,i-1)]) for j in range(i, len(interfaces))]) / wsum
+        plocistar[i]["startRML"][-1] = wsum
+        plocistar[i]["startRMRb"] = plocistar[i]["startRML"].copy()
+        plocistar[i]["startRMRb"][:-1] = np.array([np.sum(X[i][j, max(1,i-1)]) for j in range(i, len(interfaces))]) / wsum
+        plocistar[i]["startRMRb"][-1] = wsum
+
+        plocistar[i]["endLMR"] = np.zeros(len(interfaces)-i+1)
+        wsum = np.sum(X[i][:max(1,i-1), i-1:]) 
+        plocistar[i]["endLMR"][:-1] = np.array([np.sum(X[i][:max(1,i-1), j]) for j in range(i, len(interfaces))]) / wsum
+        plocistar[i]["endLMR"][-1] = wsum
+        plocistar[i]["endRML"] = np.zeros(max(2, i))
+        wsum = np.sum(X[i][i:, :i])
+        plocistar[i]["endRML"][:-1] = np.array([np.sum(X[i][i:, j]) for j in range(max(1,i-1))]) / wsum
+        plocistar[i]["endRML"][-1] = wsum
+
+        plocistar[i]["full"] = np.zeros([len(interfaces), len(interfaces)])
+        for j in range(len(interfaces)):
+            for k in range(len(interfaces)):
+                if j < k:
+                    plocistar[i]["full"][j][k] = (X[i][j][k]) / np.sum(X[i][j][j:])
+                elif k < j:
+                    plocistar[i]["full"][j][k] = (X[i][j][k]) / np.sum(X[i][j][:j])
+                else:
+                    if j == 0:
+                        plocistar[i]["full"][j][k] = X[i][j][k] / np.sum(X[i][j][j:])
+                    else:
+                        plocistar[i]["full"][j][k] = 0
+
+        print(f"Ensemble {i} ([{i-1}*]):")
+        print(f"REPPTIS pLMR approx: {plocistar[i]["LMR"][0]} (vs. REPPTIS = {plocrepptis[i]["LMR"]}) with # weights = {plocistar[i]["LMR"][1]}")
+        print(f"    Conditional pLMR with start turns from 0 till {max(0, i-2)}: {plocistar[i]["startLMR"][:-1]} with sum {np.sum(plocistar[i]["startLMR"][:-1])} \n    with # weights {plocistar[i]["startLMR"][-1]}")
+        print(f"    Conditional pLMR with end turns from {i} till {len(interfaces)-1}: {plocistar[i]["endLMR"][:-1]} with sum {np.sum(plocistar[i]["endLMR"][:-1])} \n    with # weights {plocistar[i]["endLMR"][-1]}")
+        print(f"REPPTIS pLML fw approx: {plocistar[i]["LML"][0]} (vs. REPPTIS = {plocrepptis[i]["LML"]}) with # weights = {plocistar[i]["LML"][1]}")
+        print(f"    Conditional pLML with start turns from 0 till {max(0, i-2)}: {plocistar[i]["startLMLf"][:-1]} with sum {np.sum(plocistar[i]["startLMLf"][:-1])} \n    with # weights {plocistar[i]["startLMLf"][-1]}")
+        # print(f"Conditional pLML with end turns from {i} till {len(interfaces)}: {plocistar[i]["endLML"][0]} with sum {np.sum(plocistar[i]["endLML"][0])} \nwith # weights {plocistar[i]["endLML"][1]}")
+        print(f"REPPTIS pRML approx: {plocistar[i]["RML"][0]} (vs. REPPTIS = {plocrepptis[i]["RML"]}) with # weights = {plocistar[i]["RML"][1]}")
+        print(f"    Conditional pRML with start turns from {i} till {len(interfaces)-1}: {plocistar[i]["startRML"][:-1]} with sum {np.sum(plocistar[i]["startRML"][:-1])} \n    with # weights {plocistar[i]["startRML"][-1]}")
+        print(f"    Conditional pRML with end turns from {0} till {i-1}: {plocistar[i]["endRML"][:-1]} with sum {np.sum(plocistar[i]["endRML"][:-1])} \n    with # weights {plocistar[i]["endRML"][-1]}")
+        print(f"REPPTIS pRMR bw approx: {plocistar[i]["RMR"][0]} with # weights = {plocistar[i]["RMR"][1]}")
+        print(f"    Conditional pRMR with start turns from {i} till {len(interfaces)-1}: {plocistar[i]["startRMRb"][:-1]} with sum {np.sum(plocistar[i]["startRMRb"][:-1])} \n    with # weights {plocistar[i]["startRMRb"][-1]}")
+        # print(f"Conditional pRMR with end turns from {i-1} till {0}: {list(reversed(plocistar[i]["endRMR"][0]))} with sum {np.sum(plocistar[i]["endRMR"][0])} \nwith # weights {plocistar[i]["endRMR"][1]}")
+        print(f"Full conditional turn probability matrix for ensemble {i}:")
+        print(np.array_str(plocistar[i]["full"], precision=5, suppress_small=True))
+        print("\n")
+
+    return plocrepptis, plocistar
+
+def cprobs_repptis_istar2(pes, interfaces, n_int=None):
+    if n_int is None:
+        n_int = len(interfaces)
+    
+    X = compute_weight_matrices(pes, interfaces, len(interfaces), tr=True)
+    print("\n\n")
+
+    plocrepptis = {}
+    plocistar = {}
+    for i, pe in enumerate(pes):
+        print(f"Ensemble {i} ([{max(0,i-1)}{"+-" if i > 0 else "-"}]):")
+        plocrepptis[i] = get_local_probs(pe, tr=False)
+        print("\n")
+
+        plocistar[i] = {}
+        if i == 0:
+            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, len(interfaces), ACCFLAGS, REJFLAGS, verbose = False)
+            masks= get_lmr_masks(pe)
+            accmask = get_flag_mask(pe, "ACC")
+            loadmask = get_generation_mask(pe, "ld")
+            plocistar[i]["LML"] = [np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))/(np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))), np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))]
+            plocistar[i]["LMR"] = [np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))/(np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))), np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))]
+            plocistar[i]["RMR"] = [np.sum(select_with_masks(w, [masks["RMR"], accmask, ~loadmask]))/(np.sum(select_with_masks(w, [masks["RML"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["RMR"], accmask, ~loadmask]))), np.sum(select_with_masks(w, [masks["RMR"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["RML"], accmask, ~loadmask]))]
+            plocistar[i]["RML"] = [1 - plocistar[i]["RMR"][0], np.sum(select_with_masks(w, [masks["RMR"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["RML"], accmask, ~loadmask]))]
+            print(f"REPPTIS pLMR approx: {plocistar[i]["LML"][0]}\nREPPTIS pLML approx: {plocistar[i]["LML"][0]} with # weights = {plocistar[i]["LMR"][1]}\n")
+            print(f"REPPTIS pRML approx: {plocistar[i]["RML"][0]}\nREPPTIS pRMR approx: {plocistar[i]["RMR"][0]} with # weights = {plocistar[i]["RML"][1]}")
+            continue
+        # REPPTIS estimates with [i*] weights - slightly different numerically because of different weighting
+        plocistar[i]["LML"] = [np.sum(X[i][:max(1,i-1), i-1])/np.sum(X[i][:max(1,i-1), i-1:]), np.sum(X[i][:max(1,i-1), i-1:])]
+        plocistar[i]["LMR"] = [1-plocistar[i]["LML"][0], np.sum(X[i][:max(1,i-1), i-1:])]
+        plocistar[i]["RMR"] = [np.sum(X[i][i:, max(1, i-1)])/np.sum(X[i][i:, :i]), np.sum(X[i][i:, :i])]
+        plocistar[i]["RML"] = [1-plocistar[i]["RMR"][0], np.sum(X[i][i:, :i])]
+
+        plocistar[i]["startLMLR"] = np.zeros([3,max(1, i-1)])
+        plocistar[i]["startLMLR"] = np.array([np.array([np.sum(X[i][j, i-1])/np.sum(X[i][j, i-1:]), np.sum(X[i][j, i:])/np.sum(X[i][j, i-1:])]) for j in range(max(1, i-1))])
+
+        plocistar[i]["startRMRL"] = np.zeros([3, len(interfaces)-i+1])
+        plocistar[i]["startRMRL"] = np.array([np.array([np.sum(X[i][j, i-1])/np.sum(X[i][j, :i]), np.sum(X[i][j, :i-1])/np.sum(X[i][j, :i]), np.sum(X[i][j, :i])]) for j in range(i, len(interfaces))])
+
+        plocistar[i]["endLMLR"] = np.zeros([3,len(interfaces)-i+1])
+        plocistar[i]["endLMLR"] = np.array([np.array([np.sum(X[i][:max(1,i-1), i-1])/(np.sum(X[i][:max(1,i-1), j])+np.sum(X[i][:max(1,i-1), i-1])), np.sum(X[i][:max(1,i-1), j])/(np.sum(X[i][:max(1,i-1), j])+np.sum(X[i][:max(1,i-1), i-1])), (np.sum(X[i][:max(1,i-1), j])+np.sum(X[i][:max(1,i-1), i-1]))]) for j in range(i, len(interfaces))])
+        plocistar[i]["endRMRL"] = np.zeros([3, max(1, i-1)])
+        plocistar[i]["endRMRL"] = np.array([np.array([np.sum(X[i][i:, i-1])/(np.sum(X[i][i:, j])+np.sum(X[i][i:, i-1])), np.sum(X[i][i:, j])/(np.sum(X[i][i:, j])+np.sum(X[i][i:, i-1])), (np.sum(X[i][i:, j])+np.sum(X[i][i:, i-1]))]) for j in range(max(0,i-1))])
+
+        plocistar[i]["full"] = np.zeros([len(interfaces), len(interfaces)])
+        for j in range(len(interfaces)):
+            for k in range(len(interfaces)):
+                if j < k:
+                    plocistar[i]["full"][j][k] = (X[i][j][k]) / np.sum(X[i][j][j:])
+                elif k < j:
+                    plocistar[i]["full"][j][k] = (X[i][j][k]) / np.sum(X[i][j][:j])
+                else:
+                    if j == 0:
+                        plocistar[i]["full"][j][k] = X[i][j][k] / np.sum(X[i][j][j:])
+                    else:
+                        plocistar[i]["full"][j][k] = 0
+
+        # pprint(plocistar)
+        print(f"Ensemble {i} ([{i-1}*]):")
+        print(f"REPPTIS pLMR approx: {plocistar[i]["LMR"][0]} (vs. REPPTIS = {plocrepptis[i]["LMR"]}) with # weights = {plocistar[i]["LMR"][1]}")
+        print(f"REPPTIS pLML fw approx: {plocistar[i]["LML"][0]} (vs. REPPTIS = {plocrepptis[i]["LML"]}) with # weights = {plocistar[i]["LML"][1]}")
+        for st, p in enumerate(plocistar[i]["startLMLR"]):
+            print(f"    -> Conditional pLML/pLMR with start turn at interface {st}: pLML={p[0]} <-> pL{st}MR {p[1]} with sum {np.sum(p[:-1])} \n    with # weights {p[-1]}")
+        for st, p in enumerate(plocistar[i]["endLMLR"]):
+            print(f"    -> Conditional pLML/pLMR with LMR end turn at interface {st+i}: pLML={p[0]} <-> pLMR{st+i}={p[1]} with sum {np.sum(p[:-1])} \nwith # weights {p[-1]}")
+        print(f"REPPTIS pRML approx: {plocistar[i]["RML"][0]} (vs. REPPTIS = {plocrepptis[i]["RML"]}) with # weights = {plocistar[i]["RML"][1]}")
+        print(f"REPPTIS pRMR bw approx: {plocistar[i]["RMR"][0]} with # weights = {plocistar[i]["RMR"][1]}")
+        for st, p in enumerate(plocistar[i]["startRMRL"]):
+            print(f"    -> Conditional pRML with start turn at interface {i} till {len(interfaces)-1}: {plocistar[i]["startRML"][:-1]} with sum {np.sum(plocistar[i]["startRML"][:-1])} \n    with # weights {plocistar[i]["startRML"][-1]}")
+        # print(f"    Conditional pRML with end turns from {0} till {i-1}: {plocistar[i]["endRML"][:-1]} with sum {np.sum(plocistar[i]["endRML"][:-1])} \n    with # weights {plocistar[i]["endRML"][-1]}")
+        # print(f"    Conditional pRMR with start turns from {i} till {len(interfaces)-1}: {plocistar[i]["startRMRb"][:-1]} with sum {np.sum(plocistar[i]["startRMRb"][:-1])} \n    with # weights {plocistar[i]["startRMRb"][-1]}")
+        # # print(f"Conditional pRMR with end turns from {i-1} till {0}: {list(reversed(plocistar[i]["endRMR"][0]))} with sum {np.sum(plocistar[i]["endRMR"][0])} \nwith # weights {plocistar[i]["endRMR"][1]}")
+        # print(f"Full conditional turn probability matrix for ensemble {i}:")
+        # print(np.array_str(plocistar[i]["full"], precision=5, suppress_small=True))
+        print("\n")
+
+    return plocrepptis, plocistar
 
 def plot_rv_star(pes, interfaces, numberof):
     cycle_nrs = {}
@@ -1146,6 +1316,8 @@ def plot_rv_comp(pes, interfaces, n_repptis, n_staple, pe_idxs=None):
     cycle_nrs_repptis = {}
     cycle_nrs_staple = {}
     fig, ax = plt.subplots()
+    ax.set_xlabel("Position x (=$\lambda$)")
+    ax.set_ylabel("Momentum p")
 
     for i, pe in enumerate(pes):
         if i not in range(pe_idxs[0],pe_idxs[1]+1):
