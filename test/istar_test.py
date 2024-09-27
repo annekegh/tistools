@@ -1240,16 +1240,15 @@ def cprobs_repptis_istar2(pes, interfaces, n_int=None):
         print(f"REPPTIS pLMR approx: {plocistar[i]["LMR"][0]} (vs. REPPTIS = {plocrepptis[i]["LMR"]}) with # weights = {plocistar[i]["LMR"][1]}")
         print(f"REPPTIS pLML fw approx: {plocistar[i]["LML"][0]} (vs. REPPTIS = {plocrepptis[i]["LML"]}) with # weights = {plocistar[i]["LML"][1]}")
         for st, p in enumerate(plocistar[i]["startLMLR"]):
-            print(f"    -> Conditional pLML/pLMR with start turn at interface {st}: pLML={p[0]} <-> pL{st}MR {p[1]} with sum {np.sum(p[:-1])} \n    with # weights {p[-1]}")
+            print(f"    -> Conditional pLMR/pLML with start turn at interface {st}: pLML={p[0]} <-> pL{st}MR {p[1]} with sum {np.sum(p[:-1])} \n    with # weights {p[-1]}")
         for st, p in enumerate(plocistar[i]["endLMLR"]):
-            print(f"    -> Conditional pLML/pLMR with LMR end turn at interface {st+i}: pLML={p[0]} <-> pLMR{st+i}={p[1]} with sum {np.sum(p[:-1])} \nwith # weights {p[-1]}")
+            print(f"    -> Conditional pLMR/pLML with LMR end turn at interface {st+i}: pLML={p[0]} <-> pLMR{st+i}={p[1]} with sum {np.sum(p[:-1])} \nwith # weights {p[-1]}")
         print(f"REPPTIS pRML approx: {plocistar[i]["RML"][0]} (vs. REPPTIS = {plocrepptis[i]["RML"]}) with # weights = {plocistar[i]["RML"][1]}")
         print(f"REPPTIS pRMR bw approx: {plocistar[i]["RMR"][0]} with # weights = {plocistar[i]["RMR"][1]}")
         for st, p in enumerate(plocistar[i]["startRMRL"]):
-            print(f"    -> Conditional pRML with start turn at interface {i} till {len(interfaces)-1}: {plocistar[i]["startRML"][:-1]} with sum {np.sum(plocistar[i]["startRML"][:-1])} \n    with # weights {plocistar[i]["startRML"][-1]}")
-        # print(f"    Conditional pRML with end turns from {0} till {i-1}: {plocistar[i]["endRML"][:-1]} with sum {np.sum(plocistar[i]["endRML"][:-1])} \n    with # weights {plocistar[i]["endRML"][-1]}")
-        # print(f"    Conditional pRMR with start turns from {i} till {len(interfaces)-1}: {plocistar[i]["startRMRb"][:-1]} with sum {np.sum(plocistar[i]["startRMRb"][:-1])} \n    with # weights {plocistar[i]["startRMRb"][-1]}")
-        # # print(f"Conditional pRMR with end turns from {i-1} till {0}: {list(reversed(plocistar[i]["endRMR"][0]))} with sum {np.sum(plocistar[i]["endRMR"][0])} \nwith # weights {plocistar[i]["endRMR"][1]}")
+            print(f"    -> Conditional pRML/pRMR with start turn at interface {st}: pRMR={p[0]} <-> pR{st}ML {p[1]} with sum {np.sum(p[:-1])} \n    with # weights {p[-1]}")
+        for st, p in enumerate(plocistar[i]["endLMLR"]):
+            print(f"    -> Conditional pRML/pRMR with RML end turn at interface {i-st-2}: pRMR={p[0]} <-> pRML{i-st-2}={p[1]} with sum {np.sum(p[:-1])} \nwith # weights {p[-1]}")
         # print(f"Full conditional turn probability matrix for ensemble {i}:")
         # print(np.array_str(plocistar[i]["full"], precision=5, suppress_small=True))
         print("\n")
