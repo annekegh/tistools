@@ -150,7 +150,6 @@ def global_cross_prob(M, doprint=False):
     # take pieces of transition matrix
     Mp = M[1:-1,1:-1]
     a = np.identity(NS-2)-Mp    # 1-Mp
-    a1 = np.linalg.inv(a)       # (1-Mp)^(-1)
 
     # other pieces
     D = M[1:-1, np.array([0,-1])]
@@ -159,7 +158,7 @@ def global_cross_prob(M, doprint=False):
 
     # compute Z vector
     z1 = np.array([[0],[1]])
-    z2 = np.dot(a1,np.dot(D,z1))
+    z2 = np.linalg.solve(a, np.dot(D,z1))
 
     # compute Y vector
     y1 = np.dot(M11,z1) + np.dot(E,z2)  # y1[0] = Prcross
@@ -236,7 +235,6 @@ def mfpt_to_absorbing_states(M, tau1, taum, tau2, absor, kept, doprint=False,
     M11 = np.take(np.take(M, absor, axis=0), absor, axis=1)
 
     a = np.identity(len(Mp))-Mp   # 1-Mp
-    a1 = np.linalg.inv(a)         # compute (1-Mp)^(-1)
 
     # part tau (m2)
     t1 = taum2[absor].reshape(len(absor),1)
@@ -247,7 +245,7 @@ def mfpt_to_absorbing_states(M, tau1, taum, tau2, absor, kept, doprint=False,
 
     # compute G vector: DESIGN!
     g1 = np.zeros((len(absor),1))  # + t1 # t1 is set to zero
-    g2 = np.dot(a1, np.dot(D,g1) + tp)
+    g2 = np.linalg.solve(a, np.dot(D,g1) + tp)
 
     # compute H vector
     h1 = np.dot(M11,g1) + np.dot(E,g2) + t1
