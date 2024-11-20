@@ -8,6 +8,34 @@ ACCFLAGS,REJFLAGS = set_flags_ACC_REJ()
 # logger
 logger = logging.getLogger(__name__)
 
+def construct_tau_vector(N, NS, taumm, taump, taupm, taupp):
+    assert N>=3
+    assert NS==4*N-5
+    assert len(taumm) == N
+    assert len(taump) == N
+    assert len(taupm) == N
+    assert len(taupp) == N
+    # unravel the values into one vector
+    tau = np.zeros(NS)
+    # [0-]
+    tau[0] = taupp[0]
+    # [0+-]
+    tau[1] = taumm[1]
+    tau[2] = taump[1]
+    tau[3] = taupm[1]
+    # [1+-] etc
+    for i in range(1,N-2):
+        tau[4*i]   = taumm[i+1]
+        tau[4*i+1] = taump[i+1]
+        tau[4*i+2] = taupm[i+1]
+        tau[4*i+3] = taupp[i+1]
+    # [(N-2)^(-1)]
+    tau[-3] = taumm[-1]
+    tau[-2] = taump[-1]
+    # B
+    tau[-1] = 0.   # whatever
+    return tau
+
 
 def set_tau_first_hit_M_distrib(pe, do_last = True):
     """Set, for each pathtype, the average pathlength before the middle 

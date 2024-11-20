@@ -15,79 +15,6 @@ ACCFLAGS,REJFLAGS = set_flags_ACC_REJ()
 logger = logging.getLogger(__name__)
 
 
-
-def bootstrap_istar_analysis(pathensembles, interfaces, nN=10, nB=1000):
-    data = {}
-    # for each pathensemble, we save the indices of accepted cycle numbers in a
-    # dictionary, because we will use this a lot. We do not accept load cycles, 
-    # so if a load cycle is sampled, we will just not use it. 
-    pathcycle_ids = {}
-    for i, pe in enumerate(pathensembles):
-        loadmask = get_generation_mask(pe, "load")
-        accmask = get_flag_mask(pe, "ACC")
-        pathcycle_ids[i] = select_with_masks(pe.cyclenumbers,
-                                             [accmask, ~loadmask])
-    for Bcycle in np.arange((pathensembles[0].cyclenumbers)[-1]//nN,
-                            (pathensembles[0].cyclenumbers)[-1],
-                            ((pathensembles[0].cyclenumbers)[-1]//nN)):
-        logger.info(f"Doing bootstrap analysis for cycle {Bcycle}")
-        # We produce a list of the data for each timeslice
-        ts_data = {}
-        for j in range(nB):
-            if j % 100 == 0:
-                logger.info(f"Doing bootstrap sample {j}")
-            # A. Select cycle numbers randomly within the timeslice [1, Bcycle],
-            #    using replacement. We start from one to discard the initial
-            #    load cycle.
-            cycle_ids = np.random.choice(np.arange(start=1,stop=Bcycle), 
-                                         Bcycle, replace=True)
-            # Store the data for each pathensemble in a dictionary
-            boot_data = {}
-            boot_pes = [pathensembles[0],]
-            for i, pe in enumerate(pathensembles):
-                if pe.in_zero_minus:
-                    logger.info(f"Passing pathensemble {i} because this is "+\
-                                f"the zero minus ensemble: {pe.name}")
-                    pass
-                # map the cycle numbers to the indices of accepted cycles
-                boot_cycle_ids = find_closest_number_lte(cycle_ids,
-                                                         pathcycle_ids[i])
-                # sample the pathensemble at the given cycle indices
-                boot_pes.append(pe.sample_pe(boot_cycle_ids))
-                #boot_data[i]['pe'] = boot_pe
-            # B. get the transition crossing probabilities
-            boot_data['w_path'] = compute_weight_matrix(pe, i, interfaces)
-            boot_data['p'] = get_transition_probzz(boot_data['w_path'])
-            # C. Calculate the global crossing probabilities 
-            Mj = construct_M_istar(boot_data['ens'][i]['p'])
-            z1, z2, y1, y2 = global_cross_prob_star(Mj)
-            boot_data['z1'] = z1
-            boot_data['z2'] = z2
-            boot_data['y1'] = y1
-            boot_data['y2'] = y2
-            ts_data[j] = boot_data
-        # save the boot_data for this timeslice 
-        data[Bcycle] = {}
-        data[Bcycle]['data'] = ts_data
-        # D. Calculate the mean and std of the local crossing probabilities for
-        #    each pathensemble, and the mean and std of the global crossing for 
-        #    each bootstrap sample.
-        ts_stats = {}
-        # first the local crossing probabilities
-        for attr in ['w_path', 'p', 'z1', 'z2', 'y1', 'y2']:
-            ts_stats[attr] = {}
-            ts_stats[attr]['mean'] = \
-                np.mean(np.array([ts_data[j][attr]
-                                  for j in ts_data.keys()]),axis=0)
-            ts_stats[attr]['std'] = \
-                np.std(np.array([ts_data[j][attr]
-                                 for j in ts_data.keys()]),axis=0)
-            
-        data[Bcycle]['stats'] = ts_stats
-
-    return data
-
-
 def global_cross_prob_star(M, doprint=False):
     # probability to arrive in -1 before 0
     # given that you are at 0 now and that you are leaving 0
@@ -252,7 +179,7 @@ def get_transition_probzz(w_path):
     return p
 
 
-def get_transition_probs(pes, interfaces, weights = None, tr=False): ### OLD
+def get_transition_probs(w_path, weights = None, tr=False):
     """
     Returns the local crossing probabilities for the PPTIS ensemble pe.
     This is only for the [i^+-] or [0^+-'] ensembles, and NOT for [0^-'].
@@ -272,74 +199,13 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False): ### OLD
         Matrix of all local crossing probabilities from one turn to another,
         in both directions.
     """
-    masks = {}
-    w_path = {}
-
-    for i, pe in enumerate(pes):
-        # Get the lmr masks, weights, ACCmask, and loadmask of the paths
-        masks[i] = get_lmr_masks(pe)
-        if weights is None:
-            w, ncycle_true = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose = False)
-            assert ncycle_true == pe.ncycle
-        else:
-            w = weights[i]
-        accmask = get_flag_mask(pe, "ACC")
-        loadmask = get_generation_mask(pe, "ld")
-        msg = f"Ensemble {pe.name[-3:]} has {len(w)} paths.\n The total "+\
-                    f"weight of the ensemble is {np.sum(w)}\nThe total amount of "+\
-                    f"accepted paths is {np.sum(accmask)}\nThe total amount of "+\
-                    f"load paths is {np.sum(loadmask)}"
-        logger.debug(msg)
-
-        w_path[i] = {}
-
-        w_path[i]["ends"] = np.empty([len(interfaces),len(interfaces)])
-        for j in range(len(interfaces)):
-            for k in range(len(interfaces)):
-                if j == k:
-                        if i == 1 and j == 0:
-                            w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask]))
-                        else:
-                            w_path[i]["ends"][j][k] = 0  
-                elif j < k:
-                    dir_mask = pe.dirs == 1
-                    if j == 0:
-                        start_cond = pe.lambmins <= interfaces[j]
-                    else: 
-                        start_cond = np.logical_and(pe.lambmins <= interfaces[j], pe.lambmins >= interfaces[j-1])
-                    if k == len(interfaces)-1:
-                        end_cond = pe.lambmaxs >= interfaces[k]
-                    else: 
-                        end_cond = np.logical_and(pe.lambmaxs >= interfaces[k], pe.lambmaxs <= interfaces[k+1])
-                
-                    w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
-                else:
-                    dir_mask = pe.dirs == -1
-                    if k == 0:
-                        start_cond = pe.lambmins <= interfaces[k]
-                    else: 
-                        start_cond = np.logical_and(pe.lambmins <= interfaces[k], pe.lambmins >= interfaces[k-1])
-                    if j == len(interfaces)-1:
-                        end_cond = pe.lambmaxs >= interfaces[j]
-                    else: 
-                        end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
-
-                    w_path[i]["ends"][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
-                    
-
-        # if tr:  # TR reweighting. Note this is not block-friendly TODO
-        #     w_path[i]['RMR'] *= 2
-        #     w_path[i]['LML'] *= 2
-        #     temp = w_path[i]['RML'] + w_path[i]['LMR']
-        #     w_path[i]['RML'] = temp
-        #     w_path[i]['LMR'] = temp
-
-    p = np.empty([len(interfaces), len(interfaces)])
-    for i in range(len(interfaces)):
-        for k in range(len(interfaces)):
+    sh = w_path[0].shape
+    p = np.empty([sh[0], sh[0]])
+    for i in range(sh[0]):
+        for k in range(sh[1]):
             if i == k:
                 if i == 0:
-                    p[i][k] = np.sum(w_path[i+1]["ends"][i][k]) / np.sum(w_path[i+1]["ends"][i][i:]) if np.sum(w_path[i+1]["ends"][i][i:]) != 0 else 0
+                    p[i][k] = np.sum(w_path[i+1][i][k]) / np.sum(w_path[i+1][i][i:]) if np.sum(w_path[i+1][i][i:]) != 0 else 0
                 else:
                     p[i][k] = 0
             elif i < k:
@@ -348,15 +214,15 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False): ### OLD
                 w_reachedj = np.empty(k-i+1)
                 w_jtillend = np.empty(k-i+1)
                 for j in range(i, k+1):
-                    p_reachedj[j-i] = np.sum(w_path[i+1]["ends"][i][j:]) / np.sum(w_path[i+1]["ends"][i][i:]) if np.sum(w_path[i+1]["ends"][i][i:]) != 0 else 0
-                    w_reachedj[j-i] = np.sum(w_path[i+1]["ends"][i][i:])
-                    if j < len(interfaces)-1:
-                        p_jtillend[j-i] = np.sum(w_path[j+1]["ends"][i][k]) / np.sum(w_path[j+1]["ends"][i][i:]) if np.sum(w_path[j+1]["ends"][i][i:]) != 0 else 0
-                        w_jtillend[j-i] = np.sum(w_path[j+1]["ends"][i][i:])
+                    p_reachedj[j-i] = np.sum(w_path[i+1][i][j:]) / np.sum(w_path[i+1][i][i:]) if np.sum(w_path[i+1][i][i:]) != 0 else 0
+                    w_reachedj[j-i] = np.sum(w_path[i+1][i][i:])
+                    if j < sh[0]-1:
+                        p_jtillend[j-i] = np.sum(w_path[j+1][i][k]) / np.sum(w_path[j+1][i][i:]) if np.sum(w_path[j+1][i][i:]) != 0 else 0
+                        w_jtillend[j-i] = np.sum(w_path[j+1][i][i:])
                     else: 
                         p_jtillend[j-i] = 1
                         w_jtillend[j-i] = 1
-                print(f"i={interfaces[i]}, #j = {k-i}, k={interfaces[k]}")
+                print(f"i={i}, #j = {k-i}, k={k}")
                 print("P_i(j reached) =", p_reachedj)
                 print("P_j(k) =", p_jtillend)
                 print("full P_i(k) =", p_reachedj*p_jtillend)
@@ -371,18 +237,18 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False): ### OLD
                 w_reachedj = np.empty(i-k+1)
                 w_jtillend = np.empty(i-k+1)
                 for j in range(k, i+1):
-                    if i < len(interfaces)-1:
-                        p_reachedj[j-k] = np.sum(w_path[i+1]["ends"][i][:j+1]) / np.sum(w_path[i+1]["ends"][i][:i+1]) if np.sum(w_path[i+1]["ends"][i][:i+1]) != 0 else 0
-                        p_jtillend[j-k] = np.sum(w_path[j+1]["ends"][i][k]) / np.sum(w_path[j+1]["ends"][i][:i+1]) if np.sum(w_path[j+1]["ends"][i][:i+1]) != 0 else 0
-                        w_reachedj[j-k] = np.sum(w_path[i+1]["ends"][i][:i+1])
-                        w_jtillend[j-k] = np.sum(w_path[j+1]["ends"][i][:i+1])
+                    if i < sh[0]-1:
+                        p_reachedj[j-k] = np.sum(w_path[i+1][i][:j+1]) / np.sum(w_path[i+1][i][:i+1]) if np.sum(w_path[i+1][i][:i+1]) != 0 else 0
+                        p_jtillend[j-k] = np.sum(w_path[j+1][i][k]) / np.sum(w_path[j+1][i][:i+1]) if np.sum(w_path[j+1][i][:i+1]) != 0 else 0
+                        w_reachedj[j-k] = np.sum(w_path[i+1][i][:i+1])
+                        w_jtillend[j-k] = np.sum(w_path[j+1][i][:i+1])
                     else: 
                         p_reachedj[j-k] = 0
                         p_jtillend[j-k] = 0
                         w_reachedj[j-k] = 0
                         w_jtillend[j-k] = 0
                     
-                print(f"i={interfaces[i]}, #j = {k-i}, k={interfaces[k]}")
+                print(f"i={i}, #j = {k-i}, k={k}")
                 print("P_i(j reached) =", p_reachedj)
                 print("P_j(k) =", p_jtillend)
                 print("full P_i(k) =", p_reachedj*p_jtillend)
@@ -396,6 +262,7 @@ def get_transition_probs(pes, interfaces, weights = None, tr=False): ### OLD
     print(msg)
 
     return p
+
 
 
 def get_simple_probs(w_path):

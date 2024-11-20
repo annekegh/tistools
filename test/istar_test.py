@@ -952,14 +952,17 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr = False, weights = N
     return X
 
 
-def compute_weight_matrix(pe, pe_id, interfaces, weights = None):
+def compute_weight_matrix(pe, pe_id, interfaces, n_int=None, tr = False,weights = None):
 
+    if n_int is None:
+        n_int = len(interfaces)
     # Get the lmr masks, weights, ACCmask, and loadmask of the paths
     masks = get_lmr_masks(pe)
     if weights is None:
-        w, ncycle_true = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose = False)
-        w, ncycle_true = get_weights(pe.flags, pe.dirs, ACCFLAGS, REJFLAGS, verbose = False)
-        assert ncycle_true == pe.ncycle
+        w = get_weights_staple(pe_id, pe.flags, pe.generation, pe.lmrs, len(interfaces), ACCFLAGS, REJFLAGS, verbose = True)
+        # w, ncycle_true = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose = False)
+        # w, ncycle_true = get_weights(pe.flags, pe.dirs, ACCFLAGS, REJFLAGS, verbose = False)
+        # assert ncycle_true == pe.ncycle
     else:
         w = weights
     accmask = get_flag_mask(pe, "ACC")
@@ -982,12 +985,16 @@ def compute_weight_matrix(pe, pe_id, interfaces, weights = None):
                         X_path[j][k] = 0  
             elif j < k:
                 if j == 0 and k == 1:
-                    if pe_id == 1:
-                        dir_mask = pe.dirs < 2
-                    else:
-                        dir_mask = pe.dirs < 2
+                    if pe_id != 2:
+                        # dir_mask = np.logical_or(pe.dirs == 1, masks[i]["LML"])
+                        dir_mask = pe.dirs == 1
+                    elif pe_id == 2:
+                        dir_mask = masks["LML"]
+                elif j == len(interfaces)-2 and k == len(interfaces)-1:
+                    dir_mask = masks["RMR"]
                 else:
                     dir_mask = pe.dirs == 1
+                    # dir_mask = np.logical_or(pe.dirs == 1, masks[i]["LML"])
                 if j == 0:
                     start_cond = pe.lambmins <= interfaces[j]
                 else: 
@@ -1000,12 +1007,16 @@ def compute_weight_matrix(pe, pe_id, interfaces, weights = None):
                 X_path[j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
             else:
                 if j == 1 and k == 0:
-                    if pe_id == 1:
-                        dir_mask = pe.dirs > 2
-                    else:
-                        dir_mask = pe.dirs > 2
+                    if pe_id != 2:
+                        dir_mask = pe.dirs == -1
+                        # dir_mask = np.logical_or(pe.dirs == -1, masks[i]["RMR"])
+                    elif pe_id == 2:
+                        dir_mask = masks["LML"]
+                elif j == len(interfaces)-2 and k == len(interfaces)-1:
+                    dir_mask = masks["RMR"]
                 else:
                     dir_mask = pe.dirs == -1
+                    # dir_mask = np.logical_or(pe.dirs == -1, masks[i]["RMR"])
                 if k == 0:
                     start_cond = pe.lambmins <= interfaces[k]
                 else: 
@@ -1017,6 +1028,9 @@ def compute_weight_matrix(pe, pe_id, interfaces, weights = None):
 
                 X_path[j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
     print(f"sum weights ensemble {pe_id}=", np.sum(X_path))
+
+    if tr:
+        X_path = X_path + X_path.T
 
     return X_path
 
@@ -1207,12 +1221,12 @@ def cprobs_repptis_istar2(pes, interfaces, n_int=None):
             continue
         # REPPTIS estimates with [i*] weights - slightly different numerically because of different weighting
         plocistar[i]["LML"] = [np.sum(X[i][:max(1,i-1), i-1])/np.sum(X[i][:max(1,i-1), i-1:]), np.sum(X[i][:max(1,i-1), i-1:])]
-        plocistar[i]["LMR"] = [1-plocistar[i]["LML"][0], np.sum(X[i][:max(1,i-1), i-1:])]
+        plocistar[i]["LMR"] = [1-plocistar[i]["LML"][0], np.sum(X[i][:max(1,i-1), i-1:]), ]
         plocistar[i]["RMR"] = [np.sum(X[i][i:, max(1, i-1)])/np.sum(X[i][i:, :i]), np.sum(X[i][i:, :i])]
         plocistar[i]["RML"] = [1-plocistar[i]["RMR"][0], np.sum(X[i][i:, :i])]
 
         plocistar[i]["startLMLR"] = np.zeros([3,max(1, i-1)])
-        plocistar[i]["startLMLR"] = np.array([np.array([np.sum(X[i][j, i-1])/np.sum(X[i][j, i-1:]), np.sum(X[i][j, i:])/np.sum(X[i][j, i-1:])]) for j in range(max(1, i-1))])
+        plocistar[i]["startLMLR"] = np.array([np.array([np.sum(X[i][j, i-1])/np.sum(X[i][j, i-1:]), np.sum(X[i][j, i:])/np.sum(X[i][j, i-1:]), np.sum(X[i][j, i-1:])]) for j in range(max(1, i-1))])
 
         plocistar[i]["startRMRL"] = np.zeros([3, len(interfaces)-i+1])
         plocistar[i]["startRMRL"] = np.array([np.array([np.sum(X[i][j, i-1])/np.sum(X[i][j, :i]), np.sum(X[i][j, :i-1])/np.sum(X[i][j, :i]), np.sum(X[i][j, :i])]) for j in range(i, len(interfaces))])
@@ -1237,20 +1251,24 @@ def cprobs_repptis_istar2(pes, interfaces, n_int=None):
 
         # pprint(plocistar)
         print(f"Ensemble {i} ([{i-1}*]):")
+        print("    --- LMR/LML ---")
         print(f"REPPTIS pLMR approx: {plocistar[i]['LMR'][0]} (vs. REPPTIS = {plocrepptis[i]['LMR']}) with # weights = {plocistar[i]['LMR'][1]}")
         print(f"REPPTIS pLML fw approx: {plocistar[i]['LML'][0]} (vs. REPPTIS = {plocrepptis[i]['LML']}) with # weights = {plocistar[i]['LML'][1]}")
         print("    START TURNS:")
         for st, p in enumerate(plocistar[i]["startLMLR"]):
             print(f"     -> Conditional pLMR/pLML with start turn at interface {st}: pLML={p[0]} <-> pL{st}MR {p[1]} with sum {np.sum(p[:-1])} \n    with # weights {p[-1]}")
+        print("    END TURNS:")
         for st, p in enumerate(plocistar[i]["endLMLR"]):
-            print(f"     -> Conditional pLMR/pLML with LMR end turn at interface {st+i}: pLML={p[0]} <-> pLMR{st+i}={p[1]} with sum {np.sum(p[:-1])} \nwith # weights {p[-1]}")
+            print(f"     -> Conditional pLMR/pLML with LMR end turn at interface {st+i}: pLML={p[0]} <-> pLMR{st+i}={p[1]} with sum {np.sum(p[:-1])} \n    with # weights {p[-1]}")
+        print("    --- RML/RMR ---")
         print(f"REPPTIS pRML approx: {plocistar[i]['RML'][0]} (vs. REPPTIS = {plocrepptis[i]['RML']}) with # weights = {plocistar[i]['RML'][1]}")
         print(f"REPPTIS pRMR bw approx: {plocistar[i]['RMR'][0]} with # weights = {plocistar[i]['RMR'][1]}")
-        print("    END TURNS:")
+        print("    START TURNS:")
         for st, p in enumerate(plocistar[i]["startRMRL"]):
             print(f"     -> Conditional pRML/pRMR with start turn at interface {st}: pRMR={p[0]} <-> pR{st}ML {p[1]} with sum {np.sum(p[:-1])} \n    with # weights {p[-1]}")
+        print("    END TURNS:")
         for st, p in enumerate(plocistar[i]["endLMLR"]):
-            print(f"     -> Conditional pRML/pRMR with RML end turn at interface {i-st-2}: pRMR={p[0]} <-> pRML{i-st-2}={p[1]} with sum {np.sum(p[:-1])} \nwith # weights {p[-1]}")
+            print(f"     -> Conditional pRML/pRMR with RML end turn at interface {st}: pRMR={p[0]} <-> pRML{st}={p[1]} with sum {np.sum(p[:-1])} \nwith # weights {p[-1]}")
         print(f"Full conditional turn probability matrix for ensemble {i}:")
         print(np.array_str(plocistar[i]["full"], precision=5, suppress_small=True))
         print("\n")
@@ -1388,3 +1406,160 @@ def plot_rv_comp(pes, interfaces, n_repptis, n_staple, pe_idxs=None):
                     count += 1
     fig.legend()
     fig.show()
+
+def display_data(pes, interfaces, n_int = None, weights = None):
+    masks = {}
+    w_path = {}
+    X = {}
+    if n_int is None:
+        n_int = len(pes)
+    for i, pe in enumerate(pes):
+        print(10*'-')
+        print(f"ENSEMBLE [{i-1 if i>0 else 0}{"*" if i>0 else "-"}] | ID {i}")
+        print(10*'-')
+        # Get the lmr masks, weights, ACCmask, and loadmask of the paths
+        masks[i] = get_lmr_masks(pe)
+        if weights is None:
+            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, n_int, ACCFLAGS, REJFLAGS, verbose = True)
+        else:
+            w = weights[i]
+        accmask = get_flag_mask(pe, "ACC")
+        loadmask = get_generation_mask(pe, "ld")
+        msg = f"Ensemble {pe.name[-3:]} has {len(w)} paths.\n The total "+\
+                    f"weight of the ensemble is {np.sum(w)}\nThe total amount of "+\
+                    f"accepted paths is {np.sum(accmask)}\nThe total amount of "+\
+                    f"load paths is {np.sum(loadmask)}"
+        logger.debug(msg)
+
+        w_path[i] = np.zeros([len(interfaces),len(interfaces)])
+        X[i] = np.zeros([len(interfaces),len(interfaces)])
+        X_val = compute_weight_matrix(pe, i, interfaces, tr = False, weights=weights)
+
+        # 1. Displaying raw data, only unweighted X_ijk
+        # 2. Displaying weighted data W_ijk
+        # 3. Displaying weighted data with time reversal
+        no_w = np.ones_like(w)
+        for j in range(len(interfaces)):
+            for k in range(len(interfaces)):
+                if j == k:
+                        if i == 1 and j == 0:
+                            # np.logical_and(pe.lambmaxs >= interfaces[1], pe.lambmaxs <= interfaces[2])
+                            w_path[i][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask]))
+                            X[i][j][k] = np.sum(select_with_masks(no_w, [masks[i]["LML"], accmask, ~loadmask]))
+                                #   + np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+                            pass
+                        else:
+                            w_path[i][j][k] = 0
+                elif j < k:
+                    if j == 0 and k == 1:
+                        if i != 2:
+                            # dir_mask = np.logical_or(pe.dirs == 1, masks[i]["LML"])
+                            dir_mask = pe.dirs == 1
+                        elif i == 2:
+                            dir_mask = masks[i]["LML"]
+                    elif j == len(interfaces)-2 and k == len(interfaces)-1:
+                        dir_mask = masks[i]["RMR"]
+                    else:
+                        dir_mask = pe.dirs == 1
+                        # dir_mask = np.logical_or(pe.dirs == 1, masks[i]["LML"])
+                    if j == 0:
+                        start_cond = pe.lambmins <= interfaces[j]
+                    else: 
+                        start_cond = np.logical_and(pe.lambmins <= interfaces[j], pe.lambmins >= interfaces[j-1])
+                    if k == len(interfaces)-1:
+                        end_cond = pe.lambmaxs >= interfaces[k]
+                    else: 
+                        end_cond = np.logical_and(pe.lambmaxs >= interfaces[k], pe.lambmaxs <= interfaces[k+1])
+                
+                    w_path[i][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+                    X[i][j][k] = np.sum(select_with_masks(no_w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+            
+                else:
+                    if j == 1 and k == 0:
+                        if i != 2:
+                            dir_mask = pe.dirs == -1
+                            # dir_mask = np.logical_or(pe.dirs == -1, masks[i]["RMR"])
+                        elif i == 2:
+                            dir_mask = masks[i]["LML"]
+                    elif j == len(interfaces)-2 and k == len(interfaces)-1:
+                        dir_mask = masks[i]["RMR"]
+                    else:
+                        dir_mask = pe.dirs == -1
+                        # dir_mask = np.logical_or(pe.dirs == -1, masks[i]["RMR"])
+                    if k == 0:
+                        start_cond = pe.lambmins <= interfaces[k]
+                    else: 
+                        start_cond = np.logical_and(pe.lambmins <= interfaces[k], pe.lambmins >= interfaces[k-1])
+                    if j == len(interfaces)-1:
+                        end_cond = pe.lambmaxs >= interfaces[j]
+                    else: 
+                        end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
+
+                    w_path[i][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+                    X[i][j][k] = np.sum(select_with_masks(no_w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+        
+        print("1. Raw data: unweighted X matrices")
+        print(f"X[{i}] = ")
+        pprint(X[i])
+        print("\n2. Weighted data: including high acceptance weights")
+        print(f"W[{i}] = ")
+        pprint(w_path[i])
+        # pprint(X_val)
+        print(f"sum weights ensemble {i}=", np.sum(w_path[i]))
+        print("\n3. Weighted data with time reversal")
+        print(f"TR W[{i}] = ")
+        pprint((w_path[i]+w_path[i].T)/2.0)
+        assert np.all(w_path[i] == X_val)
+
+    print(10*'='+'\n')
+    print(10*'-')
+    print(f"ALL ENSEMBLES COMBINED")
+    print(10*'-')
+    W = np.zeros_like(w_path[1])
+    for j in range(len(interfaces)):
+        for k in range(len(interfaces)):
+            W[j][k] = np.sum([w_path[i][j][k] for i in range(n_int)])
+    print("4. Weights of all ensembles combined (sum), no TR")
+    pprint(W)
+    print("5. Weights of all ensembles combined (sum), with TR")
+    pprint((W+W.T)/2.)
+
+    return X, w_path, W
+
+
+def memory_analysis(w_path):
+    q = np.ones([w_path[0].shape[0], w_path[0].shape[0]])
+    for i in range(w_path[0].shape[0]):
+        for k in range(w_path[0].shape[0]):
+            counts = np.zeros(2)
+            if i == k:
+                if i == 0:
+                    q[i][k] = 1
+                    continue
+                else:
+                    q[i][k] = 0
+                    continue
+            elif i == 0 and k == 1:
+                q[i][k] = (np.sum(w_path[i+1][i][k:])) / (np.sum(w_path[i+1][i][k-1:]))
+                continue
+            elif i < k:
+                for pe_i in range(i+1,k+1):
+                    if pe_i > w_path[0].shape[0]-1:
+                        break
+                    # if k-i > 2 and pe_i >= k-1:
+                    #     continue
+                    counts += [np.sum(w_path[pe_i][i][k:]), np.sum(w_path[pe_i][i][k-1:])]
+                    print(pe_i-1,i,k,np.sum(w_path[pe_i][i][k:])/np.sum(w_path[pe_i][i][k-1:]), np.sum(w_path[pe_i][i][k-1:]))
+            elif i > k:
+                for pe_i in range(k+2,i+2):
+                    if pe_i > w_path[0].shape[0]-1:
+                        break
+                    # if i-k > 2 and pe_i <= k+3:
+                    #     continue
+                    counts += [np.sum(w_path[pe_i][i][:k+1]), np.sum(w_path[pe_i][i][:k+2])]
+                    print (pe_i-1,i,k,np.sum(w_path[pe_i][i][:k+1])/np.sum(w_path[pe_i][i][:k+2]), np.sum(w_path[pe_i][i][:k+2]))
+
+            q[i][k] = counts[0] / counts[1] if counts[1] > 0 else 0
+            if 0 in counts:
+                print(q[i][k], counts, i,k)
+    print("q: ", q)
