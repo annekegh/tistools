@@ -750,14 +750,14 @@ def get_globall_probs(ps):
         Float per ensemble i. Represents the TIS probability of crossing i+1
     """
 
-    Pplus, Pmin, Pcross = [1.], [1.], [1., ps[0]['LMR']]
+    Pplus, Pmin, Pcross = [1.], [1.], [1., ps[1]['LMR']]
     for i, p in enumerate(ps):
-        if i == 0: continue  # This is [0^{\pm}'], so skip
+        if i <= 1: continue  # This is [0^{\pm}'], so skip
         # Calculate the global crossing probabilities
         Pplus.append((p['LMR']*Pplus[-1])/(p['LMR']+p['LML']*Pmin[-1]))
         Pmin.append((p['RML']*Pmin[-1])/(p['LMR']+p['LML']*Pmin[-1]))
         # Calculate the TIS probabilities
-        Pcross.append(ps[0]['LMR']*Pplus[-1])
+        Pcross.append(ps[1]['LMR']*Pplus[-1])
     return Pmin, Pplus, Pcross
 
 def get_global_probz(pmps, pmms, ppps, ppms):
