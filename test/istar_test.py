@@ -10,7 +10,7 @@ from tistools import set_tau_distrib, set_tau_first_hit_M_distrib, cross_dist_di
 from tistools import ACCFLAGS, REJFLAGS
 
 from tistools import get_lmr_masks, get_generation_mask, get_flag_mask, select_with_masks
-from tistools import unwrap_by_weight, running_avg_local_probs, get_local_probs, get_globall_probs, get_global_probz
+from tistools import unwrap_by_weight, running_avg_local_probs, get_local_probs, get_globall_probs, get_global_probz, construct_M_milestoning, global_cross_prob
 
 from pprint import pprint    # to print the vars of the pathensemble object
 # Created file and added transition function
@@ -948,11 +948,17 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr = False, weights = N
                             # dir_mask = np.logical_or(pe.dirs == 1, masks[i]["LML"])
                             dir_mask = pe.dirs == 1
                         elif i == 1:
-                            dir_mask = np.full_like(pe.dirs, True)
+                            # dir_mask = pe.dirs == 1
+                            # dir_mask = np.full_like(pe.dirs, True)
+                            dir_mask = masks[i]["LMR"]      # Distinction for 0 -> 1 paths in [0*] 
+                        elif i == 2:
+                            # dir_mask = pe.dirs == 1
+                            dir_mask = np.full_like(pe.dirs, False)     # For now no distinction yet for [1*] paths: classify all paths as 1 -> 0. Later: check if shooting point comes before or after crossing lambda_1/lambda_max
                         else:
                             dir_mask = np.full_like(pe.dirs, False)
                     elif j == len(interfaces)-2 and k == len(interfaces)-1:
-                        dir_mask = masks[i]["RMR"]
+                        dir_mask = pe.dirs == 1
+                        # dir_mask = masks[i]["RMR"]
                     else:
                         dir_mask = pe.dirs == 1
                         # dir_mask = np.logical_or(pe.dirs == 1, masks[i]["LML"])
@@ -971,11 +977,17 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr = False, weights = N
                         if i > 2:
                             dir_mask = pe.dirs == -1
                             # dir_mask = np.logical_or(pe.dirs == -1, masks[i]["RMR"])
+                        elif i == 1:
+                            # dir_mask = pe.dirs == -1
+                            dir_mask = masks[i]["RML"]      # Distinction for 1 -> 0 paths in [0*] 
+                            # dir_mask = np.full_like(pe.dirs, False)
                         elif i == 2:
-                            dir_mask = np.full_like(pe.dirs, True)
+                            # dir_mask = pe.dirs == -1
+                            dir_mask = np.full_like(pe.dirs, True)     # For now no distinction yet for [1*] paths: classify all paths as 1 -> 0. Later: check if shooting point comes before or after crossing lambda_1/lambda_max
                         else:
                             dir_mask = np.full_like(pe.dirs, False)
                     elif j == len(interfaces)-2 and k == len(interfaces)-1:
+                        # dir_mask = pe.dirs == -1
                         dir_mask = masks[i]["RMR"]
                     else:
                         dir_mask = pe.dirs == -1
@@ -1041,11 +1053,15 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr = False, weights = N
     #             X[i][j][k] = w_path[i][j][k] + w_path[i][k][j]
     
     X = w_path
-
-    if tr:
-        for i in range(1,len(pes)):
-            X[i] += X[i].T
-
+    for i in range(len(interfaces)):
+        if tr:
+            if i == 2 and X[i][0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
+                X[i][1, 0] *= 2     # Time reversal needs to be adjusted to compensate for this
+                X[i] += X[i].T          # Will not be needed anymore once LML paths are separated in 0 -> 1 and 1 -> 0.
+        else:
+            if i == 2 and X[i][0, 1] == 0:
+                X[i][1, 0] /= 2
+                X[i][0, 1] = X[2][1, 0]
     return X
 
 
@@ -1082,11 +1098,13 @@ def compute_weight_matrix(pe, pe_id, interfaces, n_int=None, tr = False,weights 
                         X_path[j][k] = 0  
             elif j < k:
                 if j == 0 and k == 1:
-                    if pe_id != 2:
+                    if pe_id > 2:
                         # dir_mask = np.logical_or(pe.dirs == 1, masks[i]["LML"])
                         dir_mask = pe.dirs == 1
-                    elif pe_id == 2:
-                        dir_mask = masks["LML"]
+                    elif pe_id == 1:
+                        dir_mask = np.full_like(pe.dirs, True)
+                    else:
+                        dir_mask = np.full_like(pe.dirs, False)
                 elif j == len(interfaces)-2 and k == len(interfaces)-1:
                     dir_mask = masks["RMR"]
                 else:
@@ -1100,15 +1118,15 @@ def compute_weight_matrix(pe, pe_id, interfaces, n_int=None, tr = False,weights 
                     end_cond = pe.lambmaxs >= interfaces[k]
                 else: 
                     end_cond = np.logical_and(pe.lambmaxs >= interfaces[k], pe.lambmaxs <= interfaces[k+1])
-            
-                X_path[j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
             else:
                 if j == 1 and k == 0:
-                    if pe_id != 2:
+                    if pe_id > 2:
                         dir_mask = pe.dirs == -1
                         # dir_mask = np.logical_or(pe.dirs == -1, masks[i]["RMR"])
                     elif pe_id == 2:
-                        dir_mask = masks["LML"]
+                        dir_mask = np.full_like(pe.dirs, False) # don't count to prevent them from being included in TR, p_1,0 is always 1 anyway
+                    else:
+                        dir_mask = np.full_like(pe.dirs, False)
                 elif j == len(interfaces)-2 and k == len(interfaces)-1:
                     dir_mask = masks["RMR"]
                 else:
@@ -1127,6 +1145,8 @@ def compute_weight_matrix(pe, pe_id, interfaces, n_int=None, tr = False,weights 
     print(f"sum weights ensemble {pe_id}=", np.sum(X_path))
 
     if tr:
+        if X_path[1, 0] == 0:
+            X_path[0, 1] *= 2
         X_path = X_path + X_path.T
 
     return X_path
@@ -1164,10 +1184,11 @@ def get_weights_staple(pe_i, flags,gen,ptypes,n_pes,ACCFLAGS,REJFLAGS,verbose=Tr
             acc_index = i
             acc_w = 1
             accepted += 1
-            if gg == 'sh' and \
+            if gg == 'sh' and n_pes > 3 and\
                 ((pe_i == 2 and ptype == "RMR") or\
                 (pe_i == n_pes-1 and ptype == "LML") or\
                 (2 < pe_i < n_pes-1 and ptype in ["LML", "RMR"])) :
+            # if gg == 'sh' and ptype in ["LML", "RMR"] :
                 prev_ha = 2
             else:
                 prev_ha = 1
@@ -1563,8 +1584,19 @@ def display_data(pes, interfaces, n_int = None, weights = None):
                         if i > 2:
                             # dir_mask = np.logical_or(pe.dirs == 1, masks[i]["LML"])
                             dir_mask = pe.dirs == 1
+                        elif i == 1:
+                            # dir_mask = np.full_like(pe.dirs, True)
+                            dir_mask = masks[i]["LMR"]    # Distinction for 0 -> 1 paths in [0*] 
+                        elif i == 2:
+                            # dir_mask = pe.dirs == 1
+                            dir_mask = np.full_like(pe.dirs, False)  # For now no distinction yet for [1*] paths: classify all paths as 1 -> 0. Later: check if shooting point comes before or after crossing lambda_1/lambda_max
                         else:
-                            dir_mask = pe.dirs < 2
+                            dir_mask = np.full_like(pe.dirs, False)
+                    elif j == 0 and k == 2:
+                        if i == 1:
+                            dir_mask = masks[i]["LMR"]
+                        else: 
+                            dir_mask = pe.dirs == 1
                     elif j == len(interfaces)-2 and k == len(interfaces)-1:
                         dir_mask = masks[i]["RMR"]
                     else:
@@ -1588,6 +1620,11 @@ def display_data(pes, interfaces, n_int = None, weights = None):
                         if i > 2:
                             dir_mask = pe.dirs == -1
                             # dir_mask = np.logical_or(pe.dirs == -1, masks[i]["RMR"])
+                        elif i == 1:
+                            # dir_mask = pe.dirs == -1
+                            dir_mask = masks[i]["RML"]    # Distinction for 1 -> 0 paths in [0*]
+                        elif i == 2:
+                            dir_mask = np.full_like(pe.dirs, True)   # For now no distinction yet for [1*] paths: classify all paths as 1 -> 0. Later: check if shooting point comes before or after crossing lambda_1/lambda_max
                         else:
                             dir_mask = np.full_like(pe.dirs, False)
                     elif j == len(interfaces)-2 and k == len(interfaces)-1:
@@ -1634,14 +1671,22 @@ def display_data(pes, interfaces, n_int = None, weights = None):
                 print(f"The weighted data significantly differs from the raw path count for paths that go from {idx[0]} to {idx[1]}. Counts: {C[i][idx[0]][idx[1]]} vs. weights: {X[i][idx[0]][idx[1]]} --> difference in fraction:{difffrac[idx[0], idx[1]]}. The number of new MD paths is {C_md[i][idx[0]][idx[1]]}")
         print("\n3a. Weighted data with time reversal")
         print(f"TR X[{i}] = ")
-        pprint((X[i]+X[i].T)/2.0)
+        X_tr = (X[i]+X[i].T)/2.0
+        if i == 2 and X[i][0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
+            X_tr[1, 0] *= 2          # Time reversal needs to be adjusted to compensate for this
+            X_tr[0, 1] *= 2  
+        pprint(X_tr)
         if len(idx_tr) > 0:
             print("[WARNING]")
             for idx in idx_tr:
                 print(f"The reverse equivalent paths are significantly different for paths going from {idx[0]} to {idx[1]}. Relative difference: {tr_diff[idx[0],idx[1]]}. Weights L->R path: {X[i][idx[0]][idx[1]]} | Weights R->L path: {X[i][idx[1]][idx[0]]}")
         print("\n3b. Unweighted data with time reversal")
         print(f"TR C[{i}] = ")
-        pprint((C[i]+C[i].T)/2.0)
+        C_tr = (C[i]+C[i].T)/2.0
+        if i == 2 and C[i][0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
+            C_tr[1, 0] *= 2          # Time reversal needs to be adjusted to compensate for this
+            C_tr[0, 1] *= 2  
+        pprint(C_tr)
         # assert np.all(X[i] == X_val)
 
     print(10*'='+'\n')
@@ -1655,7 +1700,11 @@ def display_data(pes, interfaces, n_int = None, weights = None):
     print("4. Weights of all ensembles combined (sum), no TR")
     pprint(W)
     print("5. Weights of all ensembles combined (sum), with TR")
-    pprint((W+W.T)/2.)
+    W_tr = (W+W.T)/2.
+    if W[1,0] == 0:
+        W_tr[0,1] *= 1 
+        W_tr[1,0] *= 1
+    pprint(W_tr)
 
     return C, X, W
 
@@ -1673,6 +1722,8 @@ def memory_analysis(w_path, tr = False):
     q_k = np.zeros([2, w_path[0].shape[0]-1, w_path[0].shape[0], w_path[0].shape[0]])
     for ens in range(1, w_path[0].shape[0]):
         if tr:
+            # if w_path[ens][1,0] == 0:
+            #     w_path[ens][0,1] *= 2 
             w_path[ens] += w_path[ens].T
         for i in range(w_path[ens].shape[0]):
             for k in range(w_path[ens].shape[0]):
@@ -1733,6 +1784,7 @@ def memory_analysis(w_path, tr = False):
                     continue
             elif i == 0 and k == 1:
                 q_tot[0][i][k] = (np.sum(w_path[i+1][i][k:])) / (np.sum(w_path[i+1][i][k-1:]))
+                q_tot[1][i][k] = np.sum(w_path[i+1][i][k-1:])
                 continue
             elif i < k:
                 for pe_i in range(i+1,k+1):
@@ -1773,16 +1825,16 @@ def memory_analysis(w_path, tr = False):
 
     return(q_k, q_tot)
 
-def ploc_memory(pathensembles, interfaces):
+def ploc_memory(pathensembles, interfaces, tr=True):
     plocs = {}
     plocs["mlst"] = [1.,]
     plocs["apptis"] = [1.,]
     repptisploc = []
 
-    w = compute_weight_matrices(pathensembles, interfaces, len(interfaces), True)
-    p = get_transition_probzz(w)
-    # pi = get_simple_probs(wi)
-    M = construct_M_istar(p, 2*len(interfaces), len(interfaces))
+    # w = compute_weight_matrices(pathensembles, interfaces, len(interfaces), tr=tr)
+    # p = get_transition_probzz(w)
+    # # pi = get_simple_probs(wi)
+    # M = construct_M_istar(p, 2*len(interfaces), len(interfaces))
     
     for i, pe in enumerate(pathensembles):
         # REPPTIS p_loc
@@ -1792,11 +1844,16 @@ def ploc_memory(pathensembles, interfaces):
         if i == 1:
             plocs["mlst"].append(repptisploc[i]["LMR"]*plocs["mlst"][-1])
         elif i > 1:
-            plocs["mlst"].append(repptisploc[i]["2R"]*plocs["mlst"][-1])
+            pmin = [repptisploc[r]["2L"] for r in range(1,len(repptisploc))]
+            pplus = [repptisploc[r]["2R"] for r in range(1,len(repptisploc))]
+            Milst = construct_M_milestoning(pmin, pplus, len(interfaces[:i+1]))
+            z1, z2, y1, y2 = global_cross_prob(Milst)
+            plocs["mlst"].append(y1[0][0])
+            # plocs["mlst"].append(repptisploc[i]["2R"]*plocs["mlst"][-1])
 
         # APPTIS p_loc
         if i < len(pathensembles)-1:
-            wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], len(interfaces), True)
+            wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], tr=tr)
             pi = get_transition_probzz(wi)
             # pi = get_simple_probs(wi)
             Mi = construct_M_istar(pi, max(4, 2*len(interfaces[:i+2])), len(interfaces[:i+2]))
