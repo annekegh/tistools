@@ -953,7 +953,7 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr = False, weights = N
                             dir_mask = masks[i]["LMR"]      # Distinction for 0 -> 1 paths in [0*] 
                         elif i == 2:
                             # dir_mask = pe.dirs == 1
-                            dir_mask = np.full_like(pe.dirs, False)     # For now no distinction yet for [1*] paths: classify all paths as 1 -> 0. Later: check if shooting point comes before or after crossing lambda_1/lambda_max
+                            dir_mask = np.full_like(pe.dirs, True)     # For now no distinction yet for [1*] paths: classify all paths as 1 -> 0. Later: check if shooting point comes before or after crossing lambda_1/lambda_max
                         else:
                             dir_mask = np.full_like(pe.dirs, False)
                     elif j == len(interfaces)-2 and k == len(interfaces)-1:
@@ -1001,7 +1001,7 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr = False, weights = N
                     else: 
                         end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
 
-                    w_path[i][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
+                    w_path[i][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask])) 
 
             # color = next(ax._get_lines.prop_cycler)['color']
         #         if j == 1 and k == 3 and pe.orders is not None:
@@ -1057,11 +1057,7 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr = False, weights = N
         if tr:
             if i == 2 and X[i][0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
                 X[i][1, 0] *= 2     # Time reversal needs to be adjusted to compensate for this
-                X[i] += X[i].T          # Will not be needed anymore once LML paths are separated in 0 -> 1 and 1 -> 0.
-        else:
-            if i == 2 and X[i][0, 1] == 0:
-                X[i][1, 0] /= 2
-                X[i][0, 1] = X[2][1, 0]
+            X[i] += X[i].T          # Will not be needed anymore once LML paths are separated in 0 -> 1 and 1 -> 0.
     return X
 
 
@@ -1589,7 +1585,7 @@ def display_data(pes, interfaces, n_int = None, weights = None):
                             dir_mask = masks[i]["LMR"]    # Distinction for 0 -> 1 paths in [0*] 
                         elif i == 2:
                             # dir_mask = pe.dirs == 1
-                            dir_mask = np.full_like(pe.dirs, False)  # For now no distinction yet for [1*] paths: classify all paths as 1 -> 0. Later: check if shooting point comes before or after crossing lambda_1/lambda_max
+                            dir_mask = np.full_like(pe.dirs, True)  # For now no distinction yet for [1*] paths: classify all paths as 1 -> 0. Later: check if shooting point comes before or after crossing lambda_1/lambda_max
                         else:
                             dir_mask = np.full_like(pe.dirs, False)
                     elif j == 0 and k == 2:
@@ -1611,9 +1607,9 @@ def display_data(pes, interfaces, n_int = None, weights = None):
                     else: 
                         end_cond = np.logical_and(pe.lambmaxs >= interfaces[k], pe.lambmaxs <= interfaces[k+1])
                 
-                    X[i][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
-                    C[i][j][k] = np.sum(select_with_masks(no_w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
-                    C_md[i][j][k] = np.sum(select_with_masks(no_w, [start_cond, end_cond, dir_mask, md_mask, accmask, ~loadmask]))
+                    X[i][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask])) 
+                    C[i][j][k] = np.sum(select_with_masks(no_w, [start_cond, end_cond, dir_mask, accmask, ~loadmask])) 
+                    C_md[i][j][k] = np.sum(select_with_masks(no_w, [start_cond, end_cond, dir_mask, md_mask, accmask, ~loadmask])) 
 
                 else:
                     if j == 1 and k == 0:
@@ -1641,9 +1637,9 @@ def display_data(pes, interfaces, n_int = None, weights = None):
                     else: 
                         end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
 
-                    X[i][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
-                    C[i][j][k] = np.sum(select_with_masks(no_w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
-                    C_md[i][j][k] = np.sum(select_with_masks(no_w, [start_cond, end_cond, dir_mask, md_mask, accmask, ~loadmask]))
+                    X[i][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask])) 
+                    C[i][j][k] = np.sum(select_with_masks(no_w, [start_cond, end_cond, dir_mask, accmask, ~loadmask])) 
+                    C_md[i][j][k] = np.sum(select_with_masks(no_w, [start_cond, end_cond, dir_mask, md_mask, accmask, ~loadmask])) 
         
         frac_unw = C[i]/np.sum(C[i])
         frac_w = X[i]/np.sum(X[i])
@@ -1672,9 +1668,9 @@ def display_data(pes, interfaces, n_int = None, weights = None):
         print("\n3a. Weighted data with time reversal")
         print(f"TR X[{i}] = ")
         X_tr = (X[i]+X[i].T)/2.0
-        if i == 2 and X[i][0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
-            X_tr[1, 0] *= 2          # Time reversal needs to be adjusted to compensate for this
-            X_tr[0, 1] *= 2  
+        # if i == 2 and X[i][0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
+        #     X_tr[1, 0] *= 2          # Time reversal needs to be adjusted to compensate for this
+        #     X_tr[0, 1] *= 2  
         pprint(X_tr)
         if len(idx_tr) > 0:
             print("[WARNING]")
@@ -1683,9 +1679,9 @@ def display_data(pes, interfaces, n_int = None, weights = None):
         print("\n3b. Unweighted data with time reversal")
         print(f"TR C[{i}] = ")
         C_tr = (C[i]+C[i].T)/2.0
-        if i == 2 and C[i][0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
-            C_tr[1, 0] *= 2          # Time reversal needs to be adjusted to compensate for this
-            C_tr[0, 1] *= 2  
+        # if i == 2 and C[i][0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
+        #     C_tr[1, 0] *= 2          # Time reversal needs to be adjusted to compensate for this
+        #     C_tr[0, 1] *= 2  
         pprint(C_tr)
         # assert np.all(X[i] == X_val)
 
@@ -1825,7 +1821,7 @@ def memory_analysis(w_path, tr = False):
 
     return(q_k, q_tot)
 
-def ploc_memory(pathensembles, interfaces, tr=True):
+def ploc_memory(pathensembles, interfaces, trr=True):
     plocs = {}
     plocs["mlst"] = [1.,]
     plocs["apptis"] = [1.,]
@@ -1853,7 +1849,7 @@ def ploc_memory(pathensembles, interfaces, tr=True):
 
         # APPTIS p_loc
         if i < len(pathensembles)-1:
-            wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], tr=tr)
+            wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], tr=trr)
             pi = get_transition_probzz(wi)
             # pi = get_simple_probs(wi)
             Mi = construct_M_istar(pi, max(4, 2*len(interfaces[:i+2])), len(interfaces[:i+2]))
