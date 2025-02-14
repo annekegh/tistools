@@ -10,7 +10,7 @@ from tistools import set_tau_distrib, set_tau_first_hit_M_distrib, cross_dist_di
 from tistools import ACCFLAGS, REJFLAGS
 
 from tistools import get_lmr_masks, get_generation_mask, get_flag_mask, select_with_masks
-from tistools import unwrap_by_weight, running_avg_local_probs, get_local_probs, get_globall_probs, get_global_probz, construct_M_milestoning, global_cross_prob
+from tistools import unwrap_by_weight, running_avg_local_probs, get_local_probs, get_global_probs_from_dict, get_global_probs_from_local, construct_M_milestoning, global_cross_prob
 
 from pprint import pprint    # to print the vars of the pathensemble object
 # Created file and added transition function
@@ -1857,7 +1857,7 @@ def ploc_memory(pathensembles, interfaces, trr=True):
             plocs["apptis"].append(y1[0][0])
 
 
-    _, _, plocs["repptis"] = get_globall_probs(repptisploc)
+    _, _, plocs["repptis"] = get_global_probs_from_dict(repptisploc)
 
     print("Milestoning p_loc: ", plocs["mlst"])
     print("REPPTIS p_loc: ", plocs["repptis"])
