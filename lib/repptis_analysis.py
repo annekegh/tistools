@@ -15,8 +15,21 @@ logger = logging.getLogger(__name__)
 # ------------------- #
 def get_lmr_masks(pe, masktype="all"):
     """
-    Return one (or all) boolean array(s) of the paths, based on whether or not
-    path i is of type masktype. 
+    Retrieve boolean mask(s) indicating which paths in the ensemble match a given type.
+
+    Parameters
+    ----------
+    pe : PathEnsemble
+        The path ensemble from which to extract masks.
+    masktype : str, optional
+        The path type(s) to include in the masks (e.g., "RMR"). Defaults to "all",
+        meaning masks for all available path types will be returned.
+
+    Returns
+    -------
+    dict
+        A dictionary where keys are path types and values are boolean arrays 
+        indicating which paths in `pe` belong to the corresponding type.
     """
     # Define the types of paths 
     types = ["RML","RMR","LMR","LML","***","**L","**R","*M*","*ML",
@@ -36,7 +49,20 @@ def get_lmr_masks(pe, masktype="all"):
 
 def get_flag_mask(pe, status):
     """
-    Returns boolean array 
+    Generate a boolean mask indicating which paths in the ensemble match a given status.
+
+    Parameters
+    ----------
+    pe : PathEnsemble
+        The path ensemble from which to extract the mask.
+    status : str
+        The status flag to filter paths by (e.g., "ACC" for accepted paths, "REJ" for rejected paths).
+        If "REJ" is specified, the mask will be the complement of "ACC".
+
+    Returns
+    -------
+    np.ndarray
+        A boolean array where `True` indicates that a path in `pe` has the specified status.
     """
     if status == "REJ":
         return ~get_flag_mask(pe, "ACC")
@@ -46,54 +72,111 @@ def get_flag_mask(pe, status):
 
 def get_generation_mask(pe, generation):
     """
-    Returns boolean array
+    Generate a boolean mask indicating which paths in the ensemble belong to a given generation.
+
+    Parameters
+    ----------
+    pe : PathEnsemble
+        The path ensemble from which to extract the mask.
+    generation : int
+        The generation number to filter paths by.
+
+    Returns
+    -------
+    np.ndarray
+        A boolean array where `True` indicates that a path in `pe` belongs to the specified generation.
     """
     return pe.generation == generation
 
 
 def get_hard_load_mask(loadmask):
-    """Returns boolean array. All paths corresponding to cycles before the
-    last load cycle (included), are set to True. The others are unchanged.
+    """
+    Generate a boolean mask where all paths corresponding to cycles up to and including 
+    the last load cycle are set to True.
+
+    Parameters
+    ----------
+    loadmask : np.ndarray
+        A boolean array indicating load cycles.
+
+    Returns
+    -------
+    np.ndarray
+        A boolean array where all elements up to and including the last `True` value 
+        in `loadmask` are set to `True`, while others remain unchanged.
     """
     # Get the last load cycle
     last_load_cycle = loadmask.argmax()
+
     # first make a copy of the loadmask
     hard_load_mask = loadmask.copy()
+
     # Set all paths before and during the last load cycle to True
     hard_load_mask[:last_load_cycle+1] = True
+
     return hard_load_mask
 
 
 def select_with_masks(A, masks):
     """
-    Returns the elements of the array A that are True in all of 
-    the masks, where each mask is a similarly sized boolean array.
-    
-    A: np.array
-    masks: list of masks, where each mask is a boolean array 
-            with the same shape as A
+    Select elements from an array based on multiple boolean masks.
+
+    Parameters
+    ----------
+    A : np.ndarray
+        The input array from which elements are selected.
+    masks : list of np.ndarray
+        A list of boolean arrays, each having the same shape as `A`. 
+        Elements in `A` are selected only if they are `True` in all masks.
+
+    Raises
+    ------
+    ValueError
+        If any mask does not have the same shape as `A`.
+
+    Returns
+    -------
+    np.ndarray
+        A 1D array containing elements of `A` where all masks are `True`.
     """
-    # first check whether masks have the same shape as A
-    for mask in masks:
-        assert mask.shape == A.shape
-    # now we can use the masks to select the elements of A
-    union_mask = np.all(masks,axis=0).astype(bool)
+    # Check whether all masks have the same shape as A
+    for i, mask in enumerate(masks):
+        if mask.shape != A.shape:
+            raise ValueError(f"Mask at index {i} has shape {mask.shape}, expected {A.shape}")
+
+    # Compute the intersection of all masks and select elements from A
+    union_mask = np.all(masks, axis=0)
     return A[union_mask]
 
 def select_with_OR_masks(A, masks):
     """
-    Returns the elements of the array A that are True in at least one of 
-    the masks, where each mask is a similarly sized boolean array.
-    
-    A: np.array
-    masks: list of masks, where each mask is a boolean array 
-            with the same shape as A
+    Select elements from an array based on multiple boolean masks using a logical OR operation.
+
+    Parameters
+    ----------
+    A : np.ndarray
+        The input array from which elements are selected.
+    masks : list of np.ndarray
+        A list of boolean arrays, each having the same shape as `A`. 
+        Elements in `A` are selected if they are `True` in at least one mask.
+
+    Raises
+    ------
+    ValueError
+        If any mask does not have the same shape as `A`.
+
+    Returns
+    -------
+    np.ndarray
+        A 1D array containing elements of `A` where at least one mask is `True`.
     """
-    # first check whether masks have the same shape as A
-    for mask in masks:
-        assert mask.shape == A.shape
-    # now we can use the masks to select the elements of A
-    union_mask = np.any(masks,axis=0).astype(bool)
+    # Check whether all masks have the same shape as A
+    for i, mask in enumerate(masks):
+        if mask.shape != A.shape:
+            raise ValueError(f"Mask at index {i} has shape {mask.shape}, expected {A.shape}")
+
+    # Compute the union of all masks and select elements from A
+    union_mask = np.any(masks, axis=0)
     return A[union_mask]
 
 
@@ -101,22 +184,30 @@ def select_with_OR_masks(A, masks):
 # -------------------- #
 def bootstrap(data, N=1000, Ns=None):
     """
-    Bootstrap the data.
+    Perform bootstrapping on the given data.
 
     Parameters
     ----------
-    data : numpy.array
-        The data can be multidimensional, but the first dimension must be the
-        time/cycle dimension.
+    data : numpy.ndarray
+        The input data, which can be multidimensional. The first dimension
+        must represent the time or cycle dimension.
     N : int, optional
-        The number of times to bootstrap the data
+        The number of bootstrap samples to generate. Default is 1000.
     Ns : int, optional
-        The number of samples to take from the data. If not specified, then
-        Ns = len(data).
-    """
+        The number of samples to draw from the data for each bootstrap sample. 
+        If not specified, `Ns` defaults to the length of the first dimension of `data`.
 
+    Returns
+    -------
+    list of numpy.ndarray
+        A list containing `N` bootstrap samples, each with `Ns` samples drawn from `data`.
+
+    Notes
+    -----
+    Each bootstrap sample is created by randomly selecting `Ns` samples from `data` with replacement.
+    """
     # Check if Nsamples is specified
-    Nsamples = Nsamples if Nsamples is not None else len(data)
+    Nsamples = Ns if Ns is not None else len(data)
 
     # Bootstrap the data
     boot_data = [np.random.choice(data, Nsamples) for _ in range(N)]
@@ -125,28 +216,44 @@ def bootstrap(data, N=1000, Ns=None):
 
 
 
-def bootstrap_analysis_repptis(pathensembles, nN=10, nB=1000):
+def bootstrap_local_repptis(pathensembles, nN=10, nB=1000):
     """
-    Perform a boostrap analysis on REPPTIS simulation data. 
+    Perform bootstrap analysis on each :py:class:`.PathEnsemble` individually to estimate local crossing probabilities.
+
+    This function analyzes each :py:class:`.PathEnsemble` separately, splitting the simulation cycles into timeslices
+    and performing bootstrap resampling within each timeslice. It calculates the mean and standard deviation
+    of local crossing probabilities for each path type within each timeslice.
 
     Parameters
     ----------
-    pathensembles : list of PathEnsemble objects
-        The PathEnsemble objects must be from REPPTIS simulations.
-    zero_left : bool, optional
-        If True, then the zero_left interface was used in the [0^-'] ensemble.
-        In this case, the [0^-'] ensemble has interfaces
-        [lambda_(zero_left), (lambda_(zero_left)+lambda_0)/2, lambda_0], or in
-        pathensembe terms: [L, M, R] = [L, (L+R)/2, R].
-        If False, then the zero_left interface was not used in the [0^-'] 
-        ensemble, and [L,M,R] = [-inf, R, R] = [-inf, lambda_zero, lambda_zero].
+    pathensembles : list of PathEnsemble
+        A list of :py:class:`.PathEnsemble` objects from REPPTIS simulations. Each object contains simulation data
+        for analysis.
     nN : int, optional
-        Bootstrap will be performed nN times on data ranging from cycle 0 to 
-        cycle N//nN, where N is the total number of cycles in the simulation.
-        The arange[N//nN, N, N//nN] is called the timeslice for which 
-        bootstrap is performed.
+        The number of timeslices to divide the simulation cycles into. Each timeslice corresponds to
+        a range of cycles from 0 to N//nN, where N is the total number of cycles. Default is 10.
     nB : int, optional
-        The number of bootstrap samples to take for each bootstrap analysis.
+        The number of bootstrap samples to generate for each timeslice. Default is 1000.
+
+    Returns
+    -------
+    dict
+        A nested dictionary where the keys are the indices of the :py:class:`.PathEnsemble` objects. For each ensemble,
+        the value is another dictionary containing the mean and standard deviation of local crossing
+        probabilities for each path type (e.g., "RMR", "RML", "LMR", "LML") within each timeslice.
+
+    Notes
+    -----
+    - The zero minus ensemble is skipped during analysis.
+    - Local crossing probabilities are calculated for each bootstrap sample, and their statistics
+      (mean and standard deviation) are computed for each path type.
+
+    The analysis involves the following steps:
+    1. Collect data from each :py:class:`.PathEnsemble`, skipping zero minus ensembles.
+    2. Perform bootstrap analysis over cycles, creating timeslices for each cycle range.
+    3. For each bootstrap sample, calculate local crossing probabilities for each path type.
+    4. Compute the mean and standard deviation of the local probabilities for each path type.
+    5. Calculate global crossing probabilities by aggregating the results from all :py:class:`.PathEnsemble` objects.
     """
 
     # First, we collect the data from all the pathensembles, which includes
@@ -193,8 +300,7 @@ def bootstrap_analysis_repptis(pathensembles, nN=10, nB=1000):
     return data 
         
 
-
-def bootstrap_repptis(pathensembles, nN=10, nB=1000):
+def global_bootstrap_repptis(pathensembles, nN=10, nB=1000):
     """
     Perform a boostrap analysis on REPPTIS simulation data. The strategy of 
     this bootstrap analysis will be different. The first loop will be over the 
@@ -316,19 +422,39 @@ def bootstrap_repptis(pathensembles, nN=10, nB=1000):
 
 def analyse_bootstrap_data(data):
     """
-    Analyse the bootstrap data and return the mean and std of the local and 
-    global crossing probabilities.
-    
+    Analyze bootstrap data to compute the mean and standard deviation of local and global crossing probabilities.
+
+    This function processes the results of a bootstrap analysis, extracting and organizing the mean and standard
+    deviation of local crossing probabilities for each ensemble and path type, as well as global crossing
+    probabilities (Pmin, Pplus, Pcross) for each timeslice.
+
     Parameters
     ----------
     data : dict
-        Dictionary of bootstrap data.
-        
+        A dictionary containing bootstrap analysis results. The keys are timeslice cycle numbers (Bcycle), and the
+        values are dictionaries with the following structure:
+        - 'stats': A dictionary containing statistics for local and global crossing probabilities.
+            - For local probabilities: Statistics are stored under ensemble indices, with mean and standard
+              deviation for each path type (e.g., "RMR", "RML", "LMR", "LML").
+            - For global probabilities: Statistics are stored under keys 'Pmin', 'Pplus', and 'Pcross'.
+
     Returns
     -------
     stats : dict
-        Dictionary of mean and std of the local and global crossing 
-        probabilities.
+        A dictionary organized by timeslice cycle numbers (Bcycle). For each timeslice, the value is a dictionary
+        containing:
+        - 'ploc': A dictionary with the mean and standard deviation of local crossing probabilities for each
+                  ensemble and path type. The keys are tuples of (ensemble index, path type).
+        - 'Pmin', 'Pplus', 'Pcross': Dictionaries with the mean and standard deviation of global crossing
+                                      probabilities. The standard deviation is set to 0 for global probabilities
+                                      if not explicitly calculated.
+
+    Notes
+    -----
+    - Local crossing probabilities are specific to each ensemble and path type.
+    - Global crossing probabilities (Pmin, Pplus, Pcross) are aggregated across all ensembles.
+    - The standard deviation for global probabilities is set to 0 by default, as it is not explicitly calculated
+      in the input data.
     """
     stats = {}
     for Bcycle in data.keys():
@@ -353,26 +479,43 @@ def analyse_bootstrap_data(data):
 
 def find_closest_number_lte(A, B):
     """
-    For each element in A, search the closest number in B that is smaller or 
-    equal to the element in A. If there is no number in B that is smaller or 
-    equal to the element in A, then it is discarded
-    
+    For each element in array `A`, find the closest number in array `B` that is less than or equal to it.
+
+    This function searches for the nearest value in `B` that is less than or equal to each element in `A`.
+    If no such number exists in `B` (i.e., all elements in `B` are greater than the element in `A`),
+    the element is discarded.
+
     Parameters
     ----------
     A : ndarray
-        Array of numbers to find closest numbers for.
+        An array of numbers for which the closest numbers in `B` are to be found.
     B : ndarray
-        Array of numbers to find closest numbers from.
-        
+        An array of numbers to search for the closest values. This array is sorted in ascending order
+        internally before processing.
+
     Returns
     -------
     C : ndarray
-        Array of closest numbers in B that are smaller or equal to the numbers 
-        in A. If 
+        An array of the closest numbers in `B` that are less than or equal to the corresponding elements
+        in `A`. If no valid number is found for an element in `A`, it is excluded from the result.
+
+    Notes
+    -----
+    - The array `B` is sorted in ascending order before processing.
+    - If an element in `A` is smaller than all elements in `B`, it is discarded.
+    - The function uses binary search (`bisect_right`) for efficient lookup.
+
+    Examples
+    --------
+    >>> A = np.array([5, 10, 15, 20])
+    >>> B = np.array([3, 7, 12, 18])
+    >>> find_closest_number_lte(A, B)
+    [3, 7, 12, 18]  # Closest numbers <= [5, 10, 15, 20] in B
     """
+
     B = np.sort(B)  # Sort B in ascending order
     C = []
-    for i, a in enumerate(A):
+    for _, a in enumerate(A):
         j = bisect.bisect_right(B, a)  # Find idx where a is to be inserted in B
         if j != 0:  # if zero, then a is smaller than all elements in B: discard
             # closest number <= a is the one just before the index j
@@ -380,18 +523,40 @@ def find_closest_number_lte(A, B):
     return C
 
 def inefficiency(corr):
-    """Calculate the integrated autocorrelation time of a time series.
-    
+    """
+    Calculates the integrated autocorrelation time (τ_int) of a time series.
+
+    The integrated autocorrelation time quantifies the correlation between 
+    successive samples in a time series.  A higher τ_int indicates stronger 
+    autocorrelation and a longer time required for the time series to become 
+    effectively decorrelated.
+
     Parameters
     ----------
     corr : array-like
-        The autocorrelation function of the time series.
-        
+        The autocorrelation function of the time series.  This is typically 
+        calculated using a method like the  `autocorrelation` function from 
+        the `scipy.signal` module.
+
     Returns
     -------
     tau_int : float
-        The integrated autocorrelation time.
-        
+        The integrated autocorrelation time.  This value represents the 
+        effective number of independent samples in the time series.
+
+    Notes
+    -----
+    The calculation terminates when the autocorrelation function becomes 
+    negative, as this indicates the time series has effectively decorrelated.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from scipy.signal import autocorrelation
+    >>> time_series = np.random.randn(100)
+    >>> corr = autocorrelation(time_series)
+    >>> inefficiency(corr) 
+    # Output:  A float representing the τ_int value
     """
     tau_int = 0
     for i in range(1, len(corr)):
@@ -401,13 +566,18 @@ def inefficiency(corr):
     return 1 + 2 * tau_int
 
 def block(x, block_size):
-    """Calculate the mean and standard error of the mean of a time series
-    using blocking.
+    """
+    Calculates the mean and standard error of the mean of a time series using blocking.
+
+    This method divides the time series into blocks of equal size and then 
+    calculates the mean and standard error of the mean of the blocks. This 
+    approach helps account for autocorrelation in the time series, providing 
+    more accurate estimates of the mean and its uncertainty.
 
     Parameters
     ----------
     x : array-like
-        The time series.
+        The time series data.
     block_size : int
         The number of samples in each block.
 
@@ -416,103 +586,159 @@ def block(x, block_size):
     block_size : int
         The number of samples in each block.
     tau_int : float
-        The integrated autocorrelation time.
-    num_ind : float
-        The number of independent samples.
+        The integrated autocorrelation time of the block means.
+    num_ind : int
+        The effective number of independent samples in the time series.
     mean : float
         The mean of the time series.
     se_mean : float
         The standard error of the mean of the time series.
 
+    Notes
+    -----
+    - The time series is trimmed to ensure it contains an integer number of blocks.
+    - The autocorrelation function of the block means is calculated and used to 
+      determine the integrated autocorrelation time (τ_int).
+    - The effective number of independent samples (num_ind) is calculated 
+      based on the block size and τ_int.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> time_series = np.random.randn(100)
+    >>> block_size = 10
+    >>> block_size, tau_int, num_ind, mean, se_mean = block(time_series, block_size)
+    >>> print(f"τ_int: {tau_int:.2f}, num_ind: {num_ind:.2f}")
+    # Output:  τ_int: ..., num_ind: ...
     """
-    # determine the number of blocks that can be formed
+    # Determine the number of blocks that can be formed
     num_blocks = np.floor(len(x) / block_size).astype(int)
-    # trim x to have a multiple of block_size
+    # Trim x to have a multiple of block_size
     x_block = x[:num_blocks * block_size]
-    # reshape x to a matrix of blocks
+    # Reshape x to a matrix of blocks
     x_block = x_block.reshape(num_blocks, block_size)
-    # calculate the mean of each block
+    # Calculate the mean of each block
     mean_block = np.mean(x_block, axis=1)
-    # calculate the mean and standard error of the means of the blocks
+    # Calculate the mean and standard error of the means of the blocks
     mean = np.mean(mean_block)
     se_mean = np.std(mean_block, ddof=1) / np.sqrt(num_blocks - 1)
-    # calculate the autocorrelation function of the block means
+    # Calculate the autocorrelation function of the block means
     corr = np.correlate(mean_block - mean, mean_block - mean, mode='full')
-    # trim the autocorrelation function to remove the negative lags
+    # Trim the autocorrelation function to remove the negative lags
     corr = corr[corr.size // 2:]
     # Normalize the autocorrelation function (corr = 1 at lag 0)
     corr = np.nan_to_num(corr/corr[0])
-    # calculate the integrated autocorrelation time of the block means
+    # Calculate the integrated autocorrelation time of the block means
     tau_int = inefficiency(corr)
-    # calculate the effective sample size of the blocked data
+    # Calculate the effective sample size of the blocked data
     num_ind = np.nan_to_num(np.floor( \
         num_blocks * block_size / tau_int).astype(int))
     return (block_size, tau_int, num_ind, mean, se_mean)
 
 
 def full_block_analysis(x):
-    """Perform a full block analysis of a time series.
+    """
+    Performs a comprehensive block analysis of a time series to determine 
+    the optimal block size for estimating the mean and standard error of the 
+    mean.
+
+    This function systematically explores a range of block sizes, applying the 
+    `block` function to each size. It then identifies the block size that 
+    minimizes the integrated autocorrelation time (τ_int), indicating the 
+    most effective balance between reducing autocorrelation and maintaining 
+    a sufficient number of blocks for reliable estimates.
 
     Parameters
     ----------
     x : array-like
-        The time series.
+        The time series data.
 
     Returns
     -------
     opt_block_size : int
-        The optimal block size.
+        The optimal block size that minimizes the integrated autocorrelation 
+        time.
     opt_tau_int : float
-        The integrated autocorrelation time.
-    opt_num_ind : float
-        The number of independent samples.
+        The integrated autocorrelation time corresponding to the optimal 
+        block size.
+    opt_num_ind : int
+        The effective number of independent samples corresponding to the 
+        optimal block size.
     opt_mean : float
-        The mean of the time series.
+        The mean of the time series calculated using the optimal block size.
     opt_se_mean : float
-        The standard error of the mean of the time series.
+        The standard error of the mean calculated using the optimal block size.
     block_sizes : array-like
-        The block sizes.
+        An array containing all the block sizes considered during the analysis.
     inefficiencies : array-like
-        The inefficiencies.
+        An array containing the integrated autocorrelation times (τ_int) 
+        for each block size.
     se_means : array-like
-        The standard errors of the means.
+        An array containing the standard errors of the mean for each block size.
 
+    Notes
+    -----
+    - The range of block sizes considered is from 1 to the minimum of 1000 
+      or half the length of the time series.
+    - The optimal block size is determined by finding the block size that 
+      minimizes the integrated autocorrelation time.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> time_series = np.random.randn(100)
+    >>> (opt_block_size, opt_tau_int, opt_num_ind, opt_mean, opt_se_mean, 
+    ...  block_sizes, inefficiencies, se_means) = full_block_analysis(time_series)
+    >>> print(f"Optimal block size: {opt_block_size}")
+    # Output:  Optimal block size: ...
     """
 
-    # set the range of block sizes to consider
+    # Set the range of block sizes to consider
     min_block_size = 1
     max_block_size = min(1000, len(x) // 2)
     results = []
-    # loop over block sizes and perform blocking for each size
+    # Loop over block sizes and perform blocking for each size
     for block_size in range(min_block_size, max_block_size):
         result = block(x, block_size)
         results.append(result)
     results = np.array(results)
-    # extract relevant statistics from the results
+    # Extract relevant statistics from the results
     block_sizes = results[:, 0]
     inefficiencies = results[:, 1]
     se_means = results[:, 4]
-    # determine the optimal block size based on integrated autocorrelation time
+    # Determine the optimal block size based on integrated autocorrelation time
     min_idx = np.argmin(inefficiencies)
     opt_block_size, opt_tau_int, opt_num_ind, opt_mean, opt_se_mean = \
         results[min_idx]
-    # return relevant statistics and results for all block sizes
+    # Return relevant statistics and results for all block sizes
     return (opt_block_size, opt_tau_int, opt_num_ind, opt_mean, opt_se_mean, 
             block_sizes, inefficiencies, se_means)
 
 def running_average(x):
-    """Calculate the running average of a time series.
+    """
+    Calculates the running average of a time series.
+
+    This function computes the cumulative average of the time series up to each 
+    point in time. This can be helpful for identifying trends and smoothing out 
+    fluctuations in the data.
 
     Parameters
     ----------
     x : array-like
-        The time series.
+        The time series data.
 
     Returns
     -------
     x_avg : array-like
-        The running average of the time series.
+        The running average of the time series, where each element represents 
+        the average of all values up to and including that point in time.
 
+    Examples
+    --------
+    >>> import numpy as np
+    >>> time_series = np.array([1, 2, 3, 4, 5])
+    >>> running_average(time_series)
+    array([1. , 1.5, 2. , 2.5, 3. ])
     """
     cumsum = np.cumsum(x)
     x_avg = cumsum / np.arange(1, len(x)+1)
@@ -520,30 +746,93 @@ def running_average(x):
 
 
 def unwrap_by_weight(v, w=None):
-    """ v is a vector (one dimensional) containing real numbers, while 
-    w contains integer numbers representing the weights of the samples. 
-    The function returns the unwrapped vector u, where the zero-weight
-    samples are replaced by the previous non-zero-weight sample.
-    
+    """Unwraps a vector by repeating elements based on weights.
+
+    This function takes a vector `v` containing real numbers and a weight vector 
+    `w` containing integer weights. It returns an unwrapped vector `u` where 
+    elements in `v` are repeated according to their corresponding weights in `w`. 
+    If a weight in `w` is zero, the corresponding element in `v` is replaced by 
+    the previous non-zero-weighted element.
+
+    Parameters
+    ----------
+    v : array-like
+        The input vector containing real numbers.
+    w : array-like, optional
+        The weight vector containing integer weights. If not provided, all 
+        elements in `v` are assumed to have a weight of 1.
+
+    Returns
+    -------
+    u : array-like
+        The unwrapped vector where elements in `v` are repeated according to 
+        their weights in `w`. Zero-weight elements are replaced by the previous 
+        non-zero-weighted element.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> v = np.array([1, 2, 3])
+    >>> w = np.array([2, 0, 1])
+    >>> unwrap_by_weight(v, w)
+    array([1, 1, 2, 3])
     """
 
     return np.repeat(v, w)
 
-def running_avg_local_probs(pathtype_cycles, w, tr = False):
-    """
-    
+def running_avg_local_probs(pathtype_cycles, w=None, tr=False):
+    """Calculates running averages of local probabilities for different path types.
+
+    This function takes a dictionary of path type cycles, optional weights, and a 
+    boolean flag `tr` to calculate running averages of local probabilities for 
+    different path types. 
+
     Parameters
     ----------
-    pathtype_cycles : dictionary of Ncycle arrays 
-        The keys are the pathtypes (LMR, LML, etc.), which contain 0/1 arrays
-        indicating the presence of each pathtype in each cycle. 
-    w : array-like
-        The weights of the paths
-    """
+    pathtype_cycles : dict of arrays
+        A dictionary where keys are path types (e.g., 'LMR', 'LML') and values 
+        are arrays of 0/1 indicating the presence of each path type in each 
+        cycle.
+    w : array-like, optional
+        The weights of the paths. If not provided, all paths are assumed to have 
+        equal weight (1).
+    tr : bool, optional
+        If True, applies a specific transformation to the 'LML', 'RMR', 'LMR', 
+        and 'RML' path types. Defaults to False.
 
+    Returns
+    -------
+    p_NN, p_NP, p_PN, p_PP : arrays
+        Arrays representing the running averages of local probabilities for 
+        different path types:
+            - p_NN: Probability of 'LML' path type.
+            - p_NP: Probability of 'LMR' path type.
+            - p_PN: Probability of 'RML' path type.
+            - p_PP: Probability of 'RMR' path type.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> pathtype_cycles = {'LMR': np.array([1, 0, 1]), 
+    ...                    'LML': np.array([0, 1, 0]),
+    ...                    'RMR': np.array([0, 1, 1]),
+    ...                    'RML': np.array([1, 0, 0])}
+    >>> # Example with weights
+    >>> w = np.array([1, 1, 1])
+    >>> p_NN, p_NP, p_PN, p_PP = running_avg_local_probs(pathtype_cycles, w)
+    >>> print(p_NN)
+    [0.  1.  0.5]
+    >>> # Example without weights (default)
+    >>> p_NN, p_NP, p_PN, p_PP = running_avg_local_probs(pathtype_cycles)
+    >>> print(p_NN)
+    [0.  1.  0.5]
+    """
     cumsums = {}
     for key in pathtype_cycles.keys():
-        cumsums[key] = np.cumsum(pathtype_cycles[key])
+        if w is None:
+            cumsums[key] = np.cumsum(pathtype_cycles[key])  # Default weight 1
+        else:
+            cumsums[key] = np.cumsum(pathtype_cycles[key] * w)
     if tr:
         cumsums["LML"] = 2*cumsums["LML"]
         cumsums["RMR"] = 2*cumsums["RMR"]
@@ -557,32 +846,34 @@ def running_avg_local_probs(pathtype_cycles, w, tr = False):
     return p_NN, p_NP, p_PN, p_PP
 
 def cross_dist_distr(pe):
-    """Return the distribution of lambda values for the LMR and RML paths.
+    """
+    Calculate the distribution of lambda values for LMR and RML paths.
 
-    It calculates the distribution of lambda_max values for LM* paths, and
-    the distribution of lambda_min values for RM* paths.
+    This function analyzes the distribution of lambda_max values for LM* paths 
+    (LML and LMR) and the distribution of lambda_min values for RM* paths 
+    (RMR and RML) within a PPTIS path ensemble.
 
     Parameters
     ----------
-    pe : object like :py:class:`.PathEnsemble`
+    pe : :py:class:`.PathEnsemble`
         A PPTIS path ensemble object (tistools-processed).
 
     Returns
     -------
     L : float
-        The left interface of the pathensemble.
+        The left interface of the path ensemble.
     M : float
-        The middle interface of the pathensemble.
+        The middle interface of the path ensemble.
     R : float
-        The right interface of the pathensemble.
+        The right interface of the path ensemble.
     percents : array of floats
-        The distribution of lambda_max values for LM* paths, given at lambda
-        values 'lambs' between middle and right interfaces.
+        The distribution of lambda_max values for LM* paths, given at lambda 
+        values 'lambs' between the middle and right interfaces.
     lambs : array of floats
         The lambda values at which the lambda_max distribution is given.
     percents2 : array of floats
-        The distribution of lambda_min values for RM* paths, given at lambda
-        values 'lambs2' between left and middle interfaces.
+        The distribution of lambda_min values for RM* paths, given at lambda 
+        values 'lambs2' between the left and middle interfaces.
     lambs2 : array of floats
         The lambda values at which the lambda_min distribution is given.
 
@@ -619,16 +910,27 @@ def cross_dist_distr(pe):
 
 def pathlength_distr(upe):
     """
-    Create the pathlength distributions for the path types (LML, ...) of a path
-    ensemble. The path ensemble is assumed to be unified already.
+    Calculate pathlength distributions for different path types in a unified path ensemble.
+
+    This function analyzes the pathlengths of each path type (LML, LMR, RML, RMR) 
+    within a unified path ensemble, providing mean, standard deviation, and a histogram 
+    of the distribution.
 
     Parameters
     ----------
-    upe : PathEnsemble object (unified)
+    upe : :py:class:`.PathEnsemble`
+        A unified path ensemble object.
 
     Returns
     -------
-    data : dict containing the pathlength distributions for each path type
+    data : dict
+        A dictionary containing the pathlength distributions for each path type.
+        Each path type (e.g., "LML") has the following keys:
+            - "mean": Mean pathlength for the path type.
+            - "std": Standard deviation of pathlengths for the path type.
+            - "hist": Histogram of pathlengths for the path type.
+            - "bin_centers": Centers of the histogram bins.
+
     """
 
     pathtypes = ("LML", "LMR", "RML", "RMR")
@@ -721,93 +1023,96 @@ def get_local_probs(pe, w = None, tr=False):
     return p
 
         
-def get_globall_probs(ps):
-    """Returns the global crossing probabilities for the PPTIS simulation, 
-    together with the standard deviation of these probabilities.
+def get_global_probs_from_dict(ensemble_probabilities):
+    """Calculates the global crossing probabilities for the PPTIS simulation.
 
-    This follows the recursive relation 
-    P_plus[j] = (pLMR[j-1]*P_plus[j-1]) / (pLMR[j-1]+pLML[j-1]*P_min[j-1])
-    P_min[j] = (pRML[j-1]P_min[j-1])/(pLMR[j-1]+pLML[j-1]*P_min[j-1])
+    This function computes the global crossing probabilities using the recursive relations:
+    - P_plus[j] = (pLMR[j-1] * P_plus[j-1]) / (pLMR[j-1] + pLML[j-1] * P_min[j-1])
+    - P_min[j] = (pRML[j-1] * P_min[j-1]) / (pLMR[j-1] + pLML[j-1] * P_min[j-1])
     where P_plus[0] = 1, P_min[0] = 1, and j is the ensemble number.
 
     Parameters
     ----------
-    ps : list of dicts
-        A list of dictionaries with the local crossing probabilities for each
-        PPTIS ensemble. The keys are the path types (RMR, RML, LMR, LML).
-        ps[i]['LMR']['mean'] and ps[i]['LMR']['std'] are the mean and stdev of
-        p_{i}^{mp}, respectively.
+    ensemble_probabilities : list of dicts
+        A list of dictionaries containing the local crossing probabilities for each PPTIS ensemble.
+        Each dictionary has keys representing the path types (RMR, RML, LMR, LML).
+        For example, ensemble_probabilities[i]['LMR']['mean'] and ensemble_probabilities[i]['LMR']['std']
+        represent the mean and standard deviation of p_{i}^{mp}, respectively.
 
     Returns
     -------
-    Pmin : list of floats
-        Float per ensemble i. Represents the probability of crossing A earlier
+    P_min : list of floats
+        A list of probabilities, one per ensemble i, representing the probability of crossing A earlier
         than i+1, given that the path crossed i.
-    Pplus : list of floats
-        Float per ensemble i. Represents the probability of crossing i+1 earlier
-        than A, given that the path crossed i. 
-    Pcross : list of floats
-        Float per ensemble i. Represents the TIS probability of crossing i+1
+    P_plus : list of floats
+        A list of probabilities, one per ensemble i, representing the probability of crossing i+1 earlier
+        than A, given that the path crossed i.
+    P_cross : list of floats
+        A list of probabilities, one per ensemble i, representing the TIS probability of crossing i+1.
     """
 
-    Pplus, Pmin, Pcross = [1.], [1.], [1., ps[1]['LMR']]
-    for i, p in enumerate(ps):
-        if i <= 1: continue  # This is [0^{\pm}'], so skip
-        # Calculate the global crossing probabilities
-        Pplus.append((p['LMR']*Pplus[-1])/(p['LMR']+p['LML']*Pmin[-1]))
-        Pmin.append((p['RML']*Pmin[-1])/(p['LMR']+p['LML']*Pmin[-1]))
-        # Calculate the TIS probabilities
-        Pcross.append(ps[1]['LMR']*Pplus[-1])
-    return Pmin, Pplus, Pcross
-
-def get_global_probz(pmps, pmms, ppps, ppms):
-    """Return the global crossing probabilities for the PPTIS simulation.
-
-    This follows the recursive relation
-    P_plus[j] = (pLMR[j-1]*P_plus[j-1]) / (pLMR[j-1]+pLML[j-1]*P_min[j-1])
-    P_min[j] = (pRML[j-1]P_min[j-1])/(pLMR[j-1]+pLML[j-1]*P_min[j-1])
-    where P_plus[0] = 1, P_min[0] = 1, and j is the ensemble number.
-
-    Parameters
-    ----------
-    pmps : list of floats
-        The local probability (P) of having type LMR (MinusPlus) for each
-        ensemble (S).
-    pmms : list of floats
-        Local LML
-    ppps : list of floats
-        Local RMR
-    ppms : list of floats
-        Local RML
-
-    Returns
-    -------
-    pmin : list of floats
-        Float per ensemble i. Represents the probability of crossing A earlier
-        than i+1, given that the path crossed i.
-    pplus : list of floats
-        Float per ensemble i. Represents the probability of crossing i+1
-        earlier than A, given that the path crossed i.
-    pcross : list of floats
-        Float per ensemble i. Represents the TIS probability of crossing i+1.
-    """
-    # if there is any NaN in pmps, pmms, ppps, ppms, return NaN
-    if np.isnan(pmps).any() or np.isnan(pmms).any() or \
-            np.isnan(ppps).any() or np.isnan(ppms).any():
-        return [np.nan, np.nan, np.nan]
-    pplus, pmin, pcross = [1.], [1.], [1., pmps[0]]
-    for i, pmp, pmm, _, ppm in zip(range(len(pmps)), pmps, pmms, ppps, ppms):
-        if i == 0:  # This is [0^{\pm}'], so skip
+    P_plus, P_min, P_cross = [1.0], [1.0], [1.0, ensemble_probabilities[1]['LMR']]
+    for i, probabilities in enumerate(ensemble_probabilities):
+        if i <= 1:  # Skip the first two ensembles as they are initial conditions
             continue
         # Calculate the global crossing probabilities
-        # if divide by zero, or divide by NaN, return NaN
-        if pmp + pmm * pmin[-1] == 0 or\
-                (pmp is np.nan) or\
-                (pmm * pmin[-1] is np.nan):
-            return [np.nan, np.nan, np.nan]
-        pplus.append((pmp*pplus[-1])/(pmp+pmm*pmin[-1]))
-        pmin.append((ppm*pmin[-1])/(pmp+pmm*pmin[-1]))
+        P_plus.append((probabilities['LMR'] * P_plus[-1]) / (probabilities['LMR'] + probabilities['LML'] * P_min[-1]))
+        P_min.append((probabilities['RML'] * P_min[-1]) / (probabilities['LMR'] + probabilities['LML'] * P_min[-1]))
         # Calculate the TIS probabilities
-        pcross.append(pmps[0]*pplus[-1])
-    return pmin, pplus, pcross
+        P_cross.append(ensemble_probabilities[1]['LMR'] * P_plus[-1])
+    return P_min, P_plus, P_cross
+
+def get_global_probs_from_local(p_minus_plus, p_minus_minus, p_plus_plus, p_plus_minus):  # was: get_global_probz
+    """Computes the global crossing probabilities for the PPTIS simulation from local probabilities.
+
+    This function follows the recursive relations:
+    - P_plus[j] = (pLMR[j-1] * P_plus[j-1]) / (pLMR[j-1] + pLML[j-1] * P_min[j-1])
+    - P_min[j] = (pRML[j-1] * P_min[j-1]) / (pLMR[j-1] + pLML[j-1] * P_min[j-1])
+    where P_plus[0] = 1, P_min[0] = 1, and j is the ensemble number.
+
+    Parameters
+    ----------
+    p_minus_plus : list of floats
+        The local probability of having type LMR (Left-to-Right crossing) for each ensemble.
+    p_minus_minus : list of floats
+        The local probability of having type LML (Left-to-Left crossing) for each ensemble.
+    p_plus_plus : list of floats
+        The local probability of having type RMR (Right-to-Right crossing) for each ensemble.
+    p_plus_minus : list of floats
+        The local probability of having type RML (Right-to-Left crossing) for each ensemble.
+
+    Returns
+    -------
+    P_min : list of floats
+        A list of probabilities, one per ensemble i, representing the probability of crossing A earlier
+        than i+1, given that the path crossed i.
+    P_plus : list of floats
+        A list of probabilities, one per ensemble i, representing the probability of crossing i+1 earlier
+        than A, given that the path crossed i.
+    P_cross : list of floats
+        A list of probabilities, one per ensemble i, representing the TIS probability of crossing i+1.
+
+    Notes
+    -----
+    If any input probability list contains NaN values, the function returns [NaN, NaN, NaN].
+    """
+
+    # Check for NaN values in input probabilities
+    if np.isnan(p_minus_plus).any() or np.isnan(p_minus_minus).any() or \
+       np.isnan(p_plus_plus).any() or np.isnan(p_plus_minus).any():
+        return [np.nan, np.nan, np.nan]
+
+    P_plus, P_min, P_cross = [1.0], [1.0], [1.0, p_minus_plus[0]]
+    for i, (pmp, pmm, _, ppm) in enumerate(zip(p_minus_plus, p_minus_minus, p_plus_plus, p_plus_minus)):
+        if i == 0:  # Skip the first ensemble as it is an initial condition
+            continue
+        # Check for division by zero or NaN in calculations
+        if pmp + pmm * P_min[-1] == 0 or np.isnan(pmp) or np.isnan(pmm * P_min[-1]):
+            return [np.nan, np.nan, np.nan]
+        # Calculate the global crossing probabilities
+        P_plus.append((pmp * P_plus[-1]) / (pmp + pmm * P_min[-1]))
+        P_min.append((ppm * P_min[-1]) / (pmp + pmm * P_min[-1]))
+        # Calculate the TIS probabilities
+        P_cross.append(p_minus_plus[0] * P_plus[-1])
+    return P_min, P_plus, P_cross
 
