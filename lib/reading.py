@@ -1,4 +1,4 @@
-"""function for dealing with pyretis output"""
+# Functions for dealing with pyretis output
 
 import numpy as np
 
