@@ -292,3 +292,77 @@ def collect_taum(pathensembles):
                    - pathensembles[i].tau2avg['RMR']
 
     return taum_mm, taum_mp, taum_pm, taum_pp
+
+
+def set_taus(pe):
+    """Set, for each path type, the average pathlength before and after the
+    middle interface is crossed, and the average total path length.
+
+    Parameters
+    ----------
+    pe : object like :py:class:`.PathEnsemble`
+        Tistools PathEnsemble object must be from a PPTIS simulation,
+        for which the weights and the orders have been set.
+
+    Returns
+    -------
+    Nothing, but sets the attributes pe.tau1, pe.tau2, pe.tau, and their averages.
+    """
+    pe.tau1 = []
+    pe.tau2 = []
+    pe.tau = []
+    
+    pe.tau1avg = {"LML": None, "LMR": None, "RML": None, "RMR": None}
+    pe.tau2avg = {"LML": None, "LMR": None, "RML": None, "RMR": None}
+    pe.tauavg = {"LML": None, "LMR": None, "RML": None, "RMR": None,
+                 "L*L": None, "R*R": None}
+
+    # Determine path types
+    if pe.in_zero_minus:
+        if pe.has_zero_minus_one:
+            ptypes = ["LML", "LMR", "RML", "RMR", "L*L", "R*R"]
+        else:
+            ptypes = ["RMR",]
+    else:
+        ptypes = ["LML", "LMR", "RML", "RMR"]
+
+    # Loop over all paths, compute tau1, tau2, and total tau
+    for i in range(len(pe.cyclenumbers)):
+        if pe.flags[i] != "ACC" or pe.generation[i] == "ld":
+            # If not accepted or if generation is "ld", set zero for all values
+            pe.tau1.append(0)
+            pe.tau2.append(0)
+            pe.tau.append(0)
+            continue
+        
+        # Compute tau1 and tau2
+        tau1_value = get_tau1_path(pe.orders[i], pe.lmrs[i], pe.interfaces[0])
+        tau2_value = get_tau2_path(pe.orders[i], pe.lmrs[i], pe.interfaces[0])
+
+        # Compute total tau (the path length)
+        tau_value = get_tau_path(pe.orders[i], pe.lmrs[i], pe.interfaces[0])
+
+        # Append results
+        pe.tau1.append(tau1_value)
+        pe.tau2.append(tau2_value)
+        pe.tau.append(tau_value)
+
+    # Convert lists to numpy arrays for efficient processing
+    pe.tau1 = np.array(pe.tau1)
+    pe.tau2 = np.array(pe.tau2)
+    pe.tau = np.array(pe.tau)
+
+    # Calculate the average tau1, tau2, and total tau for each path type
+    for ptype in ptypes:
+        # Total weight for each path type
+        totweight = np.sum(pe.weights[pe.lmrs == ptype])
+        
+        # Compute average tau1 for the current path type
+        if totweight != 0:  # Ensure total weight is not zero
+            pe.tau1avg[ptype] = np.average(pe.tau1[pe.lmrs == ptype],
+                                           weights=pe.weights[pe.lmrs == ptype])
+            pe.tau2avg[ptype] = np.average(pe.tau2[pe.lmrs == ptype],
+                                           weights=pe.weights[pe.lmrs == ptype])
+            pe.tauavg[ptype] = np.average(pe.tau[pe.lmrs == ptype],
+                                          weights=pe.weights[pe.lmrs == ptype])
+            

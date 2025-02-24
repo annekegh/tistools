@@ -564,8 +564,6 @@ def check_valid_indices(M, absor, kept):
             raise ValueError(f"State {i} must be in either `absor` or `kept`, but not both.")
 
 
-import numpy as np
-
 def get_pieces_matrix(M, absor, kept):
     """
     Extract submatrices from a transition matrix corresponding to absorbing and transient states.
@@ -619,8 +617,6 @@ def get_pieces_matrix(M, absor, kept):
 
     return Mp, D, E, M11
 
-
-import numpy as np
 
 def get_pieces_vector(vec, absor, kept):
     """
