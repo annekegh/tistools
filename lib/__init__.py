@@ -10,4 +10,5 @@ from .repptis_analysis import *
 from .pathproperties import *
 from .repptis_msm import *
 from .repptis_pathlengths import *
-
+from .writing import *
+from .block_error_analysis import *
