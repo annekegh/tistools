@@ -68,7 +68,7 @@ def create_distrib(folders,interfaces_input,outputfile,do_pdf,
         ofile = "%s/order.txt" %(folder)
         #ostart = 0
         ostart = -1    # TODO
-        op = read_order(ofile,ostart)
+        op = parse_order_file(ofile,ostart)
         flags = op.flags
         trajs = op.longtraj
         lens = op.lengths
