@@ -5,6 +5,7 @@ import logging
 import bisect
 from repptis_analysis import *
 
+# MOVE TO DEV
 # Hard-coded rejection flags found in output files
 ACCFLAGS,REJFLAGS = set_flags_ACC_REJ() 
 

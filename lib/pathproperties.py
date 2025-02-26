@@ -125,7 +125,7 @@ def create_distrib_first_crossing(folders, interfaces_input, outputfile, do_pdf,
         print(f"Processing folder: {fol}")
         ofile = f"{folder}/order.txt"
         ostart = -1  # TODO: Verify if this should be changed
-        op = parse_order_file(ofile, ostart)
+        op = read_order(ofile, ostart)
         flags = op.flags
         trajs = op.longtraj
         lens = op.lengths
@@ -143,6 +143,7 @@ def create_distrib_first_crossing(folders, interfaces_input, outputfile, do_pdf,
             print(f"  {flag}: {np.sum(flags == flag)}")
         print(f"Total flags: {len(flags)}")
 
+        # Read path ensemble and calculate xi
         ofile = f"{folder}/pathensemble.txt"
         pe = read_pathensemble(ofile)
         lmrs = pe.lmrs
@@ -151,6 +152,7 @@ def create_distrib_first_crossing(folders, interfaces_input, outputfile, do_pdf,
         xi = calc_xi(lmrs, weights)
         print(f"xi: {xi}")
 
+        # Determine the crossing lambda value
         if ifol == 0:
             if len(interfaces) == len(folders):
                 lambdacross = interfaces[0]
@@ -163,8 +165,10 @@ def create_distrib_first_crossing(folders, interfaces_input, outputfile, do_pdf,
         else:
             lambdacross = interfaces[ifol - 1]
 
+        # Get the distribution of first crossing points
         cross_indices = get_first_crossing_distr(flags, weights, lens, w_all, ncycle, ncycle_true, trajs, lmrs, lambdacross)
 
+        # Plot histogram of first crossing points
         bins = np.arange(-1, max(cross_indices) + 2) - 0.5
         hist, edges = np.histogram(cross_indices, bins=bins, weights=weights)
         centers = edges[:-1] + np.diff(edges) / 2.
@@ -181,7 +185,11 @@ def create_distrib_first_crossing(folders, interfaces_input, outputfile, do_pdf,
         plt.savefig(f"crosshist.{fol}.png")
         plt.clf()
 
+        # TODO: Optional - Remove first and last phase point of each path, which are not part of the ensemble
+        # TODO: Optional - Compute time spent in the ensemble
+
         if ifol != 0:
+            # Plot normalized histogram
             bins = np.arange(-1, 51) - 0.5
             hist, edges = np.histogram(cross_indices, bins=bins, weights=weights)
             centers = edges[:-1] + np.diff(edges) / 2.
@@ -197,5 +205,4 @@ def create_distrib_first_crossing(folders, interfaces_input, outputfile, do_pdf,
     plt.title(f"Normalized, ncycle={ncycle}, dt={dt:.3f}")
     plt.tight_layout()
     plt.savefig("crosshist.all.png")
-
 
