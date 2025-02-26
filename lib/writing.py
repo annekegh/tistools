@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def write_histogram(fn,bin_midst,hist,F):
-    with open(filename,"w+") as f:
+    with open(fn,"w+") as f:
         dens = hist/np.sum(hist)
         f.write('# {} {} {} {}\n'.format('z', 'hist', 'dens', 'F',))
         for i in range(len(hist)):
