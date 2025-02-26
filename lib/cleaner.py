@@ -4,166 +4,223 @@ import glob
 from .reading import *
 import subprocess
 
-def cleaner(fn_i,fn_o,overwrite=False):
-    """remove everything until the last load (ld) path, and remove the last ld path too
-
-    fn_i  --  filename input
-    fn_o  --  filename output
-    fn_i+".TEMPORARYFILE.TMP"  --  name for temporary file
+def cleaner(fn_i, fn_o, overwrite=False):
     """
+    Remove everything until the last load (ld) path, and remove the last ld path too.
 
+    Parameters
+    ----------
+    fn_i : str
+        Filename input.
+    fn_o : str
+        Filename output.
+    overwrite : bool, optional
+        If True, allows overwriting the input file.
+
+    Notes
+    -----
+    If overwrite is True, fn_o will be a temporary file that will replace fn_i.
+    """
     if fn_o == fn_i:
         assert overwrite
     if overwrite:
         assert fn_i == fn_o
-        fn_o = fn_i+".TEMPORARYFILE.TMP"   # name for temporary file
-        # move back at the end
-    if os.path.exists("fn_o"):
+        fn_o = fn_i + ".TEMPORARYFILE.TMP"  # name for temporary file
+
+    if os.path.exists(fn_o):
         assert overwrite
 
     with open(fn_i, 'r') as fi:
         lines = fi.readlines()
-    
-    fo = open(fn_o, 'w')
-    
-    printer = False
-    for line in lines:
-        if 'ld' in line:
-            printer = False
-            # This erases all previous
-            fo.close()
-            fo = open(fn_o, 'w')
-        elif 'ACC' in line and 'sh' in line:
-            printer = True
-        if printer:
-            fo.write(line)
 
-    fi.close()
-    fo.close()
+    with open(fn_o, 'w') as fo:
+        printer = False
+        for line in lines:
+            if 'ld' in line:
+                printer = False
+                fo.close()
+                fo = open(fn_o, 'w')
+            elif 'ACC' in line and 'sh' in line:
+                printer = True
+            if printer:
+                fo.write(line)
 
     if overwrite:
         os.remove(fn_i)
         os.rename(fn_o, fn_i)
-        print("overwrite file...",fn_i,"(was temporarily %s)"%fn_o)
+        print(f"overwrite file... {fn_i} (was temporarily {fn_o})")
     else:
-        print("file written...",fn_o)
+        print(f"file written... {fn_o}")
 
 def sieve_trajectories(folders, n_clean, max_cycnum):
+    """
+    Sieve trajectories from multiple folders.
+
+    Parameters
+    ----------
+    folders : list of str
+        List of folder paths.
+    n_clean : int
+        Minimum cycle number to clean.
+    max_cycnum : int
+        Maximum cycle number to keep.
+
+    Returns
+    -------
+    tuple
+        Lists of directories to remove, to keep, and all directories.
+    """
     rmdirs = []
     shdirs = []
     for fol in folders:
-        toremove_list, tokeep_list = sieve_trajectories_from_folder(fol, n_clean = n_clean, max_cycnum=max_cycnum)
-        rmdirs+=toremove_list
-        shdirs+=tokeep_list
-    
-    alldirs = rmdirs+shdirs
+        toremove_list, tokeep_list = sieve_trajectories_from_folder(fol, n_clean=n_clean, max_cycnum=max_cycnum)
+        rmdirs += toremove_list
+        shdirs += tokeep_list
 
+    alldirs = rmdirs + shdirs
     return rmdirs, shdirs, alldirs
 
-def sieve_trajectories_from_folder(indir,pe_fn="pathensemble.txt",n_clean=0,max_cycnum=999999999):
+def sieve_trajectories_from_folder(indir, pe_fn="pathensemble.txt", n_clean=0, max_cycnum=999999999):
     """
-        indir is an ensemble folder (like .../000/)
-        Returns a list of directories containing the non-shoot trajectories of this ensemble.
-        
-        pe_fn: filename of the pathensemble.txt file (I don't know, this may change)
-        indir: directory where pe_fn is located
-    """
-    
-    ACCFLAGS, REJFLAGS = set_flags_ACC_REJ()
+    Sieve trajectories from a single folder.
 
-    pe = read_pathensemble(indir+"/"+pe_fn)
+    Parameters
+    ----------
+    indir : str
+        Directory where pe_fn is located.
+    pe_fn : str, optional
+        Filename of the pathensemble.txt file.
+    n_clean : int, optional
+        Minimum cycle number to clean.
+    max_cycnum : int, optional
+        Maximum cycle number to keep.
+
+    Returns
+    -------
+    tuple
+        Lists of directories to remove and to keep.
+    """
+    ACCFLAGS, REJFLAGS = set_flags_ACC_REJ()
+    pe = read_pathensemble(os.path.join(indir, pe_fn))
     toremove_list = []
     tokeep_list = []
+
     assert len(pe.cyclenumbers) == len(pe.generation)
-    for flag, cycnum, gen in zip(pe.flags,pe.cyclenumbers,pe.generation):
+    for flag, cycnum, gen in zip(pe.flags, pe.cyclenumbers, pe.generation):
         if flag in ACCFLAGS:
             flagstr = "traj-acc"
         elif flag in REJFLAGS:
             flagstr = "traj-rej"
         else:
-            raise NotImplementedError("Paths are either rejected or accepted. Path "+str(cycnum)+" of ensemble "+str(indir)+" does not even belong to the rejected, but to the flag: "+str(flag))
-        dirstring = indir+"/traj/"+flagstr+"/"+str(cycnum)+"/"
-        if cycnum >= n_clean and cycnum < max_cycnum:
+            raise NotImplementedError(f"Path {cycnum} of ensemble {indir} does not belong to the accepted or rejected flags.")
+        
+        dirstring = os.path.join(indir, "traj", flagstr, str(cycnum))
+        if n_clean <= cycnum < max_cycnum:
             if gen != 'sh':
                 toremove_list.append(dirstring)
             else:
                 tokeep_list.append(dirstring)
-    return toremove_list,tokeep_list
 
+    return toremove_list, tokeep_list
 
-def remove_nonshoot_trajectories(dirlist,outputfolder,check_type=True,filetypes=[".xtc",".trr",".gro"],donotremove=True,stop_on_error=True):
+def remove_nonshoot_trajectories(dirlist, outputfolder, check_type=True, filetypes=[".xtc", ".trr", ".gro"], donotremove=True, stop_on_error=True):
     """
-        Removes the nonshoot trajectories in the folders given by dirlist
+    Removes the non-shoot trajectories in the folders given by dirlist.
+
+    Parameters
+    ----------
+    dirlist : list of str
+        List of directories to process.
+    outputfolder : str
+        Folder to save the log of removed trajectories.
+    check_type : bool, optional
+        If True, checks the file type before removing.
+    filetypes : list of str, optional
+        List of allowed file types.
+    donotremove : bool, optional
+        If True, only logs the files that would be removed.
+    stop_on_error : bool, optional
+        If True, stops on encountering an error.
     """
-    with open (outputfolder+"/removedtrajs.txt", "a+") as ff:
+    with open(os.path.join(outputfolder, "removedtrajs.txt"), "a+") as ff:
         for trajdir in dirlist:
             if os.path.isdir(trajdir):
                 is_shoot, moveline = check_if_ordertxt_is_shoot(trajdir)
                 if not is_shoot:
-                    filelist = glob.glob(trajdir+"traj/*")
-                    if filelist: # AKA if filelist is not emty
+                    filelist = glob.glob(os.path.join(trajdir, "traj", "*"))
+                    if filelist:
                         for f in filelist:
-                            if check_type == True:
-                                fname,fext = os.path.splitext(f)
-                                assert fext in filetypes, "Not a trajectory!! : "+f
-                                if donotremove:
-                                    ff.write("would have removed: "+f+"\n\tmoveline: "+moveline)
-                                    ff.write("\n")
-                                else:
-                                    ff.write("removed: "+f+"\n\tmoveline: "+moveline)
-                                    os.remove(f)
+                            if check_type:
+                                _, fext = os.path.splitext(f)
+                                assert fext in filetypes, f"Not a trajectory: {f}"
+                            if donotremove:
+                                ff.write(f"Would have removed: {f}\n\tMove line: {moveline}\n")
                             else:
-                                if donotremove:
-                                    ff.write("would have removed: "+f+"\n\tmoveline: "+moveline)
-                                    ff.write("\n")
-                                else:
-                                    ff.write("removed: "+f+"\n\tmoveline: "+moveline)
-                                    os.remove(f)
+                                ff.write(f"Removed: {f}\n\tMove line: {moveline}\n")
+                                os.remove(f)
+                    else:
+                        if donotremove:
+                            ff.write(f"Would have removed: {f}\n\tMove line: {moveline}\n")
+                        else:
+                            ff.write(f"Removed: {f}\n\tMove line: {moveline}\n")
+                            os.remove(f)
                 else:
                     ff.write("This is a shooting move!\n")
-                    ff.write(moveline+"\n")
+                    ff.write(f"{moveline}\n")
                     if stop_on_error:
-                        assert False, "You tried to delete a shooting move trajectory, stopped deleting. Check removedtrajs.txt"
-            else: #if trajdir does not exist
-                ff.write(trajdir +" does not exist\n")
+                        raise AssertionError("You tried to delete a shooting move trajectory, stopped deleting. Check removedtrajs.txt")
+            else:
+                ff.write(f"{trajdir} does not exist\n")
                 if stop_on_error:
-                    assert False, "you wanted to delete a non-existing file, stopped deleting files. Check removedtrajs.txt"
-    ff.close()
+                    raise AssertionError("You wanted to delete a non-existing file, stopped deleting files. Check removedtrajs.txt")
 
 def check_if_ordertxt_is_shoot(trajdir):
-    with open(trajdir+"/order.txt", "r") as f:
+    """
+    Check if the order.txt file in the given directory indicates a shooting move.
+
+    Parameters
+    ----------
+    trajdir : str
+        Directory containing the order.txt file.
+
+    Returns
+    -------
+    tuple
+        Boolean indicating if it's a shooting move and the first line of the order.txt file.
+    """
+    with open(os.path.join(trajdir, "order.txt"), "r") as f:
         moveline = f.readline()
-        shootstr = "move: (\'sh\',"
+        shootstr = "move: ('sh',"
         shootcheck = shootstr in moveline
-    f.close()    
     return shootcheck, moveline
 
 def subsample_trajectories(trajectories, dt, ndx_fn, tpr_fn, procs=1):
     """
-    Spawns procs processes that subsample the listed trajectories.
-    ----
-    INPUT:
-        trajectories: - list of str - list of paths to the trajectory files
-        dt: - float - sampling period
-        ndx_fn: - str - path to the index.ndx file
-        tpr_fn: - str - path to the topol.tpr file (this is gromacs-version dependent (TPX))
-        procs: - int - amount of processes to run in parallel (Do not choose this > free ppns in RETIS simul)
-    
-    OUTPUT: 
-        all_went_well: - boolean - True if all returncodes are zero.
-    """ 
-    
+    Spawns processes that subsample the listed trajectories.
+
+    Parameters
+    ----------
+    trajectories : list of str
+        List of paths to the trajectory files.
+    dt : float
+        Sampling period.
+    ndx_fn : str
+        Path to the index.ndx file.
+    tpr_fn : str
+        Path to the topol.tpr file.
+    procs : int, optional
+        Number of processes to run in parallel.
+
+    Returns
+    -------
+    bool
+        True if all return codes are zero, False otherwise.
+    """
     traj_sizes = get_traj_sizes(trajectories)
+    print(f"Number of processors for subsampling: {procs}")
+    chunk_list = weighted_split_list(trajectories, procs, traj_sizes) if procs > 1 else [trajectories]
 
-    print("The amount of processors for subsampling: "+str(procs))
-    if procs > 1:
-        #chunk_list = split_list(trajectories, procs)
-        chunk_list = weighted_split_list(trajectories, procs, traj_sizes)
-    else:
-        chunk_list = [trajectories]
-    
     log_file = "cleanfolder/log_subsampling.txt"
-
     proc_list = []
     out_list = []
     err_list = []
@@ -183,11 +240,11 @@ def subsample_trajectories(trajectories, dt, ndx_fn, tpr_fn, procs=1):
         fn_list.append(fn)
 
     with open(log_file, "wb+") as f_log:
-        for proc, f_out, f_err, cid in zip(proc_list,out_list,err_list,cid_list):
-            subline = ("--SUBPROCESS " + cid + " --\n").encode('ascii')
-            outline = ("--OUTPUT " + cid + " --\n").encode('ascii')
-            errline = ("--ERROR " + cid + " --\n").encode('ascii')
-            intline = ("-"*15+"\n").encode('ascii')
+        for proc, f_out, f_err, cid in zip(proc_list, out_list, err_list, cid_list):
+            subline = f"--SUBPROCESS {cid} --\n".encode('ascii')
+            outline = f"--OUTPUT {cid} --\n".encode('ascii')
+            errline = f"--ERROR {cid} --\n".encode('ascii')
+            intline = ("-" * 15 + "\n").encode('ascii')
             proc.wait()
             f_log.write(intline)
             f_log.write(subline)
@@ -204,92 +261,158 @@ def subsample_trajectories(trajectories, dt, ndx_fn, tpr_fn, procs=1):
             f_log.write(f_err.read())
             f_err.close()
             f_log.write(intline)
-    f_log.close()
+            f_log.close()
 
-    return_codes = [None]*procs
-    
     all_went_well = True
-
-    for i,proc in enumerate(proc_list):
-        return_codes[i] = proc.returncode
-        if return_codes[i] is not None and return_codes[i] == 0:
-            print("subsampling chunk "+str(i)+" went well.")
+    for i, proc in enumerate(proc_list):
+        return_code = proc.returncode
+        if return_code is not None and return_code == 0:
+            print(f"Subsampling chunk {i} completed successfully.")
         else:
             all_went_well = False
-            print("ERROR: subsampling chunk "+str(i)+" went BAD.\nCheck the log files in cleanfolder: \nstdout:"+str(i)+"_stdout.txt\nstderr: "+str(i)+"_stderr.txt")
-    
+            raise RuntimeError("One or more subsampling processes failed. Check the log files in 'cleanfolder':\nstdout: {i}_stdout.txt\nstderr: {i}_stderr.txt for details.")
+
     if all_went_well:
         for fn in fn_list:
             os.remove(fn)
-
     return all_went_well
 
 def write_chunk_trr(trr_files, chunk_id):
-    fn = "chunk_"+chunk_id+"_trr_paths.txt"
+    """
+    Write the list of trajectory files to a text file.
+
+    Parameters
+    ----------
+    trr_files : list of str
+        List of trajectory file paths.
+    chunk_id : str
+        Identifier for the chunk.
+
+    Returns
+    -------
+    str
+        Filename of the written text file.
+    """
+    fn = f"chunk_{chunk_id}_trr_paths.txt"
     with open(fn, "w+") as f:
         for el in trr_files:
-            f.write(el+"\n")
-    f.close()
+            f.write(el + "\n")
     return fn
 
 def read_chunk_trr(fn):
+    """
+    Read the list of trajectory files from a text file.
+
+    Parameters
+    ----------
+    fn : str
+        Filename of the text file.
+
+    Returns
+    -------
+    list of str
+        List of trajectory file paths.
+    """
     trr_files = []
     with open(fn, 'r') as f:
         for line in f:
             trr_files.append(line.strip())
-    f.close()
     return trr_files
 
-def split_list(l,n):
-    #split list l with L elements into chunks of size ~ L/n
-    assert n > 1, "Please don't call the split function to split into 1"
-    k,m=divmod(len(l),n)
-    return [l[i*k+min(i,m):(i+1)*k+min(i+1,m)] for i in range(n)]
-
-def weighted_split_list(l,n,s,verbose=False):
-    """ 
-    split list l with L elements into n chunks, where each chunk
-    has similar total size (bytes). The size of each list element
-    is given by s
+def split_list(l, n):
     """
-    assert n > 1, "Please don't cal lthe split function to split into 1"
-    assert len(l) == len(s), "list and weight-list have differnt len: "+str(len(l))+";"+str(len(s))
+    Split list l into n chunks of approximately equal size.
 
-    #chunks = [[]]*n        # In this notation, all list elements are linked!!!!!!!
-    #chunks_w = [0]*n
-    
-    chunks = [[] for i in range(n)]
-    chunks_w = [0 for i in range(n)]
+    Parameters
+    ----------
+    l : list
+        List to be split.
+    n : int
+        Number of chunks.
 
-    for t, tw in zip(l,s):
-        idx = chunks_w.index(min(chunks_w)) # This will give the 'first' min_idx when multiple min exist
+    Returns
+    -------
+    list of lists
+        List containing n chunks.
+    """
+    assert n > 1, "Please don't call the split function to split into 1"
+    k, m = divmod(len(l), n)
+    return [l[i*k + min(i, m):(i+1)*k + min(i+1, m)] for i in range(n)]
+
+def weighted_split_list(l, n, s, verbose=False):
+    """
+    Split list l into n chunks with similar total size.
+
+    Parameters
+    ----------
+    l : list
+        List to be split.
+    n : int
+        Number of chunks.
+    s : list of int
+        Sizes of each list element.
+    verbose : bool, optional
+        If True, prints the chunk load and imbalance.
+
+    Returns
+    -------
+    list of lists
+        List containing n chunks.
+    """
+    assert n > 1, "Please don't call the split function to split into 1"
+    assert len(l) == len(s), f"List and weight-list have different lengths: {len(l)}; {len(s)}"
+
+    chunks = [[] for _ in range(n)]
+    chunks_w = [0 for _ in range(n)]
+    for t, tw in zip(l, s):
+        idx = chunks_w.index(min(chunks_w))
         chunks[idx].append(t)
         chunks_w[idx] += tw
-    
+
     max_weight = max(chunks_w)
     min_weight = min(chunks_w)
-    
+
     if verbose:
-        print("Chunk load, in units min_chunk_weight ["+str(min_weight)+" bytes]\n")
+        print(f"Chunk load, in units min_chunk_weight [{min_weight} bytes]")
         for w in chunks_w:
-            print(str(round(w/min_weight,2))+"\t")
-        print("\n")
-    
-    print("Imbalance max_chunk_weight/min_chunk_weight: "+str(round(max_weight/min_weight,2)))
+            print(f"{round(w/min_weight, 2)}\t")
+        print(f"\nImbalance max_chunk_weight/min_chunk_weight: {round(max_weight/min_weight, 2)}")
 
     return chunks
 
-def get_max_cycnum_ensemble(indir,pe_fn="pathensemble.txt"):
-    pe = read_pathensemble(indir+"/"+pe_fn)
-    max_cycnum = 0
-    #Maybe just np.max(pe.cyclenumbers), I don't know
-    for cycnum in pe.cyclenumbers:
-        if cycnum > max_cycnum:
-            max_cycnum = cycnum
-    return max_cycnum
+def get_max_cycnum_ensemble(indir, pe_fn="pathensemble.txt"):
+    """
+    Get the maximum cycle number in the ensemble.
+
+    Parameters
+    ----------
+    indir : str
+        Directory where pe_fn is located.
+    pe_fn : str, optional
+        Filename of the pathensemble.txt file.
+
+    Returns
+    -------
+    int
+        Maximum cycle number.
+    """
+    pe = read_pathensemble(os.path.join(indir, pe_fn))
+    return max(pe.cyclenumbers)
 
 def get_max_cycnum_simul(folders):
-    # We will actually return max_cynum, as we don't want to move a file that is still being written to...
+    """
+    Get the maximum cycle number across multiple folders.
+
+    Parameters
+    ----------
+    folders : list of str
+        List of folder paths.
+
+    Returns
+    -------
+    int
+        Maximum cycle number.
+    """
     max_cycnum = 0
     for fol in folders:
         trial_cycnum = get_max_cycnum_ensemble(fol)
@@ -297,163 +420,282 @@ def get_max_cycnum_simul(folders):
             max_cycnum = trial_cycnum
     return max_cycnum
 
-def list_trajectory_folders_lt_maxnum(indir,max_cycnum,pe_fn="pathensemble.txt"):
+def list_trajectory_folders_lt_maxnum(indir, max_cycnum, pe_fn="pathensemble.txt"):
     """
-        indir is an ensemble folder (like .../000/)
-        Returns a list of directories containing the non-shoot trajectories of this ensemble.
-        
-        pe_fn: filename of the pathensemble.txt file (I don't know, this may change)
-        indir: directory where pe_fn is located
-        max_cycnum: only cycnums less than max_cycnum will be moved
-    """
-    
-    ACCFLAGS, REJFLAGS = set_flags_ACC_REJ()
+    List trajectory folders with cycle numbers less than max_cycnum.
 
-    pe = read_pathensemble(indir+"/"+pe_fn)
+    Parameters
+    ----------
+    indir : str
+        Directory where pe_fn is located.
+    max_cycnum : int
+        Maximum cycle number.
+    pe_fn : str, optional
+        Filename of the pathensemble.txt file.
+
+    Returns
+    -------
+    list of str
+        List of directories containing the non-shoot trajectories.
+    """
+    ACCFLAGS, REJFLAGS = set_flags_ACC_REJ()
+    pe = read_pathensemble(os.path.join(indir, pe_fn))
     move_list = []
+
     assert len(pe.cyclenumbers) == len(pe.generation)
-    for flag, cycnum, gen in zip(pe.flags,pe.cyclenumbers,pe.generation):
+    for flag, cycnum, gen in zip(pe.flags, pe.cyclenumbers, pe.generation):
         if flag in ACCFLAGS:
             flagstr = "traj-acc"
         elif flag in REJFLAGS:
             flagstr = "traj-rej"
         else:
-            raise NotImplementedError("Paths are either rejected or accepted. Path "+str(cycnum)+" of ensemble "+str(indir)+" does not even belong to the rejected, but to the flag: "+str(flag))
+            raise NotImplementedError(f"Path {cycnum} of ensemble {indir} does not belong to the accepted or rejected flags.")
+        
         if cycnum < max_cycnum:
-            dirstring = indir+"/traj/"+flagstr+"/"+str(cycnum)+"/"
+            dirstring = os.path.join(indir, "traj", flagstr, str(cycnum))
             move_list.append(dirstring)
+
     return move_list
 
-def move_trajectories(traj_dirs, target_dir,verbose=False):
+def move_trajectories(traj_dirs, target_dir, verbose=False):
+    """
+    Move trajectories to the target directory.
+
+    Parameters
+    ----------
+    traj_dirs : list of str
+        List of directories to move.
+    target_dir : str
+        Target directory.
+    verbose : bool, optional
+        If True, prints the source and destination of moved directories.
+    """
     for movedir in traj_dirs:
-        temp_target = target_dir+"/"+movedir
-        os.system('mkdir -p '+temp_target)
-        os.system('mv '+movedir+'/* '+temp_target)
+        temp_target = os.path.join(target_dir, movedir)
+        os.makedirs(temp_target, exist_ok=True)
+        os.system(f'mv {movedir}/* {temp_target}')
         if verbose:
-            print("moved: \nfrom: "+movedir+"\nto: "+temp_target)
+            print(f"Moved from: {movedir}\nTo: {temp_target}")
 
 def execute_command(cmd, cwd=None, inputs=None, fn=''):
     """
-    Command is executed, after which we wait until it is terminated, and return the return code of the command.
+    Execute a command and wait until it is terminated.
 
-    cmd: command given as list of strings
-    cwd: current working directory
-    inputs: in bytes!!!
-    return_code: return code of command, an integer
+    Parameters
+    ----------
+    cmd : list of str
+        Command given as list of strings.
+    cwd : str, optional
+        Current working directory.
+    inputs : bytes, optional
+        Input to the command.
+    fn : str, optional
+        Filename for logging.
+
+    Returns
+    -------
+    int
+        Return code of the command.
     """
-
     cmd_string = ' '.join(cmd)
-    print("Executing:\n"+cmd_string)
+    print(f"Executing command: {cmd_string}")
     if inputs is not None:
-        print(("With input: ").encode('ascii')+inputs)
-
-    out_fn = fn+'stdout.txt'
-    err_fn = fn+'stderr.txt'
-
-    if cwd: 
+        print(f"With input: {inputs.decode('ascii')}")
+    
+    out_fn = f'{fn}stdout.txt'
+    err_fn = f'{fn}stderr.txt'
+    if cwd:
         out_fn = os.path.join(cwd, out_fn)
         err_fn = os.path.join(cwd, err_fn)
 
-    #initialize return code as None object
     return_code = None
-
     with open(out_fn, 'wb') as fout, open(err_fn, 'wb') as ferr:
-        exe = subprocess.Popen(
-                cmd,
-                stdin = subprocess.PIPE,
-                stdout = fout,
-                stderr = ferr,
-                shell = False,
-                cwd = cwd
-        )
-
+        exe = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=fout, stderr=ferr, shell=False, cwd=cwd)
         exe.communicate(input=inputs)
-        
-        # I think this is the command that forces to wait till execution.
         return_code = exe.returncode
-    
-    if return_code != 0:
-        print('Execution failed')
-        print('Attempted command: %s', cmd_string)
-        print('Execution directory: %s', cwd)
-        if inputs is not None:
-            print('Input to the command was: %s', inputs)
-        print('Return code from the command was: %i', return_code)
-        print('Output from command can be found in: %s', out_fn)
-        print('Errors from command can be found in: %s', err_fn)
-        error_message = ('Command failed:\n {}. \nReturn code: {}').format(cmd_string,return_code)
-        raise RuntimeError(error_message)
 
-    if return_code is not None and return_code == 0:
-        print('Command '+str(cmd_string)+' went perfectly fine.')
+    if return_code != 0:
+        print(f"Execution failed. Command: {cmd_string}, Directory: {cwd}, Input: {inputs}, Return code: {return_code}")
+        print(f"Output: {out_fn}, Errors: {err_fn}")
+        raise RuntimeError(f"Command failed: {cmd_string}. Return code: {return_code}")
+    
+    if return_code == 0:
+        print(f"Command '{cmd_string}' executed successfully.")
         os.remove(out_fn)
         os.remove(err_fn)
-
+    
     return return_code
 
 def collect_trajectories_from_trajdirs(shoot_dirs):
+    """
+    Collect trajectory files from the given directories.
+
+    Parameters
+    ----------
+    shoot_dirs : list of str
+        List of directories containing trajectories.
+
+    Returns
+    -------
+    list of str
+        List of trajectory file paths.
+    """
     trajectories = []
     for trajdir in shoot_dirs:
-        temptraj = glob.glob(trajdir+"traj/*.trr")
+        temptraj = glob.glob(os.path.join(trajdir, "traj", "*.trr"))
         trajectories += temptraj
     return trajectories
 
-def append_to_txt(temp_file,source_file):
+def append_to_txt(temp_file, source_file):
+    """
+    Append the contents of temp_file to source_file.
+
+    Parameters
+    ----------
+    temp_file : str
+        Path to the temporary file.
+    source_file : str
+        Path to the source file.
+    """
     with open(source_file, "a+") as f:
-        f.write("-"*20)
-        f.write("Appending from "+temp_file)
-        f.write("-"*20)
+        f.write("-" * 20)
+        f.write(f"Appending from {temp_file}")
+        f.write("-" * 20)
         f.write("\n")
         with open(temp_file, "r") as g:
             for line in g:
                 f.write(line)
-        g.close()
-    f.close()
 
 def read_from_cleanfn(cleanfn):
-    assert os.path.isfile(cleanfn), "We cannot find cleanfn file at: "+cleanfn
+    """
+    Read the clean file number from the given file.
+
+    Parameters
+    ----------
+    cleanfn : str
+        Path to the clean file.
+
+    Returns
+    -------
+    int
+        Clean file number.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the clean file does not exist.
+    ValueError
+        If the content of the clean file is not an integer.
+    """
+    if not os.path.isfile(cleanfn):
+        raise FileNotFoundError(f"We cannot find cleanfn file at: {cleanfn}")
+    
     with open(cleanfn, 'r') as f:
         temp = f.readline().strip()
-        try: 
+        try:
             n_clean = int(temp)
         except ValueError:
-            print("We did not find an integer in n_clean_fn ("+str(cleanfn)+"), but: "+temp)
-    f.close()
+            raise ValueError(f"We did not find an integer in cleanfn file ({cleanfn}), but found: {temp}")
+    
     return n_clean
 
 def write_to_cleanfn(cleanfn, n_clean):
-    assert os.path.isfile(cleanfn), "We cannot find cleanfn file at: "+cleanfn
+    """
+    Write the clean file number to the given file.
+
+    Parameters
+    ----------
+    cleanfn : str
+        Path to the clean file.
+    n_clean : int
+        Clean file number to write.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the clean file does not exist.
+    """
+    if not os.path.isfile(cleanfn):
+        raise FileNotFoundError(f"We cannot find cleanfn file at: {cleanfn}")
+    
     with open(cleanfn, 'w+') as f:
         f.write(str(n_clean))
-    f.close()
+    print(f"Clean file number {n_clean} written to {cleanfn}.")
 
 def write_trajdirs_to_txt(list_trajdirs, fn):
+    """
+    Write the list of trajectory directories to a text file.
+
+    Parameters
+    ----------
+    list_trajdirs : list of str
+        List of trajectory directories.
+    fn : str
+        Filename of the text file.
+    """
     with open(fn, "w+") as f:
         for path in list_trajdirs:
-            f.write(str(path)+"\n")
+            f.write(str(path) + "\n")
+    print(f"Trajectory directories written to {fn}.")
 
 def get_traj_sizes(trajectories):
-    """ Returns list of sizes (in bytes) of the trajectories """
-    size_list = []
-    for traj in trajectories:
-        size_list.append(os.path.getsize(traj))
+    """
+    Get the sizes of the trajectory files.
+
+    Parameters
+    ----------
+    trajectories : list of str
+        List of trajectory file paths.
+
+    Returns
+    -------
+    list of int
+        List of sizes (in bytes) of the trajectory files.
+    """
+    size_list = [os.path.getsize(traj) for traj in trajectories]
     return size_list
 
-def filter_gmx_trajectory(traj, group_idx, index_file,
-                      topol_file, out_ftype = "xtc", delete = True):
+def filter_gmx_trajectory(traj, group_idx, index_file, topol_file, out_ftype="xtc", delete=True):
     """
-    Only save the atoms in group_idx for the given trajectory, and save
-    to the requested out_ftype filetype.
+    Filter the trajectory to only save the atoms in the specified group.
+
+    Parameters
+    ----------
+    traj : str
+        Path to the trajectory file.
+    group_idx : int
+        Index of the group to save.
+    index_file : str
+        Path to the index file.
+    topol_file : str
+        Path to the topology file.
+    out_ftype : str, optional
+        Output file type (default is "xtc").
+    delete : bool, optional
+        If True, deletes the original trajectory file after filtering.
+
+    Raises
+    ------
+    RuntimeError
+        If the filtering process fails.
     """
-    outfn = traj[:-4]+"."+out_ftype
+    outfn = traj[:-4] + "." + out_ftype
     cmd = ["gmx", "trjconv", "-f", traj, "-s", topol_file, "-o", outfn]
     if index_file is not None:
         cmd += ["-n", index_file]
-    print("Doing command: "+str(cmd))
-    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, shell = False)
-    input_str = str(group_idx)+"\n"
+    
+    print(f"Executing command: {' '.join(cmd)}")
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, shell=False)
+    input_str = f"{group_idx}\n"
     input_bytes = input_str.encode()
     p.communicate(input_bytes)
     p.wait()
-    if delete:  
+
+    if p.returncode != 0:
+        raise RuntimeError(f"Filtering trajectory {traj} failed with return code {p.returncode}.")
+    
+    if delete:
         os.remove(traj)
+        print(f"Original trajectory {traj} deleted after filtering.")
+    else:
+        print(f"Filtered trajectory saved as {outfn}.")
