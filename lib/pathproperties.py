@@ -125,7 +125,7 @@ def create_distrib_first_crossing(folders, interfaces_input, outputfile, do_pdf,
         print(f"Processing folder: {fol}")
         ofile = f"{folder}/order.txt"
         ostart = -1  # TODO: Verify if this should be changed
-        op = read_order(ofile, ostart)
+        op = parse_order_file(ofile, ostart)
         flags = op.flags
         trajs = op.longtraj
         lens = op.lengths
