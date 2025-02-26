@@ -10,7 +10,7 @@ from tistools import set_tau_distrib, set_tau_first_hit_M_distrib, cross_dist_di
 from tistools import ACCFLAGS, REJFLAGS
 
 from tistools import get_lmr_masks, get_generation_mask, get_flag_mask, select_with_masks
-from tistools import unwrap_by_weight, running_avg_local_probs, get_local_probs, get_global_probs_from_dict, get_global_probs_from_local, construct_M_milestoning, global_cross_prob
+from tistools import unwrap_by_weight, running_avg_local_probs, get_local_probs, get_global_probs_from_dict, get_global_probs_from_local, construct_M_milestoning, global_pcross_msm
 
 from pprint import pprint    # to print the vars of the pathensemble object
 # Created file and added transition function
@@ -20,7 +20,7 @@ from pprint import pprint    # to print the vars of the pathensemble object
 
 logger = logging.getLogger(__name__)
 
-def global_cross_prob_star(M, doprint=False):
+def global_pcross_msm_star(M, doprint=False):
     # probability to arrive in -1 before 0
     # given that you are at 0 now and that you are leaving 0
     # = crossing probability from 0 to -1
@@ -1843,7 +1843,7 @@ def ploc_memory(pathensembles, interfaces, trr=True):
             pmin = [repptisploc[r]["2L"] for r in range(1,len(repptisploc))]
             pplus = [repptisploc[r]["2R"] for r in range(1,len(repptisploc))]
             Milst = construct_M_milestoning(pmin, pplus, len(interfaces[:i+1]))
-            z1, z2, y1, y2 = global_cross_prob(Milst)
+            z1, z2, y1, y2 = global_pcross_msm(Milst)
             plocs["mlst"].append(y1[0][0])
             # plocs["mlst"].append(repptisploc[i]["2R"]*plocs["mlst"][-1])
 
@@ -1853,7 +1853,7 @@ def ploc_memory(pathensembles, interfaces, trr=True):
             pi = get_transition_probzz(wi)
             # pi = get_simple_probs(wi)
             Mi = construct_M_istar(pi, max(4, 2*len(interfaces[:i+2])), len(interfaces[:i+2]))
-            z1, z2, y1, y2 = global_cross_prob_star(Mi)
+            z1, z2, y1, y2 = global_pcross_msm_star(Mi)
             plocs["apptis"].append(y1[0][0])
 
 
