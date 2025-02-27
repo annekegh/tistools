@@ -2,6 +2,7 @@ from .pathlengths import *
 from json import load
 import numpy as np
 from .reading import * 
+import matplotlib.pyplot as plt
 
 ### CROSSING PROBABILITIES ###
 def get_pptis_shortcross_probabilities(pe, inzero=False, lambda_minone=True, verbose=False):
@@ -554,9 +555,7 @@ def compare_cross_probabilities_blockavg(pPP, pPN, pNP, pNN, P_plus, P_min, P_A,
         Relative errors in RETIS crossing probabilities.
     Nblocks : int, optional
         Number of blocks for block averaging. Default is 10.
-    """
-    import matplotlib.pyplot as plt
-    
+    """    
     # Print a table comparing the short crossing probabilities
     print("Comparison of short crossing probabilities:")
     print("----------------------------------------------")

@@ -19,8 +19,8 @@ def get_transition_probs(pes, w = None, tr=False):
 
     Parameters
     ----------
-    pes : List of PathEnsemble objects
-        The PathEnsemble object must be from an [i*] simulation.
+    pes : List of :py:class:`.PathEnsemble` objects
+        The :py:class:`.PathEnsemble` object must be from an [i*] simulation.
     w : array-like, optional
         The weights of the paths. If None, the weights are calculated from
         the flags. The default is None.
