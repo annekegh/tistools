@@ -125,7 +125,7 @@ class PathEnsemble(object):
 
     def __init__(self, data=None):
         """
-        Initializes a PathEnsemble object.
+        Initializes a :py:class:`.PathEnsemble` object.
 
         Parameters
         ----------
@@ -278,8 +278,8 @@ class PathEnsemble(object):
 
         Returns
         -------
-        PathEnsemble
-            A new PathEnsemble object with unified paths.
+        :py:class:`.PathEnsemble`
+            A new :py:class:`.PathEnsemble` object with unified paths.
         """
         new_pe = PathEnsemble()
         new_pe.cyclenumbers = self.cyclenumbers
@@ -314,8 +314,8 @@ class PathEnsemble(object):
 
         Returns
         -------
-        PathEnsemble
-            A new PathEnsemble object containing only the specified cycles.
+        :py:class:`.PathEnsemble`
+            A new :py:class:`.PathEnsemble` object containing only the specified cycles.
         """
         new_pe = PathEnsemble()
         new_pe.cyclenumbers = self.cyclenumbers[cycle_ids]
@@ -350,8 +350,8 @@ class PathEnsemble(object):
 
         Returns
         -------
-        PathEnsemble
-            A new PathEnsemble object containing the bootstrapped paths.
+        :py:class:`.PathEnsemble`
+            A new :py:class:`.PathEnsemble` object containing the bootstrapped paths.
         """
         import random
 
@@ -583,7 +583,7 @@ def assert_consistent(cyclenumbers, lengths, flags, generation, longtraj, data):
 
 def read_pathensemble(fn, ostart=0):
     """
-    Reads a pathensemble.txt file and returns a PathEnsemble object.
+    Reads a pathensemble.txt file and returns a :py:class:`.PathEnsemble` object.
 
     Parameters
     ----------
@@ -594,7 +594,7 @@ def read_pathensemble(fn, ostart=0):
 
     Returns
     -------
-    PathEnsemble
+    :py:class:`.PathEnsemble`
         An object containing the data from the pathensemble.txt file.
 
     Notes
@@ -1084,7 +1084,7 @@ def get_data_ensemble_consistent(folder):
     tuple
         A tuple containing:
         - op (OrderParameter): The OrderParameter object from the order.txt file.
-        - pe (PathEnsemble): The PathEnsemble object from the pathensemble.txt file.
+        - pe (:py:class:`.PathEnsemble`): The :py:class:`.PathEnsemble` object from the pathensemble.txt file.
 
     Raises
     ------

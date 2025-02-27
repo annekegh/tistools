@@ -19,7 +19,7 @@ def get_lmr_masks(pe, masktype="all"):
 
     Parameters
     ----------
-    pe : PathEnsemble
+    pe : :py:class:`.PathEnsemble`
         The path ensemble from which to extract masks.
     masktype : str, optional
         The path type(s) to include in the masks (e.g., "RMR"). Defaults to "all",
@@ -53,7 +53,7 @@ def get_flag_mask(pe, status):
 
     Parameters
     ----------
-    pe : PathEnsemble
+    pe : :py:class:`.PathEnsemble`
         The path ensemble from which to extract the mask.
     status : str
         The status flag to filter paths by (e.g., "ACC" for accepted paths, "REJ" for rejected paths).
@@ -76,7 +76,7 @@ def get_generation_mask(pe, generation):
 
     Parameters
     ----------
-    pe : PathEnsemble
+    pe : :py:class:`.PathEnsemble`
         The path ensemble from which to extract the mask.
     generation : int
         The generation number to filter paths by.
@@ -226,7 +226,7 @@ def bootstrap_local_repptis(pathensembles, nN=10, nB=1000):
 
     Parameters
     ----------
-    pathensembles : list of PathEnsemble
+    pathensembles : list of :py:class:`.PathEnsemble`
         A list of :py:class:`.PathEnsemble` objects from REPPTIS simulations. Each object contains simulation data
         for analysis.
     nN : int, optional
@@ -312,8 +312,8 @@ def global_bootstrap_repptis(pathensembles, nN=10, nB=1000):
 
     Parameters
     ----------
-    pathensembles : list of PathEnsemble objects
-        The PathEnsemble objects must be from REPPTIS simulations.
+    pathensembles : list of :py:class:`.PathEnsemble` objects
+        The :py:class:`.PathEnsemble` objects must be from REPPTIS simulations.
     zero_left : bool, optional
         If True, then the zero_left interface was used in the [0^-'] ensemble.
         In this case, the [0^-'] ensemble has interfaces
@@ -955,8 +955,8 @@ def get_local_probs(pe, w = None, tr=False):
 
     Parameters
     ----------
-    pe : PathEnsemble object
-        The PathEnsemble object must be from a PPTIS simulation.
+    pe : :py:class:`.PathEnsemble` object
+        The :py:class:`.PathEnsemble` object must be from a PPTIS simulation.
     w : array-like, optional
         The weights of the paths. If None, the weights are calculated from
         the flags. The default is None.

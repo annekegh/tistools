@@ -92,7 +92,7 @@ def block_error_analysis(path_ensembles, interfaces, interval, load=False):
 
     Parameters
     ----------
-    path_ensembles : PathEnsemble  
+    path_ensembles : :py:class:`.PathEnsemble`  
         The loaded path ensemble object.  
 
     interfaces : list of float  
@@ -245,7 +245,7 @@ def load_path_ensembles(indir, load=False):
 
     Returns
     -------
-    pathensembles_original : PathEnsemble  
+    pathensembles_original : :py:class:`.PathEnsemble`  
         The loaded path ensemble object.  
 
     interfaces : list of float  
@@ -309,7 +309,7 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
 
     Parameters
     ----------
-    pathensembles_original : PathEnsemble
+    pathensembles_original : :py:class:`.PathEnsemble`
         The original path ensembles containing trajectory data.
 
     interfaces : list of float
