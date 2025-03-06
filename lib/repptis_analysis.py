@@ -374,7 +374,7 @@ def global_bootstrap_repptis(pathensembles, nN=10, nB=1000):
                 ploc = get_local_probs(boot_pe)
                 boot_data['ens'][i]['ploc'] = ploc
             # C. Calculate the global crossing probabilities 
-            Pmin, Pplus, Pcross = get_global_probs([boot_data['ens'][i]['ploc'] 
+            Pmin, Pplus, Pcross = get_global_probs_from_dict([boot_data['ens'][i]['ploc'] 
                                                     for i in 
                                                     boot_data['ens'].keys()])
             boot_data['Pmin'] = Pmin
