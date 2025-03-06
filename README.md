@@ -1,7 +1,7 @@
 <div align="left">
     <img src="media/tistools.webp" width="40%" align="left" style="margin-right: 15px"/>
     <div style="display: inline-block;">
-        <h2 style="display: inline-block; vertical-align: middle; margin-top: 0;">TISTOOLS</h2>
+        <h2 style="display: inline-block; vertical-align: middle; margin-top: 0;border-bottom: none">TISTOOLS</h2>
         <p>
     <em><code>❯ Tools to analyse the output of TIS or RETIS simulations</code></em>
 </p>
@@ -37,9 +37,7 @@
 
 ## Overview
 
-`TISTOOLS` is a Python program that extracts the information from the output of TIS or RETIS simulations performed with the program PyRETIS (see [www.pyretis.org](http://www.pyretis.org)). It can be used to assess the statistics of the path ensembles and those of the order parameter(s).
-
-**Warning:** The package is in full development and is not (!) well tested nor complete. It mainly serves as a working tool while developing new methods.
+`TISTOOLS` is a Python program that extracts the information from the output of TIS or RETIS simulations performed with the program PyRETIS (see [www.pyretis.org](http://www.pyretis.org)) or programs with the PyRETIS output file format. It can be used to assess the statistics of the path ensembles and those of the order parameter(s).
 
 ---
 
