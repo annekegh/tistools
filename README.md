@@ -1,7 +1,13 @@
 <div align="left">
     <img src="media/tistools.webp" width="40%" align="left" style="margin-right: 15px"/>
     <div style="display: inline-block;">
-        <h2 style="display: inline-block; vertical-align: middle; margin-top: 0;border-bottom: none">TISTOOLS</h2>
+        <div id="user-content-toc">
+          <ul style="display: inline-block; vertical-align: middle; margin-top: 0;border-bottom: none;list-style: none;">
+            <summary>
+              <h1>tistools</h1>
+            </summary>
+          </ul>
+        </div>
         <p>
     <em><code>❯ Tools to analyse the output of TIS or RETIS simulations</code></em>
 </p>
@@ -28,8 +34,7 @@
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
-  - [Usage](#usage)
-- [Contributing](#contributing)
+  - [Usage](#usage)<!-- - [Contributing](#contributing) -->
 - [License](#license)
 - [Authors](#authors)
 
