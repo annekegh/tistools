@@ -1,6 +1,130 @@
 # functions to construct and analyse an MSM based on the ensembles
+# functions to construct and analyse an MSM based on the ensembles
 import numpy as np
 
+#======================================
+# PPTIS
+#======================================
+
+def construct_tau_vector(N, NS, taumm, taump, taupm, taupp):
+    """
+    Constructs a flattened vector of transition times for the PPTIS simulation.
+
+    This function takes the transition times for different path types (LML, LMR, RML, RMR)
+    and organizes them into a single flattened vector according to the PPTIS ensemble structure.
+
+    Parameters
+    ----------
+    N : int
+        The number of ensembles. Must be at least 3.
+    NS : int
+        The expected size of the output vector. Must satisfy NS = 4*N - 5.
+    taumm : list of float
+        Transition times for the LML (Left-to-Left) path type. Must have length N.
+    taump : list of float
+        Transition times for the LMR (Left-to-Right) path type. Must have length N.
+    taupm : list of float
+        Transition times for the RML (Right-to-Left) path type. Must have length N.
+    taupp : list of float
+        Transition times for the RMR (Right-to-Right) path type. Must have length N.
+
+    Returns
+    -------
+    tau : numpy.ndarray
+        A flattened vector of transition times with length NS.
+
+    Raises
+    ------
+    ValueError
+        If any of the input constraints are not met (e.g., invalid lengths or values).
+    """
+    # Validate input constraints
+    if N < 3:
+        raise ValueError(f"N must be at least 3, but got {N}.")
+    if NS != 4 * N - 5:
+        raise ValueError(f"NS must be equal to 4*N - 5 ({4 * N - 5}), but got {NS}.")
+    if len(taumm) != N or len(taump) != N or len(taupm) != N or len(taupp) != N:
+        raise ValueError(f"All input transition time lists (taumm, taump, taupm, taupp) must have length N={N}.")
+
+    # Initialize the output vector with zeros
+    tau = np.zeros(NS)
+
+    # Assign values for the [0-] ensemble
+    tau[0] = taupp[0]
+
+    # Assign values for the [0+-] ensemble
+    tau[1] = taumm[1]
+    tau[2] = taump[1]
+    tau[3] = taupm[1]
+
+    # Assign values for intermediate ensembles [1+-], [2+-], ..., [(N-3)+-]
+    for i in range(1, N - 2):
+        tau[4 * i] = taumm[i + 1]
+        tau[4 * i + 1] = taump[i + 1]
+        tau[4 * i + 2] = taupm[i + 1]
+        tau[4 * i + 3] = taupp[i + 1]
+
+    # Assign values for the [(N-2)^(-1)] ensemble
+    tau[-3] = taumm[-1]
+    tau[-2] = taump[-1]
+
+    # Assign a placeholder value for the final ensemble (B)
+    tau[-1] = 0.0  # This value is arbitrary and can be adjusted as needed
+
+    return tau
+
+def construct_M(p_mm, p_mp, p_pm, p_pp, N):
+    """
+    Constructs the transition matrix M for the PPTIS simulation.
+
+    This function builds a transition matrix M that describes the probabilities of transitioning
+    between states in the PPTIS framework. The matrix is constructed based on the local crossing
+    probabilities for different path types (LML, LMR, RML, RMR).
+
+    Parameters
+    ----------
+    p_mm : list of float
+        Local crossing probabilities for the LML (Left-to-Left) path type. Must have length N-1.
+    p_mp : list of float
+        Local crossing probabilities for the LMR (Left-to-Right) path type. Must have length N-1.
+    p_pm : list of float
+        Local crossing probabilities for the RML (Right-to-Left) path type. Must have length N-1.
+    p_pp : list of float
+        Local crossing probabilities for the RMR (Right-to-Right) path type. Must have length N-1.
+    N : int
+        The number of interfaces. Must be at least 3.
+
+    Returns
+    -------
+    M : numpy.ndarray
+        The transition matrix of shape (NS, NS), where NS = 4*N - 5.
+
+    Raises
+    ------
+    ValueError
+        If any of the input constraints are not met (e.g., invalid lengths or values).
+    """
+
+    # Validate input constraints
+    if N < 3:
+        raise ValueError(f"N must be at least 3, but got {N}.")
+    if len(p_mm) != N - 1 or len(p_mp) != N - 1 or len(p_pm) != N - 1 or len(p_pp) != N - 1:
+        raise ValueError(f"All input probability lists (p_mm, p_mp, p_pm, p_pp) must have length N-1={N-1}.")
+
+    NS = 4 * N - 5  # Dimension of the transition matrix
+
+    # Handle the special case for N=3
+    if N == 3:
+        return construct_M_N3(p_mm, p_mp, NS)
+
+    # Initialize the transition matrix with zeros
+    M = np.zeros((NS, NS))
+
+    # Fill in transitions for states [0-] and [0+-]
+    M[0, 1:4] = [p_mm[0], p_mp[0], 0]  # Transitions from [0-]
+    M[1, 0] = 1  # Transition from [0+-] back to [0-]
+    M[2, 4:8] = [p_mm[1], p_mp[1], 0, 0]  # Transitions from [0+-]
+    M[3, 0] = 1  # Transition from [0+-] back to [0-]
 #======================================
 # PPTIS
 #======================================
@@ -619,8 +743,6 @@ def get_pieces_matrix(M, absor, kept):
 
     return Mp, D, E, M11
 
-
-import numpy as np
 
 def get_pieces_vector(vec, absor, kept):
     """

@@ -4,6 +4,7 @@
 *.aux
 *.pdf
 build/
+*.egg*
 dist/
 .DS_STORE
 *.egg-info
