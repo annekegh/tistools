@@ -1818,6 +1818,9 @@ def memory_analysis(w_path, tr = False):
         for start in range(intf+1, w_path[0].shape[0]):
             print(f"    - START at interface {start}: {q_tot[0][start][intf]} | # weights: {q_tot[1][start][intf]}")
     print("q_tot: ", q_tot)
+    plt.imshow(q_tot[0], cmap='hot', interpolation='none')
+    plt.colorbar()
+    plt.show()
 
     return(q_k, q_tot)
 
@@ -1882,3 +1885,543 @@ def ploc_memory(pathensembles, interfaces, trr=True):
 def msm_metrics(M, interfaces):
     
     return
+
+def plot_q_matrix(q_tot, interfaces=None):
+    """
+    Visualize the q_tot matrix from TIS simulations, showing memory effects in transitions.
+    
+    Parameters:
+    -----------
+    q_tot : numpy.ndarray
+        A matrix where:
+        - q_tot[0][i][k] for i<k: probability that a path starting at interface i and reaching k-1 will reach k
+        - q_tot[0][i][k] for i>k: probability that a path starting at interface i and reaching k+1 will reach k
+        - q_tot[1][i][k] contains the corresponding number of samples
+    interfaces : list, optional
+        The interface positions (for axis labeling)
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap, ListedColormap
+    import matplotlib.gridspec as gridspec
+    import matplotlib.cm as cm
+    from matplotlib.colors import to_hex
+    
+    # Extract the probability matrix and weights matrix from q_tot
+    q_probs = q_tot[0]
+    q_weights = q_tot[1]
+    n_interfaces = q_probs.shape[0]
+    
+    if interfaces is None:
+        interfaces = list(range(n_interfaces))
+    
+    # Create a figure with custom layout: heatmap and transition plots
+    fig = plt.figure(figsize=(18, 10))
+    gs = gridspec.GridSpec(2, 2, height_ratios=[1.2, 1], width_ratios=[1.2, 1])
+    
+    # Create custom colormap centered at 0.5
+    # Blue for < 0.5 (more diffusive), red for > 0.5 (less diffusive)
+    heatmap_cmap = LinearSegmentedColormap.from_list('memory_effect', 
+                                           [(0, 'blue'), (0.5, 'white'), (1, 'red')], N=256)
+    
+    # Generate high-contrast heatmap-like colors
+    def generate_high_contrast_colors(n):
+        if n <= 1:
+            return ["#1f77b4"]  # Default blue for single item
+            
+        # Create a custom colormap with enhanced contrast between adjacent colors
+        if n <= 10:
+            # For fewer interfaces (≤10), offer two colormap options
+            
+            # Option 1: tab10 - qualitatively different colors that are still ordered
+            # base_cmap = plt.cm.get_cmap('tab10', n)
+            # return [to_hex(base_cmap(i)) for i in range(n)]
+            
+            # Option 2: viridis with enhanced spacing for better contrast
+            viridis_cmap = plt.cm.get_cmap('viridis')
+            # Use wider spacing to enhance contrast between adjacent colors
+            return [to_hex(viridis_cmap(i/(n-1) if n > 1 else 0.5)) for i in range(n)]
+        else:
+            # For more interfaces, use viridis with adjusted spacing
+            cmap1 = plt.cm.get_cmap('viridis')
+            
+            # Get colors with deliberate spacing for better contrast
+            colors = []
+            for i in range(n):
+                # Distribute colors with slight variations in spacing
+                # This avoids adjacent indices having too similar colors
+                pos = (i / max(1, n-1)) * 0.85 + 0.1  # Scale to range 0.1-0.95
+                
+                # Introduce small oscillations in color position for adjacent indices
+                if i % 2 == 1:
+                    pos = min(0.95, pos + 0.05)
+                    
+                colors.append(to_hex(cmap1(pos)))
+                
+            return colors
+    
+    # Plot 1: Heatmap of q_probs
+    ax_heat = plt.subplot(gs[0, 0])
+    masked_data = np.ma.masked_invalid(q_probs)  # Mask NaN values
+    im = ax_heat.imshow(masked_data, cmap=heatmap_cmap, vmin=0, vmax=1, 
+                       interpolation='none', aspect='auto')
+    
+    # Add colorbar
+    cbar = fig.colorbar(im, ax=ax_heat, label='Probability')
+    
+    # Add reference line at 0.5
+    cbar.ax.axhline(y=0.5, color='black', linestyle='--', linewidth=1)
+    cbar.ax.text(1.5, 0.5, '0.5 (diffusive)', va='center', ha='left', fontsize=9)
+    
+    # Add annotations for probability values and sample sizes
+    for i in range(n_interfaces):
+        for k in range(n_interfaces):
+            if not np.isnan(q_probs[i, k]) and not np.ma.is_masked(masked_data[i, k]):
+                weight = q_weights[i, k]
+                text = f"{q_probs[i, k]:.2f}\n(n={int(weight)})" if weight > 0 else "N/A"
+                color = 'black' if 0.2 < q_probs[i, k] < 0.8 else 'white'
+                ax_heat.text(k, i, text, ha='center', va='center', color=color, fontsize=8)
+    
+    # Set ticks and labels for heatmap
+    ax_heat.set_xticks(np.arange(n_interfaces))
+    ax_heat.set_yticks(np.arange(n_interfaces))
+    if interfaces is not None:
+        ax_heat.set_xticklabels([f"{i}" for i in range(n_interfaces)])
+        ax_heat.set_yticklabels([f"{i}" for i in range(n_interfaces)])
+    ax_heat.set_xlabel('Target Interface k')
+    ax_heat.set_ylabel('Starting Interface i')
+    ax_heat.set_title('Memory Effect Matrix: q(i,k)', fontsize=14)
+    
+    # No grid for heatmap
+    
+    # Add explanatory text
+    desc_text = """
+    This matrix shows the probability q(i,k) that:
+    • For i<k: a path starting at interface i and reaching k-1 will reach k
+    • For i>k: a path starting at interface i and reaching k+1 will reach k
+    
+    In a purely diffusive process, all values would be 0.5.
+    Values > 0.5 (red) indicate a bias toward crossing the next interface.
+    Values < 0.5 (blue) indicate a bias toward returning without crossing.
+    """
+    fig.text(0.02, 0.02, desc_text, fontsize=10, wrap=True)
+    
+    # Plot 2: Forward transitions (L→R) - q(i,k) for i<k
+    ax_forward = plt.subplot(gs[0, 1])
+    
+    # Create colors for forward transitions
+    forward_targets = [k for k in range(1, n_interfaces)]
+    forward_colors = generate_high_contrast_colors(len(forward_targets))
+    
+    # For each target interface k, plot q(i,k) for all starting interfaces i<k
+    for idx, k in enumerate(forward_targets):
+        target_data = []
+        starting_interfaces = []
+        for i in range(k):
+            if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:  # Minimum sample threshold
+                target_data.append(q_probs[i, k])
+                starting_interfaces.append(i)
+        
+        if target_data:
+            ax_forward.plot(starting_interfaces, target_data, 'o-', 
+                          label=f'Target: {k}', linewidth=2, markersize=8,
+                          color=forward_colors[idx])
+    
+    # Add reference line at 0.5
+    ax_forward.axhline(y=0.5, color='gray', linestyle='--', alpha=0.7)
+    
+    # Configure the forward plot
+    ax_forward.set_xlabel('Starting Interface i')
+    ax_forward.set_ylabel('Probability q(i,k)')
+    ax_forward.set_title('Forward Transition Probabilities (L→R)', fontsize=12)
+    ax_forward.set_ylim(0, 1.05)
+    ax_forward.set_xlim(-0.5, n_interfaces-1.5)
+    ax_forward.set_xticks(range(n_interfaces))
+    ax_forward.grid(True, alpha=0.3)
+    ax_forward.legend(title='Target Interface k', loc='upper center', 
+                     bbox_to_anchor=(0.5, -0.15), ncol=min(5, n_interfaces-1))
+    
+    # Plot 3: Memory effect by distance - grouping transitions by the same jump size
+    ax_jump = plt.subplot(gs[1, 0])
+    
+    max_distance = n_interfaces - 1
+    distances = range(1, max_distance + 1)
+    
+    # Create colors for jump distances
+    jump_colors = generate_high_contrast_colors(max_distance)
+    
+    for idx, dist in enumerate(distances):
+        probs = []
+        starting_positions = []
+        for i in range(n_interfaces - dist):
+            k = i + dist
+            if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:  # Minimum sample threshold
+                probs.append(q_probs[i, k])
+                starting_positions.append(i)
+                
+        if probs:
+            ax_jump.plot(starting_positions, probs, 'o-', 
+                       label=f'Δλ = {dist}', linewidth=2, markersize=8,
+                       color=jump_colors[idx])
+    
+    # Add reference line at 0.5
+    ax_jump.axhline(y=0.5, color='gray', linestyle='--', alpha=0.7)
+    
+    # Configure the jump distance plot
+    ax_jump.set_xlabel('Starting Interface i')
+    ax_jump.set_ylabel('Probability q(i, i+dist)')
+    ax_jump.set_title('Memory Effect by Jump Distance (L→R)', fontsize=12)
+    ax_jump.set_ylim(0, 1.05)
+    ax_jump.set_xlim(-0.5, n_interfaces-1.5)
+    ax_jump.set_xticks(range(n_interfaces))
+    ax_jump.grid(True, alpha=0.3)
+    ax_jump.legend(title='Jump Distance Δλ', loc='upper center', 
+                  bbox_to_anchor=(0.5, -0.15), ncol=min(5, max_distance))
+    
+    # Plot 4: Backward transitions (R→L) - q(i,k) for i>k
+    ax_backward = plt.subplot(gs[1, 1])
+    
+    # Create colors for backward transitions
+    backward_targets = [k for k in range(n_interfaces-1)]
+    backward_colors = generate_high_contrast_colors(len(backward_targets))
+    
+    # For each target interface k, plot q(i,k) for all starting interfaces i>k
+    for idx, k in enumerate(backward_targets):
+        target_data = []
+        starting_interfaces = []
+        for i in range(k+1, n_interfaces):
+            if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:  # Minimum sample threshold
+                target_data.append(q_probs[i, k])
+                starting_interfaces.append(i)
+        
+        if target_data:
+            ax_backward.plot(starting_interfaces, target_data, 'o-', 
+                           label=f'Target: {k}', linewidth=2, markersize=8,
+                           color=backward_colors[idx])
+    
+    # Add reference line at 0.5
+    ax_backward.axhline(y=0.5, color='gray', linestyle='--', alpha=0.7)
+    
+    # Configure the backward plot
+    ax_backward.set_xlabel('Starting Interface i')
+    ax_backward.set_ylabel('Probability q(i,k)')
+    ax_backward.set_title('Backward Transition Probabilities (R→L)', fontsize=12)
+    ax_backward.set_ylim(0, 1.05)
+    ax_backward.set_xlim(0.5, n_interfaces-0.5)
+    ax_backward.set_xticks(range(n_interfaces))
+    ax_backward.grid(True, alpha=0.3)
+    ax_backward.legend(title='Target Interface k', loc='upper center', 
+                      bbox_to_anchor=(0.5, -0.15), ncol=min(5, n_interfaces-1))
+    
+    # Adjust layout
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+    plt.suptitle('Transition Interface Sampling Memory Analysis', fontsize=16)
+    
+    return fig
+
+# Example usage - call this function after running your memory_analysis function
+# q_k, q_tot = memory_analysis(w_path, tr=True)
+# fig = plot_q_matrix(q_tot, interfaces)
+# plt.show()
+
+
+def plot_memory_analysis(q_tot, p, interfaces=None):
+    """
+    Create alternative visualizations for memory effects in TIS simulations.
+    
+    Parameters:
+    -----------
+    q_tot : numpy.ndarray
+        A matrix where:
+        - q_tot[0][i][k] for i<k: probability that a path starting at interface i and reaching k-1 will reach k
+        - q_tot[0][i][k] for i>k: probability that a path starting at interface i and reaching k+1 will reach k
+        - q_tot[1][i][k] contains the corresponding number of samples
+    p : numpy.ndarray
+        Transition probability matrix between interfaces
+    interfaces : list, optional
+        The interface positions (for axis labeling)
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap
+    import matplotlib.gridspec as gridspec
+    import matplotlib.cm as cm
+    import matplotlib.colors as colors
+    from matplotlib.ticker import MaxNLocator
+    import seaborn as sns
+    from scipy.optimize import curve_fit
+    
+    # Extract the probability matrix and weights matrix from q_tot
+    q_probs = q_tot[0]
+    q_weights = q_tot[1]
+    n_interfaces = q_probs.shape[0]
+    
+    if interfaces is None:
+        interfaces = list(range(n_interfaces))
+    
+    # ================ Figure 1: Memory Decay Analysis ================
+    fig1 = plt.figure(figsize=(16, 14))
+    gs1 = gridspec.GridSpec(2, 2, height_ratios=[1, 1], width_ratios=[1, 1])
+    
+    # Create custom colormap for heatmaps
+    cmap = LinearSegmentedColormap.from_list('memory_effect', 
+                                          [(0, 'blue'), (0.5, 'white'), (1, 'red')], N=256)
+    
+    # Plot 1: Memory Decay with Distance (Forward transitions)
+    ax1 = fig1.add_subplot(gs1[0, 0])
+    
+    # Calculate memory effect as deviation from 0.5 (diffusive behavior)
+    memory_data = np.zeros((n_interfaces-1, n_interfaces-1))
+    memory_data.fill(np.nan)
+    
+    for start_i in range(n_interfaces-1):
+        for target_k in range(start_i+1, n_interfaces):
+            # Calculate distance between interfaces
+            distance = target_k - start_i
+            # Memory effect is deviation from 0.5
+            if not np.isnan(q_probs[start_i, target_k]) and q_weights[start_i, target_k] > 5:
+                memory_data[start_i, distance-1] = abs(q_probs[start_i, target_k] - 0.5)
+    
+    # Plot heatmap
+    sns.heatmap(memory_data, cmap='viridis', ax=ax1, 
+                cbar_kws={'label': '|Probability - 0.5| (Memory Effect Strength)'})
+    
+    ax1.set_xlabel('Interface Distance (k - i)')
+    ax1.set_ylabel('Starting Interface i')
+    ax1.set_title('Memory Effect Decay with Distance (Forward L→R)', fontsize=12)
+    ax1.set_xticks(np.arange(n_interfaces-1) + 0.5)
+    ax1.set_xticklabels(np.arange(1, n_interfaces))
+    ax1.set_yticks(np.arange(n_interfaces-1) + 0.5)
+    ax1.set_yticklabels(np.arange(n_interfaces-1))
+    
+    # Plot 2: Memory Decay Profile and Relaxation Times
+    ax2 = fig1.add_subplot(gs1[0, 1])
+    
+    # Generate colors for different starting positions
+    cmap_start = plt.cm.viridis
+    colrs = [cmap_start(i/(n_interfaces-1)) for i in range(n_interfaces-1)]
+    
+    # Exponential decay function for fitting memory effects
+    def exp_decay(x, a, tau, c):
+        return a * np.exp(-x / tau) + c
+    
+    # Store fitted relaxation times
+    relaxation_times = []
+    relaxation_errors = []
+    starting_points = []
+    
+    # Fit exponential decay to memory effect vs distance for each starting interface
+    for i in range(n_interfaces-1):
+        distances = np.array(range(1, n_interfaces - i))
+        values = np.array([memory_data[i, d-1] for d in distances])
+        valid_mask = ~np.isnan(values)
+        
+        if np.sum(valid_mask) >= 3:  # Need at least 3 points for meaningful fit
+            try:
+                # Initial parameter guesses
+                p0 = [0.2, 1.0, 0.05]  # amplitude, tau, offset
+                
+                # Curve fitting
+                popt, pcov = curve_fit(exp_decay, distances[valid_mask], values[valid_mask], p0=p0, 
+                                      bounds=([0, 0, 0], [1, 10, 0.5]))
+                
+                # Extract relaxation time (tau) and its error
+                tau = popt[1]
+                tau_err = np.sqrt(np.diag(pcov))[1] if np.all(np.isfinite(pcov)) else 0
+                
+                relaxation_times.append(tau)
+                relaxation_errors.append(tau_err)
+                starting_points.append(i)
+                
+                # Plot fitted curve
+                x_fit = np.linspace(min(distances), max(distances), 100)
+                y_fit = exp_decay(x_fit, *popt)
+                ax2.plot(x_fit, y_fit, '--', color=colrs[i], alpha=0.7)
+                
+                # Plot original data
+                ax2.plot(distances[valid_mask], values[valid_mask], 'o-', 
+                        label=f'Start: {i}, τ={tau:.2f}±{tau_err:.2f}', color=colrs[i])
+                
+            except RuntimeError:
+                # If curve_fit fails, just plot the raw data
+                ax2.plot(distances[valid_mask], values[valid_mask], 'o-', 
+                        label=f'Start: {i} (fit failed)', color=colrs[i])
+        else:
+            # Just plot the raw data if not enough points for fitting
+            if np.any(valid_mask):
+                ax2.plot(distances[valid_mask], values[valid_mask], 'o-', 
+                        label=f'Start: {i} (insufficient data)', color=colrs[i])
+    
+    ax2.set_xlabel('Interface Distance (k - i)')
+    ax2.set_ylabel('Memory Effect Strength |P - 0.5|')
+    ax2.set_title('Memory Decay Profile and Relaxation Times', fontsize=12)
+    ax2.grid(True, alpha=0.3)
+    ax2.set_ylim(bottom=0)
+    ax2.legend(loc='upper right', ncol=1)
+    
+    # Inset: Relaxation times vs starting interface
+    if len(relaxation_times) > 1:
+        ax2_inset = ax2.inset_axes([0.55, 0.1, 0.4, 0.3])
+        ax2_inset.bar(starting_points, relaxation_times, yerr=relaxation_errors, color=colrs, capsize=5)
+        ax2_inset.set_xlabel('Starting Interface')
+        ax2_inset.set_ylabel('Relaxation Time τ')
+        ax2_inset.set_title('Memory Relaxation Time by Starting Point')
+        ax2_inset.grid(True, alpha=0.3)
+    
+    # Plot 3: Deviations from Diffusive Behavior in Forward Transitions (using p matrix)
+    ax3 = fig1.add_subplot(gs1[1, 0])
+    
+    # Create array for adjacency transitions (i to i+1) using p matrix
+    adjacent_forward = np.zeros(n_interfaces - 1)
+    
+    for i in range(n_interfaces - 1):
+        if p is not None and i < p.shape[0] and i+1 < p.shape[1]:
+            # Use p matrix for adjacent transitions
+            adjacent_forward[i] = p[i, i+1] - 0.5
+        else:
+            # Fall back to q_probs if p is not available
+            if not np.isnan(q_probs[i, i+1]) and q_weights[i, i+1] > 5:
+                adjacent_forward[i] = q_probs[i, i+1] - 0.5
+            else:
+                adjacent_forward[i] = np.nan
+    
+    # Create bar plot with positive/negative coloring
+    bars = ax3.bar(range(n_interfaces - 1), adjacent_forward, 
+                  color=['red' if x > 0 else 'blue' for x in adjacent_forward if not np.isnan(x)])
+    ax3.axhline(y=0, color='k', linestyle='-', alpha=0.5)
+    
+    # Add annotations
+    for i, v in enumerate(adjacent_forward):
+        if not np.isnan(v):
+            ax3.text(i, v + np.sign(v)*0.02, f"{v:.2f}", ha='center', fontsize=9)
+    
+    ax3.set_xlabel('Interface i')
+    ax3.set_ylabel('Deviation from Diffusive (P - 0.5)')
+    ax3.set_title('Memory Effect in Adjacent Forward Transitions (i → i+1)', fontsize=12)
+    ax3.set_xticks(range(n_interfaces - 1))
+    ax3.set_xticklabels([f"{i}" for i in range(n_interfaces - 1)])
+    
+    # Plot 4: Memory Retention Across Interfaces (using Relative Standard Deviation)
+    ax4 = fig1.add_subplot(gs1[1, 1])
+    
+    # Calculate memory retention using relative standard deviation (coefficient of variation)
+    # Excluding q(i,i) and q(i,i+1) as they are 0 and 1 respectively
+    memory_retention = np.zeros(n_interfaces)
+    
+    for k in range(1, n_interfaces):
+        # Get all probabilities for reaching k from different starting points
+        # Exclude i=k (q(i,i)=0) and i=k-1 (q(i,i+1)=1)
+        probs = [q_probs[i, k] for i in range(k-1) if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5]
+        if len(probs) > 1:
+            # Calculate relative standard deviation (coefficient of variation)
+            # RSD = (standard deviation / mean) * 100%
+            mean_prob = np.mean(probs)
+            if mean_prob > 0:  # Avoid division by zero
+                std_prob = np.std(probs)
+                memory_retention[k] = (std_prob / mean_prob) * 100  # As percentage
+            else:
+                memory_retention[k] = np.nan
+    
+    # Plot the memory retention (RSD)
+    valid_k = [k for k in range(1, n_interfaces) if not np.isnan(memory_retention[k])]
+    valid_retention = [memory_retention[k] for k in valid_k]
+    
+    if valid_k:
+        bars4 = ax4.bar(valid_k, valid_retention, color='purple', alpha=0.7)
+        
+        # Add annotations for memory retention values
+        for i, k in enumerate(valid_k):
+            ax4.text(k, valid_retention[i] + 1, f"{valid_retention[i]:.1f}%", ha='center', fontsize=9)
+        
+        ax4.set_xlabel('Target Interface k')
+        ax4.set_ylabel('Relative Standard Deviation (%)')
+        ax4.set_title('Memory Retention: Variability in Transition Probabilities\n(excluding q(i,i) and q(i,i+1))', fontsize=12)
+        ax4.set_xticks(range(1, n_interfaces))
+        ax4.set_xticklabels([f"{i}" for i in range(1, n_interfaces)])
+        ax4.grid(True, axis='y', alpha=0.3)
+        ax4.set_ylim(0, max(valid_retention) * 1.2 if valid_retention else 10)  # Adjust y-axis with some headroom
+    else:
+        ax4.text(0.5, 0.5, "Insufficient data for memory retention analysis", 
+               ha='center', va='center', transform=ax4.transAxes)
+    
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    fig1.suptitle('TIS Memory Effect Analysis - Alternative Views', fontsize=16)
+    
+    # ================ Figure 2: Memory Effect Ratio Analysis ================
+    fig2 = plt.figure(figsize=(16, 7))
+    gs2 = gridspec.GridSpec(1, 2)
+    
+    # Plot 1: Memory Effect Heat Ratio (divergence from diffusive behavior)
+    ax5 = fig2.add_subplot(gs2[0, 0])
+    
+    # Calculate memory effect ratio: P/(1-P) compared to diffusive 0.5/(1-0.5)=1
+    memory_ratio = np.zeros_like(q_probs)
+    memory_ratio.fill(np.nan)
+    
+    for i in range(n_interfaces):
+        for k in range(n_interfaces):
+            if not np.isnan(q_probs[i, k]) and q_probs[i, k] != 0 and q_probs[i, k] != 1:
+                memory_ratio[i, k] = (q_probs[i, k] / (1 - q_probs[i, k])) / 1.0  # Normalize by diffusive ratio of 1
+    
+    # Plot heatmap with logarithmic scale
+    im5 = ax5.imshow(memory_ratio, cmap='RdBu_r', norm=colors.LogNorm(vmin=0.1, vmax=10))
+    
+    # Add colorbar
+    cbar5 = fig2.colorbar(im5, ax=ax5, label='Probability Ratio P/(1-P) [log scale]')
+    
+    # Add annotations for ratio values
+    for i in range(n_interfaces):
+        for k in range(n_interfaces):
+            if not np.isnan(memory_ratio[i, k]) and q_weights[i, k] > 5:
+                text_color = 'black'
+                if memory_ratio[i, k] > 5 or memory_ratio[i, k] < 0.2:
+                    text_color = 'white'
+                ax5.text(k, i, f"{memory_ratio[i, k]:.2f}", ha='center', va='center', 
+                       color=text_color, fontsize=8)
+    
+    ax5.set_xlabel('Target Interface k')
+    ax5.set_ylabel('Starting Interface i')
+    ax5.set_title('Memory Effect Ratio: Deviation from Diffusive Behavior', fontsize=12)
+    ax5.set_xticks(range(n_interfaces))
+    ax5.set_yticks(range(n_interfaces))
+    
+    # Plot 2: Memory Asymmetry - Forward vs Backward transitions
+    ax6 = fig2.add_subplot(gs2[0, 1])
+    
+    # Calculate memory asymmetry for pairs of interfaces (i, j)
+    memory_asymmetry = np.zeros_like(q_probs)
+    memory_asymmetry.fill(np.nan)
+    
+    for i in range(n_interfaces):
+        for j in range(n_interfaces):
+            if i != j and not np.isnan(q_probs[i, j]) and not np.isnan(q_probs[j, i]):
+                if q_weights[i, j] > 5 and q_weights[j, i] > 5:
+                    # Asymmetry is the difference between forward and backward probabilities
+                    memory_asymmetry[i, j] = q_probs[i, j] - q_probs[j, i]
+    
+    # Plot heatmap
+    im6 = ax6.imshow(memory_asymmetry, cmap='RdBu', vmin=-0.5, vmax=0.5)
+    
+    # Add colorbar
+    cbar6 = fig2.colorbar(im6, ax=ax6, label='Probability Asymmetry (i→j vs j→i)')
+    
+    # Add annotations
+    for i in range(n_interfaces):
+        for j in range(n_interfaces):
+            if not np.isnan(memory_asymmetry[i, j]):
+                text_color = 'black'
+                if abs(memory_asymmetry[i, j]) > 0.3:
+                    text_color = 'white'
+                ax6.text(j, i, f"{memory_asymmetry[i, j]:.2f}", ha='center', va='center', 
+                       color=text_color, fontsize=8)
+    
+    ax6.set_xlabel('Target Interface j')
+    ax6.set_ylabel('Starting Interface i')
+    ax6.set_title('Memory Asymmetry: Forward vs. Backward Transitions', fontsize=12)
+    ax6.set_xticks(range(n_interfaces))
+    ax6.set_yticks(range(n_interfaces))
+    
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    fig2.suptitle('TIS Memory Effect Analysis - Advanced Metrics', fontsize=16)
+    
+    return fig1, fig2

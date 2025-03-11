@@ -1,5 +1,4 @@
 # functions to construct and analyse an MSM based on the ensembles
-# functions to construct and analyse an MSM based on the ensembles
 import numpy as np
 
 #======================================
