@@ -18,7 +18,6 @@ import logging
 from .repptis_analysis import *
 from .repptis_msm import *
 import matplotlib.pyplot as plt
-from pprint import pprint
 import deeptime.markov as dpt
 
 # Hard-coded rejection flags found in output files
@@ -92,23 +91,49 @@ def global_pcross_msm_star(M, doprint=False):
     y2 = np.dot(D, z1) + np.dot(Mp, z2)   # Transitions to intermediate states
     
     if doprint:
-        print("Mp eigenvals")
+        # Print eigenvalue analysis
+        print("\n=== Eigenvalue Analysis ===")
         vals, vecs = np.linalg.eig(Mp)
-        print(vals)
-        print("1-Mp eigenvals")
+        print("Mp eigenvalues:", np.round(vals, 4))
+        
         vals, vecs = np.linalg.eig(a)
-        print(vals)
-        print("other pieces M")
-        print(D)
-        print(E)
-        print(M11)
-        print("vector z1,z2")
-        print(z1)
-        print(z2)
-        print("vector y1,y2")
-        print(y1)
-        print(y2)
-        print("check", np.sum((y2-z2)**2))  # 0, so z2 and y2 indeed the same
+        print("(I-Mp) eigenvalues:", np.round(vals, 4))
+        
+        # Print matrix components with clear formatting
+        print("\n=== Matrix Components ===")
+        print("D (transitions from intermediate to boundary states):")
+        print(np.array2string(D, precision=4, suppress_small=True))
+        
+        print("\nE (transitions from boundary to intermediate states):")
+        print(np.array2string(E, precision=4, suppress_small=True))
+        
+        print("\nM11 (transitions between boundary states):")
+        print(np.array2string(M11, precision=4, suppress_small=True))
+        
+        # Print solution vectors with clear labels
+        print("\n=== Solution Vectors ===")
+        print("z1 (boundary states solution):")
+        print(np.array2string(z1, precision=4))
+        
+        print("\nz2 (intermediate states solution):")
+        print(np.array2string(z2, precision=4))
+        
+        # Print result vectors with clear labels
+        print("\n=== Result Vectors ===")
+        print("y1 (boundary states result):")
+        print(np.array2string(y1, precision=4))
+        
+        print("\ny2 (intermediate states result):")
+        print(np.array2string(y2, precision=4))
+        
+        # Verification check
+        diff_norm = np.sum((y2-z2)**2)
+        print("\n=== Verification ===")
+        print(f"||y2-z2||² = {diff_norm:.6e}")
+        if diff_norm < 1e-10:
+            print("✓ Verification passed: z2 and y2 are identical (as expected)")
+        else:
+            print("⚠ Verification failed: z2 and y2 differ")
     
     return z1, z2, y1, y2
 
@@ -241,19 +266,21 @@ def get_transition_probs_weights(w_path):
                     if pe_i > w_path[0].shape[0]-1:
                         break
                     counts += [np.sum(w_path[pe_i][i][k:]), np.sum(w_path[pe_i][i][k-1:])]
-                    print(pe_i-1, i, k, np.sum(w_path[pe_i][i][k:])/np.sum(w_path[pe_i][i][k-1:]), np.sum(w_path[pe_i][i][k-1:]))
+                    # print(pe_i-1, i, k, np.sum(w_path[pe_i][i][k:])/np.sum(w_path[pe_i][i][k-1:]), np.sum(w_path[pe_i][i][k-1:]))
             elif i > k:
                 # Backward transitions (R→L)
                 for pe_i in range(k+2, i+2):
                     if pe_i > w_path[0].shape[0]-1:
                         break
                     counts += [np.sum(w_path[pe_i][i][:k+1]), np.sum(w_path[pe_i][i][:k+2])]
-                    print(pe_i-1, i, k, np.sum(w_path[pe_i][i][:k+1])/np.sum(w_path[pe_i][i][:k+2]), np.sum(w_path[pe_i][i][:k+2]))
+                    # print(pe_i-1, i, k, np.sum(w_path[pe_i][i][:k+1])/np.sum(w_path[pe_i][i][:k+2]), np.sum(w_path[pe_i][i][:k+2]))
 
             q[i][k] = counts[0] / counts[1] if counts[1] > 0 else 0
             if 0 in counts:
-                print(q[i][k], counts, i, k)
-    print("q: ", q)
+                print(f"Warning: Zero count detected for q[{i}][{k}] = {q[i][k]}, counts = {counts}")
+    
+    print("\nIntermediate transition probabilities (q matrix):")
+    print(np.array2string(q, precision=4, suppress_small=True))
     
     # Calculate final transition probabilities p(i,k) from q values
     for i in range(w_path[0].shape[0]):
@@ -278,9 +305,10 @@ def get_transition_probs_weights(w_path):
                     p[i][k] = 1-q[i][1]
                 else:
                     p[i][k] = 0
-    print("p: ", p)
-
-    print("Local crossing probabilities computed")
+    
+    print("\nFinal transition probabilities (p matrix):")
+    print(np.array2string(p, precision=4, suppress_small=True))
+    print("\nLocal crossing probabilities computed successfully")
     
     return p
 
@@ -353,14 +381,21 @@ def get_transition_probs_interm(w_path, weights=None, tr=False):
                         p_jtillend[j-i] = 1
                         w_jtillend[j-i] = 1
                 
-                # Debug output
-                print(f"i={i}, #j = {k-i}, k={k}")
-                print("P_i(j reached) =", p_reachedj)
-                print("P_j(k) =", p_jtillend)
-                print("full P_i(k) =", p_reachedj*p_jtillend)
-                print("weights: ", w_reachedj*w_jtillend)
-                print("weighted P_i(k) =", np.average(p_reachedj * p_jtillend, weights=w_reachedj*w_jtillend) if np.sum(w_reachedj*w_jtillend) != 0 else 0)
-                print("vs normal avg: ", np.average(p_reachedj * p_jtillend))
+                # Debug output: Transition probability calculation details
+                print(f"\n--- Transition from i={i} to k={k} (distance: {k-i}) ---")
+                print(f"Probabilities of reaching intermediate interfaces:")
+                print(f"  P_i(j reached):  {np.array2string(p_reachedj, precision=4)}")
+                print(f"  P_j(k):          {np.array2string(p_jtillend, precision=4)}")
+                print(f"\nCombined probabilities:")
+                print(f"  P_i(k) raw:      {np.array2string(p_reachedj*p_jtillend, precision=4)}")
+                print(f"  Weights:         {np.array2string(w_reachedj*w_jtillend, precision=4)}")
+                
+                weighted_avg = np.average(p_reachedj * p_jtillend, weights=w_reachedj*w_jtillend) if np.sum(w_reachedj*w_jtillend) != 0 else 0
+                normal_avg = np.average(p_reachedj * p_jtillend)
+                
+                print(f"\nFinal probabilities:")
+                print(f"  P_i(k) weighted: {weighted_avg:.4f}")
+                print(f"  P_i(k) normal:   {normal_avg:.4f}")
                 
                 # Calculate weighted average of transition probability
                 p[i][k] = np.average(p_reachedj * p_jtillend, weights=w_reachedj*w_jtillend) if np.sum(w_reachedj*w_jtillend) != 0 else 0                
@@ -383,15 +418,22 @@ def get_transition_probs_interm(w_path, weights=None, tr=False):
                         p_jtillend[j-k] = 0
                         w_reachedj[j-k] = 0
                         w_jtillend[j-k] = 0
-                    
-                # Debug output
-                print(f"i={i}, #j = {k-i}, k={k}")
-                print("P_i(j reached) =", p_reachedj)
-                print("P_j(k) =", p_jtillend)
-                print("full P_i(k) =", p_reachedj*p_jtillend)
-                print("weights: ", w_reachedj*w_jtillend)
-                print("weighted P_i(k) =", np.average(p_reachedj * p_jtillend, weights=w_reachedj*w_jtillend) if np.sum(w_reachedj*w_jtillend) != 0 else 0)
-                print("vs normal avg: ", np.average(p_reachedj * p_jtillend))
+                
+                # Debug output: Transition probability calculation details
+                print(f"\n--- Transition from i={i} to k={k} (distance: {i-k}) ---")
+                print(f"Probabilities of reaching intermediate interfaces:")
+                print(f"  P_i(j reached):  {np.array2string(p_reachedj, precision=4)}")
+                print(f"  P_j(k):          {np.array2string(p_jtillend, precision=4)}")
+                print(f"\nCombined probabilities:")
+                print(f"  P_i(k) raw:      {np.array2string(p_reachedj*p_jtillend, precision=4)}")
+                print(f"  Weights:         {np.array2string(w_reachedj*w_jtillend, precision=4)}")
+                
+                weighted_avg = np.average(p_reachedj * p_jtillend, weights=w_reachedj*w_jtillend) if np.sum(w_reachedj*w_jtillend) != 0 else 0
+                normal_avg = np.average(p_reachedj * p_jtillend)
+                
+                print(f"\nFinal probabilities:")
+                print(f"  P_i(k) weighted: {weighted_avg:.4f}")
+                print(f"  P_i(k) normal:   {normal_avg:.4f}")
                 
                 # Calculate weighted average of transition probability
                 p[i][k] = np.average(p_reachedj * p_jtillend, weights=w_reachedj*w_jtillend) if np.sum(w_reachedj*w_jtillend) != 0 else 0
@@ -463,8 +505,10 @@ def get_simple_probs(w_path):
                 else:
                     p[i][k] = 0
                     
-    print("p: ", p)
-    print("Local crossing probabilities computed")
+    # Print the matrix p in a more readable format
+    print("\nLocal crossing probability matrix:")
+    print(np.array2string(p, precision=4, suppress_small=True))
+    print("\nLocal crossing probabilities computed successfully")
     
     return p
 
@@ -586,7 +630,7 @@ def get_summed_probs(pes, interfaces, weights=None, dbens=False):
 
                     w_path[i][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
                     
-        print(f"sum {i}=", np.sum(w_path[i]))
+        print(f"Sum weights ensemble i: ", np.sum(w_path[i]))
 
     # Initialize the probability matrix
     p = np.zeros([len(interfaces), len(interfaces)])
@@ -621,8 +665,10 @@ def get_summed_probs(pes, interfaces, weights=None, dbens=False):
             if counts[1] == 0:
                 print("No weights for this transition: ", p[i][k], counts, i, k)
                 
-    print("p: ", p)
-    print("Local crossing probabilities computed")
+    # Print the matrix p in a more readable format
+    print("\nLocal crossing probability matrix:")
+    print(np.array2string(p, precision=4, suppress_small=True))
+    print("\nLocal crossing probabilities computed successfully")
     
     return p
 
@@ -760,7 +806,7 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr=False, weights=None)
 
                     w_path[i][j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
 
-        print(f"sum weights ensemble {i}=", np.sum(w_path[i]))
+        print(f"Sum weights ensemble {i}: ", np.sum(w_path[i]))
 
     X = w_path
     for i in range(len(interfaces)):
@@ -883,7 +929,7 @@ def compute_weight_matrix(pe, pe_id, interfaces, tr=False, weights=None):
                     end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
 
                 X_path[j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
-    print(f"sum weights ensemble {pe_id}=", np.sum(X_path))
+    print(f"Sum weights ensemble {pe_id}: ", np.sum(X_path))
 
     X = X_path
     if tr:
@@ -1379,55 +1425,71 @@ def display_data(pes, interfaces, n_int=None, weights=None):
         idx_tr = np.transpose((tr_diff>=tresholdtr).nonzero())
         idx_tr = set((a,b) if a<=b else (b,a) for a,b in idx_tr)
 
-        print("1a. Raw data: unweighted C matrices")
+        # 1. Raw unweighted path counts
+        print("\n1a. Raw data: unweighted C matrices")
         print(f"C[{i}] = ")
-        pprint(C[i])
-        print("1b. Raw data: unweighted path counts with new MD steps")
+        print(np.array2string(C[i], precision=4, suppress_small=True))
+        
+        # 2. Path counts with new MD steps
+        print("\n1b. Raw data: unweighted path counts with new MD steps")
         print(f"C_md[{i}] = ")
-        pprint(C_md[i])
+        print(np.array2string(C_md[i], precision=4, suppress_small=True))
+        
+        # 3. Weighted data including high acceptance weights
         print("\n2. Weighted data: including high acceptance weights")
         print(f"X[{i}] = ")
-        pprint(X[i])
-        print(f"sum weights ensemble {i}=", np.sum(X[i]))
+        print(np.array2string(X[i], precision=4, suppress_small=True))
+        print(f"Sum weights ensemble {i}: {np.sum(X[i]):.4f}")
+        
+        # Warnings for significant differences between weighted and raw data
         if len(idx_weirdw) > 0:
-            print("[WARNING]")
+            print("\n[WARNING] Significant differences between weighted and raw counts:")
             for idx in idx_weirdw:
-                print(f"The weighted data significantly differs from the raw path count for paths that go from {idx[0]} to {idx[1]}. Counts: {C[i][idx[0]][idx[1]]} vs. weights: {X[i][idx[0]][idx[1]]} --> difference in fraction:{difffrac[idx[0], idx[1]]}. The number of new MD paths is {C_md[i][idx[0]][idx[1]]}")
+                print(f"  Path {idx[0]} → {idx[1]}: raw count={C[i][idx[0]][idx[1]]:.1f}, "
+                    f"weighted={X[i][idx[0]][idx[1]]:.1f}, "
+                    f"fraction diff={difffrac[idx[0], idx[1]]:.4f}, "
+                    f"MD paths={C_md[i][idx[0]][idx[1]]:.1f}")
+        
+        # 4. Weighted data with time reversal symmetry
         print("\n3a. Weighted data with time reversal")
-        print(f"TR X[{i}] = ")
         X_tr = (X[i]+X[i].T)/2.0
-        # if i == 2 and X[i][0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
-        #     X_tr[1, 0] *= 2          # Time reversal needs to be adjusted to compensate for this
-        #     X_tr[0, 1] *= 2  
-        pprint(X_tr)
+        print(np.array2string(X_tr, precision=4, suppress_small=True))
+        
+        # Warnings for significant differences in time-reversal symmetry
         if len(idx_tr) > 0:
-            print("[WARNING]")
+            print("\n[WARNING] Time-reversal symmetry violations:")
             for idx in idx_tr:
-                print(f"The reverse equivalent paths are significantly different for paths going from {idx[0]} to {idx[1]}. Relative difference: {tr_diff[idx[0],idx[1]]}. Weights L->R path: {X[i][idx[0]][idx[1]]} | Weights R->L path: {X[i][idx[1]][idx[0]]}")
+                print(f"  Path {idx[0]} ↔ {idx[1]}: relative diff={tr_diff[idx[0],idx[1]]:.4f}, "
+                    f"forward weight={X[i][idx[0]][idx[1]]:.2f}, "
+                    f"backward weight={X[i][idx[1]][idx[0]]:.2f}")
+        
+        # 5. Unweighted data with time reversal symmetry
         print("\n3b. Unweighted data with time reversal")
-        print(f"TR C[{i}] = ")
         C_tr = (C[i]+C[i].T)/2.0
-        # if i == 2 and C[i][0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
-        #     C_tr[1, 0] *= 2          # Time reversal needs to be adjusted to compensate for this
-        #     C_tr[0, 1] *= 2  
-        pprint(C_tr)
+        print(np.array2string(C_tr, precision=4, suppress_small=True))
 
-    print(10*'='+'\n')
-    print(10*'-')
-    print(f"ALL ENSEMBLES COMBINED")
-    print(10*'-')
+    # Combined statistics across all ensembles
+    print("\n" + "="*40)
+    print("\nALL ENSEMBLES COMBINED")
+    print("-"*20)
+    
+    # Calculate combined weight matrix
     W = np.zeros_like(X[1])
     for j in range(len(interfaces)):
         for k in range(len(interfaces)):
             W[j][k] = np.sum([X[i][j][k] for i in range(n_int)])
-    print("4. Weights of all ensembles combined (sum), no TR")
-    pprint(W)
-    print("5. Weights of all ensembles combined (sum), with TR")
+    
+    # Combined weights without time-reversal symmetry
+    print("\n4. Weights of all ensembles combined (sum), no TR")
+    print(np.array2string(W, precision=4, suppress_small=True))
+    
+    # Combined weights with time-reversal symmetry
+    print("\n5. Weights of all ensembles combined (sum), with TR")
     W_tr = (W+W.T)/2.
     if W[1,0] == 0:
         W_tr[0,1] *= 1 
         W_tr[1,0] *= 1
-    pprint(W_tr)
+    print(np.array2string(W_tr, precision=4, suppress_small=True))
 
     return C, X, W
 
@@ -1560,10 +1622,11 @@ def memory_analysis(w_path, tr=False):
         print(f"-> interface {intf+1} is reached, probability to reach interface {intf}:")
         for start in range(intf+1, w_path[0].shape[0]):
             print(f"    - START at interface {start}: {q_tot[0][start][intf]} | # weights: {q_tot[1][start][intf]}")
-    print("q_tot: ", q_tot)
-    plt.imshow(q_tot[0], cmap='hot', interpolation='none')
-    plt.colorbar()
-    plt.show()
+    print("\nIntermediate probabilities matrix Q:")
+    print("Conditional crossing probabilities:")
+    print(np.array2string(q_tot[0], precision=3, suppress_small=True))
+    print("\nNumber of samples for each calculation:")
+    print(np.array2string(q_tot[1], precision=0, suppress_small=True))
 
     return q_k, q_tot
 
@@ -1637,9 +1700,15 @@ def ploc_memory(pathensembles, interfaces, trr=True):
 
     _, _, plocs["repptis"] = get_global_probs_from_dict(repptisploc)
 
-    print("Milestoning p_loc: ", plocs["mlst"])
-    print("REPPTIS p_loc: ", plocs["repptis"])
-    print("APPTIS p_loc: ", plocs["apptis"])
+    print("\n=== Global Crossing Probability Analysis ===")
+    print("\nMilestoning p_loc:")
+    print(np.array2string(np.array(plocs["mlst"]), precision=4, suppress_small=True))
+    
+    print("\nREPPTIS p_loc:")
+    print(np.array2string(np.array(plocs["repptis"]), precision=4, suppress_small=True))
+    
+    print("\nAPPTIS p_loc:")
+    print(np.array2string(np.array(plocs["apptis"]), precision=4, suppress_small=True))
 
     # Make a figure of the global crossing probabilities
     plt.rcParams['text.usetex'] = True
