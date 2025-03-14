@@ -486,7 +486,7 @@ def get_summed_probs(pes, interfaces, weights=None, dbens=False):
     Parameters
     ----------
     pes : list
-        List of PathEnsemble objects. Each object represents a collection of paths
+        List of :py:class:`.PathEnsemble` objects. Each object represents a collection of paths
         from a specific simulation or interface.
     interfaces : list
         List of interface positions, typically lambda values that define the interfaces
@@ -643,7 +643,7 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr=False, weights=None)
     Parameters
     ----------
     pes : list
-        List of PathEnsemble objects. Each object represents a collection of paths
+        List of :py:class:`.PathEnsemble` objects. Each object represents a collection of paths
         from a specific simulation or interface.
     interfaces : list
         List of interface positions, typically lambda values that define the interfaces
@@ -781,8 +781,8 @@ def compute_weight_matrix(pe, pe_id, interfaces, tr=False, weights=None):
     
     Parameters
     ----------
-    pe : PathEnsemble
-        PathEnsemble object representing the collection of paths to analyze.
+    pe : :py:class:`.PathEnsemble`
+        :py:class:`.PathEnsemble` object representing the collection of paths to analyze.
     pe_id : int
         ID of the path ensemble, which determines specific handling rules and
         filtering conditions based on the ensemble's position in the interface sequence.
@@ -844,12 +844,12 @@ def compute_weight_matrix(pe, pe_id, interfaces, tr=False, weights=None):
                     if pe_id != 2:
                         dir_mask = pe.dirs == 1
                     elif pe_id == 2:
-                        dir_mask = masks[pe_id]["LML"]
+                        dir_mask = masks["LML"]
                 elif j == len(interfaces)-2 and k == len(interfaces)-1:
-                    dir_mask = masks[pe_id]["RMR"]
+                    dir_mask = masks["RMR"]
                 else:
                     dir_mask = pe.dirs == 1
-                    # dir_mask = np.logical_or(pe.dirs == 1, masks[pe_id]["LML"])                        
+                    # dir_mask = np.logical_or(pe.dirs == 1, masks["LML"])                        
                 if j == 0:
                     start_cond = pe.lambmins <= interfaces[j]
                 else: 
@@ -865,14 +865,14 @@ def compute_weight_matrix(pe, pe_id, interfaces, tr=False, weights=None):
                 if j == 1 and k == 0:
                     if pe_id != 2:
                         dir_mask = pe.dirs == -1
-                        # dir_mask = np.logical_or(pe.dirs == -1, masks[pe_id]["RMR"])
+                        # dir_mask = np.logical_or(pe.dirs == -1, masks["RMR"])
                     elif pe_id == 2:
-                        dir_mask = masks[pe_id]["LML"]
+                        dir_mask = masks["LML"]
                 elif j == len(interfaces)-2 and k == len(interfaces)-1:
-                    dir_mask = masks[pe_id]["RMR"]
+                    dir_mask = masks["RMR"]
                 else:
                     dir_mask = pe.dirs == -1
-                    # dir_mask = np.logical_or(pe.dirs == -1, masks[pe_id]["RMR"])                        
+                    # dir_mask = np.logical_or(pe.dirs == -1, masks["RMR"])                        
                 if k == 0:
                     start_cond = pe.lambmins <= interfaces[k]
                 else: 
@@ -1019,7 +1019,7 @@ def plot_rv_star(pes, interfaces, numberof):
     Parameters
     ----------
     pes : list
-        List of PathEnsemble objects containing trajectory information.
+        List of :py:class:`.PathEnsemble` objects containing trajectory information.
     interfaces : list
         List of interface positions to be displayed as vertical lines.
     numberof : int
@@ -1074,7 +1074,7 @@ def plot_rv_repptis(pes, interfaces, numberof):
     Parameters
     ----------
     pes : list
-        List of PathEnsemble objects containing trajectory information from REPPTIS simulations.
+        List of :py:class:`.PathEnsemble` objects containing trajectory information from REPPTIS simulations.
     interfaces : list
         List of interface positions to be displayed as vertical lines.
     numberof : int
@@ -1127,7 +1127,7 @@ def plot_rv_comp(pes, interfaces, n_repptis, n_staple, pe_idxs=None):
     Parameters
     ----------
     pes : list
-        List of PathEnsemble objects containing trajectory information.
+        List of :py:class:`.PathEnsemble` objects containing trajectory information.
     interfaces : list
         List of interface positions to be displayed as vertical lines.
     n_repptis : int
@@ -1232,7 +1232,7 @@ def display_data(pes, interfaces, n_int=None, weights=None):
     Parameters
     ----------
     pes : list
-        List of PathEnsemble objects to analyze.
+        List of :py:class:`.PathEnsemble` objects to analyze.
     interfaces : list
         List of interface positions that define the state boundaries.
     n_int : int, optional
@@ -1583,7 +1583,7 @@ def ploc_memory(pathensembles, interfaces, trr=True):
     Parameters
     ----------
     pathensembles : list
-        List of PathEnsemble objects from TIS simulations.
+        List of :py:class:`.PathEnsemble` objects from TIS simulations.
     interfaces : list
         List of interface positions defining the order parameter space.
     trr : bool, optional
@@ -1629,7 +1629,7 @@ def ploc_memory(pathensembles, interfaces, trr=True):
 
         # APPTIS p_loc
         if i < len(pathensembles)-1:
-            wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], tr=trr)
+            wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], len(interfaces), tr=trr)
             pi = get_transition_probs_weights(wi)
             Mi = construct_M_istar(pi, max(4, 2*len(interfaces[:i+2])), len(interfaces[:i+2]))
             z1, z2, y1, y2 = global_pcross_msm_star(Mi)
