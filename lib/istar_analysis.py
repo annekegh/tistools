@@ -181,7 +181,7 @@ def construct_M_istar(P, NS, N):
     
     return M
 
-def get_transition_probzz(w_path):
+def get_transition_probs_weights(w_path):
     """
     Calculate local crossing probabilities between interfaces using the recursive probability approach.
     
@@ -284,7 +284,7 @@ def get_transition_probzz(w_path):
     
     return p
 
-def get_transition_probs(w_path, weights=None, tr=False):
+def get_transition_probs_interm(w_path, weights=None, tr=False):
     """
     Calculate transition probabilities between interfaces using a weighted path averaging approach.
     
@@ -1612,7 +1612,7 @@ def ploc_memory(pathensembles, interfaces, trr=True):
         # APPTIS p_loc
         if i < len(pathensembles)-1:
             wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], tr=trr)
-            pi = get_transition_probzz(wi)
+            pi = get_transition_probs_weights(wi)
             Mi = construct_M_istar(pi, max(4, 2*len(interfaces[:i+2])), len(interfaces[:i+2]))
             z1, z2, y1, y2 = global_pcross_msm_star(Mi)
             plocs["apptis"].append(y1[0][0])
