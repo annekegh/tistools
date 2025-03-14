@@ -711,7 +711,7 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr=False, weights=None)
                     # Self-transitions
                     if i == 1 and j == 0:
                         w_path[i][j][k] = np.sum(select_with_masks(w, [masks[i]["LML"], accmask, ~loadmask]))
-                        pass
+                        continue
                     else:
                         w_path[i][j][k] = 0
                 elif j < k:
@@ -770,7 +770,7 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr=False, weights=None)
             X[i] += X[i].T          # Will not be needed anymore once LML paths are separated in 0 -> 1 and 1 -> 0.
     return X
 
-def compute_weight_matrix(pe, pe_id, interfaces, weights=None):
+def compute_weight_matrix(pe, pe_id, interfaces, tr=False, weights=None):
     """
     Compute weight matrix for a single path ensemble.
     
@@ -789,9 +789,12 @@ def compute_weight_matrix(pe, pe_id, interfaces, weights=None):
     interfaces : list
         List of interface positions, typically lambda values that define the interfaces
         in order parameter space.
+    tr : bool, optional
+        If True, enforces time-reversal symmetry in the weights by symmetrizing
+        the weight matrix. Default is False.
     weights : np.ndarray, optional
-        Pre-computed weights for each path. If None, weights are calculated using
-        the staple method within the function.
+        Pre-computed weights for the paths in this ensemble. If None, weights are 
+        calculated using the staple method within the function.
     
     Returns
     -------
@@ -814,7 +817,7 @@ def compute_weight_matrix(pe, pe_id, interfaces, weights=None):
     # Get the lmr masks, weights, ACCmask, and loadmask of the paths
     masks = get_lmr_masks(pe)
     if weights is None:
-        w = get_weights_staple(pe.flags, ACCFLAGS, REJFLAGS, verbose=False)
+        w = get_weights_staple(pe_id, pe.flags, pe.generation, pe.lmrs, len(interfaces), ACCFLAGS, REJFLAGS, verbose=False)
     else:
         w = weights
     accmask = get_flag_mask(pe, "ACC")
@@ -825,7 +828,7 @@ def compute_weight_matrix(pe, pe_id, interfaces, weights=None):
                 f"load paths is {np.sum(loadmask)}"
     logger.debug(msg)
 
-    X_path = np.empty([len(interfaces), len(interfaces)])
+    X_path = np.zeros([len(interfaces), len(interfaces)])
 
     for j in range(len(interfaces)):
         for k in range(len(interfaces)):
@@ -836,13 +839,17 @@ def compute_weight_matrix(pe, pe_id, interfaces, weights=None):
                     else:
                         X_path[j][k] = 0  
             elif j < k:
+                # Forward transitions (j → k where j < k)
                 if j == 0 and k == 1:
-                    if pe_id == 1:
-                        dir_mask = pe.dirs < 2
-                    else:
-                        dir_mask = pe.dirs < 2
+                    if pe_id != 2:
+                        dir_mask = pe.dirs == 1
+                    elif pe_id == 2:
+                        dir_mask = masks[pe_id]["LML"]
+                elif j == len(interfaces)-2 and k == len(interfaces)-1:
+                    dir_mask = masks[pe_id]["RMR"]
                 else:
                     dir_mask = pe.dirs == 1
+                    # dir_mask = np.logical_or(pe.dirs == 1, masks[pe_id]["LML"])                        
                 if j == 0:
                     start_cond = pe.lambmins <= interfaces[j]
                 else: 
@@ -854,13 +861,18 @@ def compute_weight_matrix(pe, pe_id, interfaces, weights=None):
             
                 X_path[j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
             else:
+                # Backward transitions (j → k where j > k)
                 if j == 1 and k == 0:
-                    if pe_id == 1:
-                        dir_mask = pe.dirs > 2
-                    else:
-                        dir_mask = pe.dirs > 2
+                    if pe_id != 2:
+                        dir_mask = pe.dirs == -1
+                        # dir_mask = np.logical_or(pe.dirs == -1, masks[pe_id]["RMR"])
+                    elif pe_id == 2:
+                        dir_mask = masks[pe_id]["LML"]
+                elif j == len(interfaces)-2 and k == len(interfaces)-1:
+                    dir_mask = masks[pe_id]["RMR"]
                 else:
                     dir_mask = pe.dirs == -1
+                    # dir_mask = np.logical_or(pe.dirs == -1, masks[pe_id]["RMR"])                        
                 if k == 0:
                     start_cond = pe.lambmins <= interfaces[k]
                 else: 
@@ -873,7 +885,13 @@ def compute_weight_matrix(pe, pe_id, interfaces, weights=None):
                 X_path[j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
     print(f"sum weights ensemble {pe_id}=", np.sum(X_path))
 
-    return X_path
+    X = X_path
+    if tr:
+        if pe_id == 2 and X[0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
+            X[1, 0] *= 2     # Time reversal needs to be adjusted to compensate for this
+        X += X.T          # Will not be needed anymore once LML paths are separated in 0 -> 1 and 1 -> 0.
+    return X
+
 
 def get_weights_staple(pe_i, flags, gen, ptypes, n_pes, ACCFLAGS, REJFLAGS, verbose=True):
     """
