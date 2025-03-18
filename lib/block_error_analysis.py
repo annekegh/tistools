@@ -114,16 +114,19 @@ def block_error_analysis(path_ensembles, interfaces, interval, load=False):
 
     if load and os.path.exists(filename):
         # Attempt to load data from the file
+        print("The data file exists, reading...")
         _, taus, pcross = load_txt_data(filename)
 
         # Validate the loaded data: check for empty values or NaNs
-        if taus is None or pcross is None or np.isnan(taus).any() or np.isnan(pcross).any():
+        # if taus is None or pcross is None or np.isnan(taus).any() or np.isnan(pcross).any():
+        if taus is None or pcross is None:
             print("Invalid data in file, recalculating...")
 
             # If data is invalid, recalculate running estimates
             _, taus, pcross, _, _, _, _, _ = calculate_running_estimate(path_ensembles, interfaces, interval)
     else:
         # If loading is disabled or the file doesn't exist, calculate running estimates
+        print("First time calculating the data file ...")
         _, taus, pcross, _, _, _, _, _ = calculate_running_estimate(path_ensembles, interfaces, interval)
 
     block_error_calculation(taus, interval, "Tau")
@@ -167,7 +170,7 @@ def block_error_calculation(running_estimate, interval, label):
         
         rel_errors.append(rel_err)
 
-    write_plot_block_error(f"block_error_analysis_{label}_{interval}", running_estimate, rel_errors)
+    write_plot_block_error(f"block_error_analysis_{label}_{interval}", running_estimate, rel_errors, interval)
 
     return rel_errors
 
