@@ -10,7 +10,7 @@ def write_histogram(fn,bin_midst,hist,F):
         for i in range(len(hist)):
             f.write('{} {} {} {}\n'.format(bin_midst[i], hist[i], dens[i], F[i],))
 
-def write_plot_block_error(filename, running_estimate, rel_errors):
+def write_plot_block_error(filename, running_estimate, rel_errors, interval):
     """
     Generates and saves a block error analysis plot and writes results to a text file.
 
@@ -37,7 +37,7 @@ def write_plot_block_error(filename, running_estimate, rel_errors):
     # Set up the plot
     plt.ioff()
     plt.figure(figsize=(10, 6))
-    plt.plot(x, rel_errors, label="Relative Error")
+    plt.plot(x * interval, rel_errors, label="Relative Error")
     plt.axhline(y=second_half_err_avg, color='r', linestyle='--',
                 label=f"Second Half Avg = {second_half_err_avg:.4f}")
     
@@ -54,14 +54,14 @@ def write_plot_block_error(filename, running_estimate, rel_errors):
 
     # Write results to a text file
     with open(filename + ".txt", "w") as f:
-        f.write(f"# Length of the dataset: {len(running_estimate)}\n")
+        f.write(f"# Length of the dataset: {len(running_estimate)} with interval of {interval}\n")
         f.write(f"# Best estimate: {best_estimate:.12f}\n")
         f.write(f"# Averaged relative error: {second_half_err_avg:.12f}\n")
         f.write("# ===============================\n")
         f.write("# Block-Length\tRelative-Error\n")
         
         for i in range(len(x)):
-            f.write(f"{x[i]}\t{rel_errors[i]:.12f}\n")
+            f.write(f"{x[i]*interval}\t{rel_errors[i]:.12f}\n")
 
 
 def write_running_estimates(filename, cycles, *args):
