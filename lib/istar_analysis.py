@@ -2337,7 +2337,8 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
             is_equidistant = True
     
     # Calculate diffusive reference probabilities based on interface spacing
-    diff_ref = calculate_diffusive_reference(interfaces, q_tot[0], q_tot[1])
+    diff_ref = calculate_diffusive_reference_spacing(interfaces)
+    # diff_ref = calculate_diffusive_reference_spacing(interfaces, q_tot[0], q_tot[1])
     
     # Function to generate high-contrast colors for plots
     def generate_high_contrast_colors(n):
@@ -3068,8 +3069,8 @@ def calculate_diffusive_reference_spacing(interfaces):
     
     This function provides a reference that only accounts for the geometric effects
     of non-equidistant interface placement, without attempting to infer an underlying
-    free energy profile. The reference assumes that crossing probabilities in a purely
-    diffusive system would be proportional to the relative distances between interfaces.
+    free energy profile. The reference respects the definition of conditional crossing 
+    probabilities q(i,k).
     
     Parameters:
     -----------
@@ -3117,26 +3118,29 @@ def calculate_diffusive_reference_spacing(interfaces):
             diff_ref[i, i+1] = 0.5
             diff_ref[i+1, i] = 0.5
     
-    # For non-adjacent transitions, use product of adjacent transitions
+    # For non-adjacent transitions, properly calculate conditional probabilities
+    # based on the definition of q(i,k)
     for i in range(n_interfaces):
         for k in range(n_interfaces):
             if abs(i - k) >= 2:  # Non-adjacent interfaces
                 if i < k:  # Forward (i → k)
-                    prob = 1.0
-                    for j in range(i, k):
-                        prob *= diff_ref[j, j+1]
-                    diff_ref[i, k] = prob
+                    # For q(i,k) with i<k: probability that a path starting at i
+                    # and reaching k-1 will reach k
+                    # In a diffusive system with relative spacing effects:
+                    diff_ref[i, k] = diff_ref[k-1, k]
                 else:  # Backward (i → k)
-                    prob = 1.0
-                    for j in range(i, k, -1):
-                        prob *= diff_ref[j, j-1]
-                    diff_ref[i, k] = prob
+                    # For q(i,k) with i>k: probability that a path starting at i
+                    # and reaching k+1 will reach k
+                    diff_ref[i, k] = diff_ref[k+1, k]
     
     return diff_ref
 
 def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_samples=5):
     """
     Estimate free energy differences between interfaces from conditional crossing probabilities.
+    
+    Excludes transitions involving the first (i=0) and last interfaces since these
+    don't start with a proper turn, which could potentially skew the free energy estimates.
     
     Uses multiple methods with priority:
     1. Direct estimates from non-adjacent transitions with sufficient statistics
@@ -3168,7 +3172,8 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
     estimates_i_ip1 = {}  # Store all estimates for each i→i+1 transition
     weights_i_ip1 = {}    # Store weights for each estimate
     
-    for i in range(n_interfaces-2):
+    # Skip i=0 and i=n_interfaces-2 to avoid transitions with first and last interfaces
+    for i in range(1, n_interfaces-3):
         # Forward transition i → i+2
         valid_forward = (not np.isnan(q_matrix[i, i+2]) and 
                         (q_weights is None or q_weights[i, i+2] >= min_samples) and
@@ -3207,8 +3212,9 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
             weights_i_ip1[i+1].append(weight)
     
     # 2. Try to estimate from longer distance transitions (i → i+n where n>2)
-    for i in range(n_interfaces):
-        for j in range(i+3, n_interfaces):  # Skip adjacent and distance=2 transitions
+    # Skip transitions involving first and last interfaces
+    for i in range(1, n_interfaces-1):
+        for j in range(i+3, n_interfaces-1):  # Skip adjacent and distance=2 transitions
             distance = j - i
             
             valid_forward = (not np.isnan(q_matrix[i, j]) and 
@@ -3251,6 +3257,7 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
                 delta_G[i+1, i] = -weighted_dG
     
     # 4. Fill in remaining gaps based on interface spacing
+    # We still need to estimate delta_G for all adjacent pairs, including those involving endpoints
     for i in range(n_interfaces-1):
         if np.isnan(delta_G[i, i+1]):
             # Use interface spacing to estimate missing values
