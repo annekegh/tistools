@@ -4,4 +4,8 @@
 *.aux
 *.pdf
 build/
+dist/
+.DS_STORE
+*.egg-info
+*/.ipynb_checkpoints/*
 *.egg*
