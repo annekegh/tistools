@@ -82,7 +82,8 @@
     │   ├── repptis_msm.py
     │   ├── repptis_pathlengths.py
     │   └── writing.py
-    ├── pyproject.toml
+    ├── media
+    │   └── tistools.webp
     ├── scripts
     │   ├── subsampler_chunk
     │   ├── tistools-clean-trajectories
@@ -93,12 +94,12 @@
     │   ├── tistools-more-distr
     │   └── tistools-remove-waters
     ├── setup.py
-    └── test
-        ├── analysis_notebook.ipynb
-        ├── block_error_analysis.ipynb
-        ├── msm_pptis.ipynb
-        ├── msm_pptis_clean.ipynb
-        └── msm_pptis_mfpt.ipynb
+    ├── test
+    │   ├── block_error_analysis.ipynb
+    │   ├── msm_pptis.ipynb
+    │   ├── msm_pptis_clean.ipynb
+    │   └── msm_pptis_mfpt.ipynb
+    └── pyproject.toml
 ```
 
 ---
