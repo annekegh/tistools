@@ -18,7 +18,11 @@ import logging
 from .repptis_analysis import *
 from .repptis_msm import *
 import matplotlib.pyplot as plt
-import deeptime.markov as dpt
+import deeptime as dpt
+# import sys
+# # caution: path[0] is reserved for script path (or '' in REPL)
+# sys.path.insert(1, '../test/')
+# import istar_test as tst
 
 # Hard-coded rejection flags found in output files
 ACCFLAGS, REJFLAGS = set_flags_ACC_REJ() 
@@ -187,26 +191,29 @@ def construct_M_istar(P, NS, N):
     
     # States [0-] and [0*+-]
     M[0, 2] = 1            # Transition from state 0 to state 2
-    M[2, 0] = P[0, 0]      # Transition from state 2 to state 0
+    M[2, 1] = P[0, 0]      # Transition from state 2 to state 1
     M[2, N+1:] = P[0, 1:]  # Transitions from state 2 to states N+1 and beyond
     M[1, 0] = 1            # Transition from state 1 to state 0
     M[-1, 0] = 1           # Transition from last state to state 0
-    M[N+1:, 2] = P[1:, 0]  # Transitions from states N+1 and beyond to state 2
+    M[N+1:-1, 1] = P[1:-1, 0]  # Transitions from states N+1 and beyond to state 1
 
     # Set up transitions for other states
     for i in range(1, N):
         M[2+i, N+i:2*N] = P[i, i:]  # Transitions from state 2+i to states N+i and beyond
-        M[N+i, 3:2+i] = P[i, 1:i]   # Transitions from state N+i to states 3 through 2+i
+        if i < N-1:
+            M[N+i, 3:2+i] = P[i, 1:i]   # Transitions from state N+i to states 3 through 2+i
 
     # Nonsampled paths
     if not M[N, -1] >= 0:
         M[N, -1] = 1
     
     # Normalize transition probabilities
-        # for i in range(NS):
-        #         row_sum = np.sum(M[i])
-        # if row_sum > 0:
-        #     M[i] = M[i] / row_sum
+    # for i in range(NS):
+    #     row_sum = np.sum(M[i])
+    #     if row_sum == 0:
+            # M[i][i] = 1
+    # if row_sum > 0:
+    #     M[i] = M[i] / row_sum
 
     # return np.delete(np.delete(M, N, 0), N, 1)
     return M
@@ -2203,18 +2210,39 @@ def plot_memory_analysis0(q_tot, p, interfaces=None):
     x = np.arange(n_interfaces - 1)
     width = 0.35
 
+    # Calculate y_limit for plot
+    y_limit = max(np.nanmax(np.abs(adjacent_forward)), np.nanmax(np.abs(adjacent_backward))) * 1.2
+
     # Use the same colors from forward/backward transitions plots for consistency
     forward_base_color = 'tab:blue'   # Base color for forward transitions
     backward_base_color = 'tab:orange'  # Base color for backward transitions
 
     # Create bars with consistent colors that match the legend
-    bar1 = ax11.bar(x - width/2, adjacent_forward, width, label='Forward (i → i+1)', 
-                color=forward_base_color, edgecolor='black', linewidth=0.5, 
-                alpha=(0.4 if v < 0 else 0.85 for v in adjacent_forward))
-
-    bar2 = ax11.bar(x + width/2, adjacent_backward, width, label='Backward (i+1 → i)', 
-                color=backward_base_color, edgecolor='black', linewidth=0.5,
-                alpha=(0.4 if v < 0 else 0.85 for v in adjacent_backward))
+    # For forward transitions: separate into positive and negative values
+    pos_mask_fwd = adjacent_forward >= 0
+    neg_mask_fwd = adjacent_forward < 0
+    
+    # Positive forward bars (higher alpha)
+    ax11.bar(x[pos_mask_fwd] - width/2, adjacent_forward[pos_mask_fwd], width, 
+                    color=forward_base_color, edgecolor='black', linewidth=0.5, alpha=0.85,
+                    label='Forward (i → i+1)')
+    
+    # Negative forward bars (lower alpha)
+    ax11.bar(x[neg_mask_fwd] - width/2, adjacent_forward[neg_mask_fwd], width, 
+                    color=forward_base_color, edgecolor='black', linewidth=0.5, alpha=0.4)
+    
+    # For backward transitions: separate into positive and negative values
+    pos_mask_bwd = adjacent_backward >= 0
+    neg_mask_bwd = adjacent_backward < 0
+    
+    # Positive backward bars (higher alpha)
+    ax11.bar(x[pos_mask_bwd] + width/2, adjacent_backward[pos_mask_bwd], width, 
+                    color=backward_base_color, edgecolor='black', linewidth=0.5, alpha=0.85,
+                    label='Backward (i+1 → i)')
+    
+    # Negative backward bars (lower alpha)
+    ax11.bar(x[neg_mask_bwd] + width/2, adjacent_backward[neg_mask_bwd], width, 
+                    color=backward_base_color, edgecolor='black', linewidth=0.5, alpha=0.4)
 
     # Add zero line
     ax11.axhline(y=0, color='k', linestyle='-', alpha=0.5)
@@ -2921,25 +2949,23 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
 
 def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, min_samples=5):
     """
-    Calculate diffusive reference probabilities for non-equidistant interfaces using
-    conditional crossing probabilities (q matrix).
+    Calculate diffusive reference probabilities for non-equidistant interfaces.
     
-    For a memoryless system, the reference probability for transitions is estimated from 
-    free energy differences between adjacent interfaces, derived from conditional 
-    crossing probabilities using detailed balance principles.
+    Accounts for the fact that in TIS, conditional crossing probabilities for
+    directly adjacent interfaces (q(i,i+1) and q(i,i-1)) are always 1.0 due to
+    the nature of path sampling. Instead uses transition probabilities or non-adjacent
+    conditional probabilities to estimate free energy differences.
     
     Parameters:
     -----------
     interfaces : list or array
         The positions of the interfaces along the reaction coordinate
     q_matrix : numpy.ndarray
-        Matrix of conditional crossing probabilities where:
-        - q_matrix[i,k] for i<k: probability that a path starting at i and reaching k-1 will reach k
-        - q_matrix[i,k] for i>k: probability that a path starting at i and reaching k+1 will reach k
+        Matrix of conditional crossing probabilities
     q_weights : numpy.ndarray, optional
-        Matrix of sample counts for each q_matrix value, used to validate data quality
+        Matrix of sample counts for each q_matrix value
     min_samples : int, optional
-        Minimum number of samples required to consider a q value valid, default is 5
+        Minimum number of samples required to consider a q value valid
         
     Returns:
     --------
@@ -2951,47 +2977,10 @@ def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, min_samp
     diff_ref.fill(np.nan)
     
     # Estimate free energy differences between adjacent interfaces
-    delta_G = np.zeros((n_interfaces, n_interfaces))
-    delta_G.fill(np.nan)
+    # We can't use q(i,i+1) directly because it's always 1.0 in TIS
+    delta_G = estimate_free_energy_differences(interfaces, q_matrix, q_weights, min_samples)
     
-    # Calculate free energy differences for adjacent interfaces using q_matrix
-    # For memoryless diffusion, q should be related to barrier heights by:
-    # q(i,i+1)/(1-q(i,i+1)) = exp(-ΔG_i,i+1)
-    # q(i+1,i)/(1-q(i+1,i)) = exp(-ΔG_i+1,i) = exp(ΔG_i,i+1)
-    for i in range(n_interfaces-1):
-        # Check data validity
-        valid_forward = (not np.isnan(q_matrix[i, i+1]) and 
-                        (q_weights is None or q_weights[i, i+1] >= min_samples) and
-                        q_matrix[i, i+1] > 0 and q_matrix[i, i+1] < 1)
-        
-        valid_backward = (not np.isnan(q_matrix[i+1, i]) and 
-                         (q_weights is None or q_weights[i+1, i] >= min_samples) and
-                         q_matrix[i+1, i] > 0 and q_matrix[i+1, i] < 1)
-        
-        if valid_forward and valid_backward:
-            # Calculate free energy difference using both directions and average
-            delta_G_forward = -np.log(q_matrix[i, i+1]/(1-q_matrix[i, i+1]))
-            delta_G_backward = np.log(q_matrix[i+1, i]/(1-q_matrix[i+1, i]))
-            
-            # Use weighted average based on sample counts if available
-            if q_weights is not None:
-                total_weight = q_weights[i, i+1] + q_weights[i+1, i]
-                delta_G[i, i+1] = (delta_G_forward * q_weights[i, i+1] + 
-                                  delta_G_backward * q_weights[i+1, i]) / total_weight
-            else:
-                delta_G[i, i+1] = (delta_G_forward + delta_G_backward) / 2
-                
-            delta_G[i+1, i] = -delta_G[i, i+1]  # By definition
-        elif valid_forward:
-            # Only forward data is valid
-            delta_G[i, i+1] = -np.log(q_matrix[i, i+1]/(1-q_matrix[i, i+1]))
-            delta_G[i+1, i] = -delta_G[i, i+1]
-        elif valid_backward:
-            # Only backward data is valid
-            delta_G[i+1, i] = -np.log(q_matrix[i+1, i]/(1-q_matrix[i+1, i]))
-            delta_G[i, i+1] = -delta_G[i+1, i]
-    
-    # Fill in diagonal with zeros (no transition)
+    # For diagonal elements (self-transitions), probability is 0
     for i in range(n_interfaces):
         diff_ref[i, i] = 0.0
     
@@ -3010,81 +2999,393 @@ def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, min_samp
     # Calculate non-adjacent transition reference probabilities
     for i in range(n_interfaces):
         for k in range(n_interfaces):
-            if abs(i - k) > 1:  # Non-adjacent interfaces
+            if abs(i - k) >= 2:  # Non-adjacent interfaces
                 if i < k:  # Forward transitions (i → k)
-                    # For non-adjacent forward transitions, the diffusive reference is
-                    # the product of conditional probabilities along the path:
-                    # q_diff(i,k) = Π_{j=i}^{k-1} q_diff(j,j+1)
-                    diff_ref[i, k] = 1.0
+                    # Calculate cumulative free energy difference from i to k
+                    cum_delta_G = 0.0
                     valid_path = True
                     
                     for j in range(i, k):
-                        if np.isnan(diff_ref[j, j+1]):
+                        if np.isnan(delta_G[j, j+1]):
                             valid_path = False
                             break
-                        diff_ref[i, k] *= diff_ref[j, j+1]
+                        cum_delta_G += delta_G[j, j+1]
                     
-                    if not valid_path:
-                        # Fallback to 0.5 if we can't compute a valid path
-                        diff_ref[i, k] = 0.5
+                    if valid_path:
+                        # Diffusive reference probability based on cumulative free energy difference
+                        diff_ref[i, k] = 1.0 / (1.0 + np.exp(cum_delta_G))
+                    else:
+                        # Check if we have direct measurement
+                        valid_q = (not np.isnan(q_matrix[i, k]) and 
+                                  (q_weights is None or q_weights[i, k] >= min_samples))
+                        if valid_q:
+                            # Compare direct measurement to product of intermediate steps
+                            product_ref = 1.0
+                            for j in range(i, k):
+                                if np.isnan(diff_ref[j, j+1]):
+                                    product_ref = 0.5 ** (k-i)  # Fallback
+                                    break
+                                product_ref *= diff_ref[j, j+1]
+                            diff_ref[i, k] = product_ref
+                        else:
+                            diff_ref[i, k] = 0.5 ** (k-i)  # Fallback to 0.5^distance
                         
                 elif i > k:  # Backward transitions (i → k)
-                    # Similar to forward, but going backward
-                    # q_diff(i,k) = Π_{j=i}^{k+1} q_diff(j,j-1)
-                    diff_ref[i, k] = 1.0
+                    # Calculate cumulative free energy difference from i to k
+                    cum_delta_G = 0.0
                     valid_path = True
                     
                     for j in range(i, k, -1):
-                        if np.isnan(diff_ref[j, j-1]):
+                        if np.isnan(delta_G[j, j-1]):
                             valid_path = False
                             break
-                        diff_ref[i, k] *= diff_ref[j, j-1]
+                        cum_delta_G += delta_G[j, j-1]
                     
-                    if not valid_path:
-                        # Fallback to 0.5 if we can't compute a valid path
-                        diff_ref[i, k] = 0.5
+                    if valid_path:
+                        # Diffusive reference probability based on cumulative free energy difference
+                        diff_ref[i, k] = 1.0 / (1.0 + np.exp(cum_delta_G))
+                    else:
+                        # Check if we have direct measurement
+                        valid_q = (not np.isnan(q_matrix[i, k]) and 
+                                  (q_weights is None or q_weights[i, k] >= min_samples))
+                        if valid_q:
+                            # Compare direct measurement to product of intermediate steps
+                            product_ref = 1.0
+                            for j in range(i, k, -1):
+                                if np.isnan(diff_ref[j, j-1]):
+                                    product_ref = 0.5 ** (i-k)  # Fallback
+                                    break
+                                product_ref *= diff_ref[j, j-1]
+                            diff_ref[i, k] = product_ref
+                        else:
+                            diff_ref[i, k] = 0.5 ** (i-k)  # Fallback to 0.5^distance
     
     return diff_ref
 
-def estimate_free_energy_differences_from_q(q_matrix, q_weights=None, min_samples=5):
+def calculate_diffusive_reference_spacing(interfaces):
     """
-    Estimate free energy differences between interfaces from conditional crossing probabilities.
+    Calculate diffusive reference probabilities based purely on interface spacing.
+    
+    This function provides a reference that only accounts for the geometric effects
+    of non-equidistant interface placement, without attempting to infer an underlying
+    free energy profile. The reference assumes that crossing probabilities in a purely
+    diffusive system would be proportional to the relative distances between interfaces.
     
     Parameters:
     -----------
+    interfaces : list or array
+        The positions of the interfaces along the reaction coordinate
+        
+    Returns:
+    --------
+    diff_ref : numpy.ndarray
+        A matrix of diffusive reference probabilities for each i,k pair
+    """
+    n_interfaces = len(interfaces)
+    diff_ref = np.zeros((n_interfaces, n_interfaces))
+    diff_ref.fill(np.nan)
+    
+    # For diagonal elements (self-transitions), probability is 0
+    for i in range(n_interfaces):
+        diff_ref[i, i] = 0.0
+    
+    # Calculate reference for adjacent interfaces based solely on relative spacing
+    if isinstance(interfaces[0], (int, float)):
+        # Calculate average interface spacing
+        spacings = np.diff(interfaces)
+        mean_spacing = np.mean(spacings)
+        
+        # For adjacent interfaces, calculate reference based on relative spacing
+        for i in range(n_interfaces - 1):
+            # Current spacing relative to average
+            rel_spacing = spacings[i] / mean_spacing
+            
+            # For a diffusive system, probability scales inversely with distance
+            # For equidistant interfaces, this gives 0.5
+            if rel_spacing > 0:
+                # Forward probability (i→i+1) is lower for wider spacing
+                diff_ref[i, i+1] = 1.0 / (1.0 + rel_spacing)
+                # Backward probability (i+1→i) is higher for wider spacing
+                diff_ref[i+1, i] = 1.0 - diff_ref[i, i+1]
+            else:
+                # Fallback to 0.5 if spacing data is invalid
+                diff_ref[i, i+1] = 0.5
+                diff_ref[i+1, i] = 0.5
+    else:
+        # If interfaces don't have numerical values, assume equidistant (0.5 probability)
+        for i in range(n_interfaces - 1):
+            diff_ref[i, i+1] = 0.5
+            diff_ref[i+1, i] = 0.5
+    
+    # For non-adjacent transitions, use product of adjacent transitions
+    for i in range(n_interfaces):
+        for k in range(n_interfaces):
+            if abs(i - k) >= 2:  # Non-adjacent interfaces
+                if i < k:  # Forward (i → k)
+                    prob = 1.0
+                    for j in range(i, k):
+                        prob *= diff_ref[j, j+1]
+                    diff_ref[i, k] = prob
+                else:  # Backward (i → k)
+                    prob = 1.0
+                    for j in range(i, k, -1):
+                        prob *= diff_ref[j, j-1]
+                    diff_ref[i, k] = prob
+    
+    return diff_ref
+
+def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_samples=5):
+    """
+    Estimate free energy differences between interfaces from conditional crossing probabilities.
+    
+    Uses multiple methods with priority:
+    1. Direct estimates from non-adjacent transitions with sufficient statistics
+    2. Path consistency between multiple non-adjacent transitions
+    3. Interface spacing when no sufficient statistics are available
+    
+    Parameters:
+    -----------
+    interfaces : list or array
+        The positions of the interfaces along the reaction coordinate
     q_matrix : numpy.ndarray
         Matrix of conditional crossing probabilities
     q_weights : numpy.ndarray, optional
-        Matrix of sample counts for each q value
+        Matrix of sample counts for each q_matrix value
     min_samples : int, optional
         Minimum number of samples required to consider a q value valid
         
     Returns:
     --------
     delta_G : numpy.ndarray
-        Matrix of free energy differences between interfaces
+        Matrix of free energy differences between adjacent interfaces
     """
-    n = q_matrix.shape[0]
-    delta_G = np.zeros((n, n))
+    n_interfaces = len(interfaces)
+    delta_G = np.zeros((n_interfaces, n_interfaces))
     delta_G.fill(np.nan)
     
-    for i in range(n):
-        for j in range(n):
-            if abs(i - j) == 1:  # Only adjacent interfaces
-                if (not np.isnan(q_matrix[i, j]) and
-                    (q_weights is None or q_weights[i, j] >= min_samples) and
-                    q_matrix[i, j] > 0 and q_matrix[i, j] < 1):
-                    
-                    # For adjacent interfaces, the free energy difference is related to
-                    # the conditional crossing probability by:
-                    # ΔG = -ln(q/(1-q)) if i < j (forward)
-                    # ΔG = ln(q/(1-q)) if i > j (backward)
-                    if i < j:
-                        delta_G[i, j] = -np.log(q_matrix[i, j]/(1-q_matrix[i, j]))
-                    else:
-                        delta_G[i, j] = np.log(q_matrix[i, j]/(1-q_matrix[i, j]))
+    # 1. First try to estimate delta_G from distance=2 transitions (i → i+2)
+    # This avoids the sampling bias in adjacent transitions
+    estimates_i_ip1 = {}  # Store all estimates for each i→i+1 transition
+    weights_i_ip1 = {}    # Store weights for each estimate
+    
+    for i in range(n_interfaces-2):
+        # Forward transition i → i+2
+        valid_forward = (not np.isnan(q_matrix[i, i+2]) and 
+                        (q_weights is None or q_weights[i, i+2] >= min_samples) and
+                        q_matrix[i, i+2] > 0 and q_matrix[i, i+2] < 1)
+                        
+        # Backward transition i+2 → i
+        valid_backward = (not np.isnan(q_matrix[i+2, i]) and 
+                         (q_weights is None or q_weights[i+2, i] >= min_samples) and
+                         q_matrix[i+2, i] > 0 and q_matrix[i+2, i] < 1)
+        
+        if valid_forward and valid_backward:
+            # Calculate free energy difference using detailed balance for i→i+2
+            ratio = q_matrix[i, i+2] / q_matrix[i+2, i]
+            dG_total = -np.log(ratio)
+            
+            # Assuming equal barrier distribution between the two steps
+            # We divide by 2 to distribute evenly between i→i+1 and i+1→i+2
+            dG_estimate = dG_total / 2
+            
+            # Get weights based on sample counts or use 1.0 as default
+            weight_forward = q_weights[i, i+2] if q_weights is not None else 1.0
+            weight_backward = q_weights[i+2, i] if q_weights is not None else 1.0
+            weight = min(weight_forward, weight_backward)  # Conservative approach
+            
+            # Store estimates for i→i+1 and i+1→i+2
+            if i not in estimates_i_ip1:
+                estimates_i_ip1[i] = []
+                weights_i_ip1[i] = []
+            estimates_i_ip1[i].append(dG_estimate)
+            weights_i_ip1[i].append(weight)
+            
+            if i+1 not in estimates_i_ip1:
+                estimates_i_ip1[i+1] = []
+                weights_i_ip1[i+1] = []
+            estimates_i_ip1[i+1].append(dG_estimate)
+            weights_i_ip1[i+1].append(weight)
+    
+    # 2. Try to estimate from longer distance transitions (i → i+n where n>2)
+    for i in range(n_interfaces):
+        for j in range(i+3, n_interfaces):  # Skip adjacent and distance=2 transitions
+            distance = j - i
+            
+            valid_forward = (not np.isnan(q_matrix[i, j]) and 
+                            (q_weights is None or q_weights[i, j] >= min_samples) and
+                            q_matrix[i, j] > 0 and q_matrix[i, j] < 1)
+                            
+            valid_backward = (not np.isnan(q_matrix[j, i]) and 
+                             (q_weights is None or q_weights[j, i] >= min_samples) and
+                             q_matrix[j, i] > 0 and q_matrix[j, i] < 1)
+            
+            if valid_forward and valid_backward:
+                # Calculate free energy difference for i→j
+                ratio = q_matrix[i, j] / q_matrix[j, i]
+                dG_total = -np.log(ratio)
+                
+                # Distribute evenly across all steps (simplistic but better than nothing)
+                dG_per_step = dG_total / distance
+                
+                # Weight based on distance (longer distances get lower weight)
+                weight_forward = q_weights[i, j] if q_weights is not None else 1.0
+                weight_backward = q_weights[j, i] if q_weights is not None else 1.0
+                weight = min(weight_forward, weight_backward) / distance  # Lower weight for longer distances
+                
+                # Store estimates for all intermediate transitions
+                for k in range(i, j):
+                    if k not in estimates_i_ip1:
+                        estimates_i_ip1[k] = []
+                        weights_i_ip1[k] = []
+                    estimates_i_ip1[k].append(dG_per_step)
+                    weights_i_ip1[k].append(weight)
+    
+    # 3. Calculate weighted average for each adjacent transition
+    for i in estimates_i_ip1:
+        if estimates_i_ip1[i]:
+            # Calculate weighted average
+            total_weight = sum(weights_i_ip1[i])
+            if total_weight > 0:
+                weighted_dG = sum(est * w for est, w in zip(estimates_i_ip1[i], weights_i_ip1[i])) / total_weight
+                delta_G[i, i+1] = weighted_dG
+                delta_G[i+1, i] = -weighted_dG
+    
+    # 4. Fill in remaining gaps based on interface spacing
+    for i in range(n_interfaces-1):
+        if np.isnan(delta_G[i, i+1]):
+            # Use interface spacing to estimate missing values
+            if isinstance(interfaces[0], (int, float)) and len(interfaces) > 1:
+                # Calculate average spacing and current spacing
+                avg_spacing = np.mean(np.diff(interfaces))
+                actual_spacing = interfaces[i+1] - interfaces[i]
+                
+                if not np.isclose(actual_spacing, avg_spacing, rtol=0.1):
+                    # For non-equidistant interfaces, free energy difference scales with log of spacing ratio
+                    # This corresponds to a diffusion model where probability ~ 1/distance
+                    spacing_ratio = actual_spacing / avg_spacing
+                    delta_G[i, i+1] = np.log(spacing_ratio)
+                else:
+                    # For approximately equidistant interfaces, assume no bias
+                    delta_G[i, i+1] = 0.0
+                
+                delta_G[i+1, i] = -delta_G[i, i+1]
+            else:
+                # No physical information, assume no bias (equidistant)
+                delta_G[i, i+1] = 0.0
+                delta_G[i+1, i] = 0.0
     
     return delta_G
+
+def plot_free_energy_landscape(interfaces, q_matrix, q_weights=None, min_samples=5):
+    """
+    Plot the free energy differences between interfaces.
+    
+    This function visualizes the free energy landscape used in the diffusive reference
+    calculation, showing both the free energy differences between adjacent interfaces
+    and the cumulative free energy profile.
+    
+    Parameters:
+    -----------
+    interfaces : list or array
+        The positions of the interfaces along the reaction coordinate
+    q_matrix : numpy.ndarray
+        Matrix of conditional crossing probabilities
+    q_weights : numpy.ndarray, optional
+        Matrix of sample counts for each q_matrix value
+    min_samples : int, optional
+        Minimum number of samples required to consider a q value valid
+        
+    Returns:
+    --------
+    fig : matplotlib.figure.Figure
+        Figure containing the free energy landscape plots
+    """
+    # Estimate free energy differences
+    delta_G = estimate_free_energy_differences(interfaces, q_matrix, q_weights, min_samples)
+    
+    # Calculate cumulative free energy profile (setting first interface as reference point)
+    cumulative_G = np.zeros(len(interfaces))
+    for i in range(1, len(interfaces)):
+        # Add up all the delta_G values from the first interface
+        valid_path = True
+        for j in range(i):
+            if np.isnan(delta_G[j, j+1]):
+                valid_path = False
+                break
+            cumulative_G[i] += delta_G[j, j+1]
+        
+        if not valid_path:
+            cumulative_G[i] = np.nan
+    
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # Plot 1: Free energy differences between adjacent interfaces
+    adjacent_dG = np.array([delta_G[i, i+1] for i in range(len(interfaces)-1)])
+    bar_positions = np.arange(len(interfaces)-1)
+    bar_width = 0.7
+    
+    # Create bars with color indicating uphill/downhill
+    colors = ['red' if dg > 0 else 'green' if dg < 0 else 'gray' for dg in adjacent_dG]
+    bars = ax1.bar(bar_positions, adjacent_dG, width=bar_width, color=colors, alpha=0.7)
+    
+    # Add value annotations on bars
+    for i, bar in enumerate(bars):
+        height = bar.get_height()
+        if not np.isnan(height):
+            y_pos = 0.3 if height < 0 else height + 0.1
+            va = 'bottom' if height >= 0 else 'top'
+            ax1.text(bar.get_x() + bar.get_width()/2, y_pos, f"{height:.2f}", 
+                    ha='center', va=va, fontsize=9)
+    
+    # Configure the first subplot
+    ax1.set_xlabel('Interface Pair Index')
+    ax1.set_ylabel('Free Energy Difference ΔG (kT)')
+    ax1.set_title('Free Energy Differences Between Adjacent Interfaces', fontsize=12)
+    ax1.set_xticks(bar_positions)
+    ax1.set_xticklabels([f"{i}→{i+1}" for i in range(len(interfaces)-1)])
+    ax1.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+    ax1.grid(axis='y', alpha=0.3)
+    
+    # Add legend
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor='red', alpha=0.7, label='Uphill (Barrier)'),
+        Patch(facecolor='green', alpha=0.7, label='Downhill (Favorable)')
+    ]
+    ax1.legend(handles=legend_elements, loc='best')
+    
+    # Plot 2: Cumulative free energy profile
+    ax2.plot(interfaces, cumulative_G, 'o-', linewidth=2, color='blue')
+    
+    # Add marker points with annotations
+    for i, (pos, g) in enumerate(zip(interfaces, cumulative_G)):
+        if not np.isnan(g):
+            ax2.plot(pos, g, 'o', markersize=8, color='blue')
+            ax2.text(pos, g + 0.1, f"{g:.2f}", ha='center', va='bottom', fontsize=9)
+    
+    # Configure the second subplot
+    ax2.set_xlabel('Interface Position λ')
+    ax2.set_ylabel('Cumulative Free Energy G(λ) - G(λ₀) (kT)')
+    ax2.set_title('Free Energy Profile Along Interface Coordinate', fontsize=12)
+    ax2.grid(True, alpha=0.3)
+    
+    # Add informational text
+    info_text = """
+    Free energy differences estimated from TIS data:
+    • Used to calculate diffusive reference probabilities
+    • Red bars indicate barriers (ΔG > 0)
+    • Green bars indicate favorable transitions (ΔG < 0)
+    
+    The cumulative profile shows the estimated free energy
+    landscape along the reaction coordinate.
+    """
+    fig.text(0.02, 0.02, info_text, fontsize=10, wrap=True)
+    
+    plt.tight_layout(rect=[0, 0.07, 1, 0.95])
+    fig.suptitle('Estimated Free Energy Landscape for Diffusive Reference', fontsize=14)
+    
+    return fig
 
 def pcca_analysis(M, n_clusters):
     """
@@ -3109,7 +3410,7 @@ def pcca_analysis(M, n_clusters):
     msm = dpt.markov.msm.MarkovStateModel(M)
 
     # Perform PCCA+ analysis
-    pcca = dpt.markov.PCCA(msm, n_clusters)
+    pcca = dpt.markov.pcca(M, n_clusters)
     pcca.compute()
 
     # Print the membership matrix

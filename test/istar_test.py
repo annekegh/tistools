@@ -479,7 +479,7 @@ def get_transition_probzz2(pes, interfaces, weights = None, tr=False):
     return p
 
 
-def get_transition_probzz(w_path):
+def get_transition_probs_weights(w_path):
     """
     Returns the local crossing probabilities for the PPTIS ensemble pe.
     This is only for the [i^+-] or [0^+-'] ensembles, and NOT for [0^-'].
@@ -1852,7 +1852,7 @@ def ploc_memory(pathensembles, interfaces, trr=True):
         # APPTIS p_loc
         if i < len(pathensembles)-1:
             wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], tr=trr)
-            pi = get_transition_probzz(wi)
+            pi = get_transition_probs_weights(wi)
             # pi = get_simple_probs(wi)
             Mi = construct_M_istar(pi, max(4, 2*len(interfaces[:i+2])), len(interfaces[:i+2]))
             z1, z2, y1, y2 = global_pcross_msm_star(Mi)
