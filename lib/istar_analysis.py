@@ -821,6 +821,8 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr=False, weights=None)
         if tr:
             if i == 2 and X[i][0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
                 X[i][1, 0] *= 2     # Time reversal needs to be adjusted to compensate for this
+            elif i == len(interfaces)-1 and X[i][-1, -2] == 0:
+                X[i][-2, -1] *= 2
             X[i] += X[i].T          # Will not be needed anymore once LML paths are separated in 0 -> 1 and 1 -> 0.
     return X
 
@@ -1460,6 +1462,10 @@ def display_data(pes, interfaces, n_int=None, weights=None):
         
         # 4. Weighted data with time reversal symmetry
         print("\n3a. Weighted data with time reversal")
+        if i == 2 and X[i][0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
+            X[i][1, 0] *= 2     # Time reversal needs to be adjusted to compensate for this
+        elif i == len(interfaces)-1 and X[i][-1, -2] == 0:
+            X[i][-2, -1] *= 2
         X_tr = (X[i]+X[i].T)/2.0
         print(np.array2string(X_tr, precision=4, suppress_small=True))
         
@@ -2642,99 +2648,87 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
     # Add a legend with reasonable size
     ax5.legend(title='Target Interface', loc='best', fontsize=9)
     
-    # Plot 2.3: Forward Memory Retention
+   # Plot 2.3: Forward Memory Retention
     ax6 = fig2.add_subplot(gs2[1, 0])
-    
-    # Calculate memory retention using normalized deviations from diffusive reference
-    memory_retention = np.zeros(n_interfaces)
-    memory_retention.fill(np.nan)
-    
-    for k in range(1, n_interfaces):
-        # Get all deviations for reaching k from different starting points
-        # Exclude i=k (q(i,i)=0) and adjacent interfaces with too few samples
-        deviations = []
-        for i in range(k-1):  # Only consider i < k-1 (non-adjacent starting points)
-            if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
-                # Use raw q_probs without normalization
-                deviations.append(q_probs[i, k])
-        
-        if len(deviations) >= 2:  # Need at least 2 points to calculate meaningful spread
-            memory_retention[k] = np.std(deviations)  # Standard deviation (absolute value)
-        
-    # Plot the memory retention (standard deviation of raw probabilities)
-    valid_k = [k for k in range(1, n_interfaces) if not np.isnan(memory_retention[k])]
-    valid_retention = [memory_retention[k] for k in valid_k]
+
+    # Calculate memory retention using simplified approach
+    memory_index = calculate_memory_effect_index(q_probs, q_weights)
+
+    # Prepare data for forward plot
+    valid_k = [k for k in range(1, n_interfaces) if not np.isnan(memory_index['forward_variation'][k])]
+    valid_variation = [memory_index['forward_variation'][k] for k in valid_k]
     valid_positions = [interfaces[k] for k in valid_k]
-    valid_colors = [forward_colors[k-1] for k in valid_k]  # Match colors to targets in forward plot
+    valid_colors = [forward_colors[k-1] for k in valid_k]
+    valid_counts = [memory_index['forward_sample_sizes'][k] for k in valid_k]
 
     if valid_k:
-        sns.barplot(x=valid_positions, y=valid_retention, palette=valid_colors, alpha=0.7, ax=ax6)
+        # Create bar plot
+        bars = ax6.bar(range(len(valid_k)), valid_variation, color=valid_colors, alpha=0.7)
         
-        # Add annotations for memory retention values
-        for i, pos in enumerate(valid_positions):
-            ax6.text(i, valid_retention[i] + 0.02, f"{valid_retention[i]:.3f}", 
-                    ha='center', fontsize=9)
+        # Add annotations showing variation and sample size
+        for i, (var, count) in enumerate(zip(valid_variation, valid_counts)):
+            ax6.text(i, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
         
+        # Configure plot
+        ax6.set_xticks(range(len(valid_k)))
+        ax6.set_xticklabels([f"{interfaces[k]:.1f}" for k in valid_k])
         ax6.set_xlabel('Target Interface Position (λ)')
-        ax6.set_ylabel('Variability (Std. Deviation)')
-        ax6.set_title('Forward Memory Retention: Variability in Forward Transitions', fontsize=12)
-        ax6.set_ylim(0, max(valid_retention) * 1.2 if valid_retention else 0.2)
+        ax6.set_ylabel('Memory Effect (Std. Dev. %)')
+        ax6.set_title('Forward Memory Retention: Variation in Crossing Probabilities', fontsize=12)
         
-        # Add explanatory note
+        # Set reasonable y-limits
+        max_y = max(10.0, max(valid_variation) * 1.2) if valid_variation else 10.0
+        ax6.set_ylim(0, max_y)
+        
+        # Add explanatory text
         mem_text = """
-        Memory retention measures the spread in raw transition probabilities
-        from different starting points to the same target interface.
-        Higher values indicate stronger history dependence.
+        Memory Effect:
+        • Shows standard deviation of transition probabilities 
+        from different starting points to the same target interface
+        • Higher values indicate stronger memory effects
+        • Shows direct variation (%) without normalization
         """
         ax6.text(0.02, 0.95, mem_text, transform=ax6.transAxes, fontsize=9,
-                 bbox=dict(facecolor='white', alpha=0.8), va='top')
+                bbox=dict(facecolor='white', alpha=0.8), va='top')
     else:
         ax6.text(0.5, 0.5, "Insufficient data for forward memory retention analysis", 
-                ha='center', va='center', transform=ax6.transAxes)
-    
+            ha='center', va='center', transform=ax6.transAxes)
+
     # Plot 2.4: Backward Memory Retention
     ax7 = fig2.add_subplot(gs2[1, 1])
-    
-    # Calculate backward memory retention using the same approach as forward
-    backward_memory_retention = np.zeros(n_interfaces)
-    backward_memory_retention.fill(np.nan)
-    
-    for k in range(n_interfaces-1):
-        # Get all probabilities for reaching k from different starting points i>k+1
-        deviations = []
-        for i in range(k+2, n_interfaces):  # Only consider i > k+1 (non-adjacent starting points)
-            if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
-                # Use raw q_probs without normalization, just like in forward case
-                deviations.append(q_probs[i, k])
-        
-        if len(deviations) >= 2:  # Need at least 2 points to calculate meaningful spread
-            backward_memory_retention[k] = np.std(deviations)  # Standard deviation (absolute value)
-    
-    # Plot the backward memory retention (standard deviation of raw probabilities)
-    valid_k = [k for k in range(n_interfaces-1) if not np.isnan(backward_memory_retention[k])]
-    valid_retention = [backward_memory_retention[k] for k in valid_k]
+
+    # Prepare data for backward plot
+    valid_k = [k for k in range(n_interfaces-1) if not np.isnan(memory_index['backward_variation'][k])]
+    valid_variation = [memory_index['backward_variation'][k] for k in valid_k]
     valid_positions = [interfaces[k] for k in valid_k]
-    valid_colors = [backward_colors[k] for k in valid_k]  # Match colors to targets in backward plot
-    
+    valid_colors = [backward_colors[k] for k in valid_k]
+    valid_counts = [memory_index['backward_sample_sizes'][k] for k in valid_k]
+
     if valid_k:
-        sns.barplot(x=valid_positions, y=valid_retention, palette=valid_colors, alpha=0.7, ax=ax7)
+        # Create bar plot
+        bars = ax7.bar(range(len(valid_k)), valid_variation, color=valid_colors, alpha=0.7)
         
-        # Add annotations for memory retention values
-        for i, pos in enumerate(valid_positions):
-            ax7.text(i, valid_retention[i] + 0.02, f"{valid_retention[i]:.3f}", 
-                   ha='center', fontsize=9)
+        # Add annotations showing variation and sample size
+        for i, (var, count) in enumerate(zip(valid_variation, valid_counts)):
+            ax7.text(i, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
         
+        # Configure plot
+        ax7.set_xticks(range(len(valid_k)))
+        ax7.set_xticklabels([f"{interfaces[k]:.1f}" for k in valid_k])
         ax7.set_xlabel('Target Interface Position (λ)')
-        ax7.set_ylabel('Variability (Std. Deviation)')
-        ax7.set_title('Backward Memory Retention: Variability in Backward Transitions', fontsize=12)
-        ax7.set_ylim(0, max(valid_retention) * 1.2 if valid_retention else 0.2)
+        ax7.set_ylabel('Memory Effect (Std. Dev. %)')
+        ax7.set_title('Backward Memory Retention: Variation in Crossing Probabilities', fontsize=12)
         
-        # Add explanatory note - use same text as forward retention
+        # Set reasonable y-limits
+        max_y = max(10.0, max(valid_variation) * 1.2) if valid_variation else 10.0
+        ax7.set_ylim(0, max_y)
+        
+        # Add explanatory text - same as for forward plot
         ax7.text(0.02, 0.95, mem_text, transform=ax7.transAxes, fontsize=9,
-                 bbox=dict(facecolor='white', alpha=0.8), va='top')
+                bbox=dict(facecolor='white', alpha=0.8), va='top')
     else:
         ax7.text(0.5, 0.5, "Insufficient data for backward memory retention analysis", 
-               ha='center', va='center', transform=ax7.transAxes)
+            ha='center', va='center', transform=ax7.transAxes)
     
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     fig2.suptitle('TIS Memory Effect Analysis - Transition Probabilities and Memory Retention', fontsize=14)
@@ -2962,6 +2956,96 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
     fig3.suptitle('TIS Memory Effect Analysis - Decay Profiles and Additional Metrics', fontsize=14)
     
     return fig1, fig2, fig3
+
+def calculate_memory_effect_index(q_probs, q_weights, min_samples=5):
+    """
+    Calculate a simplified memory effect index based solely on the variation in conditional 
+    crossing probabilities without normalizing or weighting by sample size.
+    
+    Parameters:
+    -----------
+    q_probs : numpy.ndarray
+        Matrix of conditional crossing probabilities where q_probs[i,k] is the probability
+        that a path starting at interface i and reaching k-1 (for i<k) or k+1 (for i>k)
+        will reach interface k.
+    q_weights : numpy.ndarray
+        Matrix of sample counts for each q value.
+    min_samples : int, optional
+        Minimum number of samples required to consider a q value valid.
+        
+    Returns:
+    --------
+    memory_index : dict
+        Dictionary containing:
+        - 'forward_variation': Standard deviation of forward probabilities for each target
+        - 'backward_variation': Standard deviation of backward probabilities for each target
+        - 'forward_sample_sizes': Number of samples used for forward calculations
+        - 'backward_sample_sizes': Number of samples used for backward calculations
+    """
+    n_interfaces = q_probs.shape[0]
+    
+    # Initialize result arrays
+    forward_variation = np.zeros(n_interfaces)
+    forward_variation.fill(np.nan)
+    forward_sample_sizes = np.zeros(n_interfaces, dtype=int)
+    
+    backward_variation = np.zeros(n_interfaces)
+    backward_variation.fill(np.nan)
+    backward_sample_sizes = np.zeros(n_interfaces, dtype=int)
+    
+    # Calculate forward memory effect index (for targets k > 0)
+    for k in range(1, n_interfaces):
+        # Collect q values for paths reaching target k from different starting interfaces
+        q_values = []
+        weights = []
+        
+        for i in range(k-1):  # Skip adjacent interface (i=k-1)
+            if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples:
+                q_values.append(q_probs[i, k])
+                weights.append(q_weights[i, k])
+        
+        if len(q_values) >= 2:  # Need at least 2 starting points for meaningful variation
+            q_values = np.array(q_values)
+            weights = np.array(weights)
+            
+            # Calculate total sample size
+            total_samples = np.sum(weights)
+            forward_sample_sizes[k] = total_samples
+            
+            # Simply use standard deviation as the memory effect index (as a percentage)
+            forward_variation[k] = np.std(q_values/np.mean(q_values)) * 100  # Convert to percentage
+    
+    # Calculate backward memory effect index (for targets k < n_interfaces-1)
+    for k in range(n_interfaces - 1):
+        # Collect q values for paths reaching target k from different starting interfaces
+        q_values = []
+        weights = []
+        
+        for i in range(k+2, n_interfaces):  # Skip adjacent interface (i=k+1)
+            if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples:
+                q_values.append(q_probs[i, k])
+                weights.append(q_weights[i, k])
+        
+        if len(q_values) >= 2:  # Need at least 2 starting points for meaningful variation
+            q_values = np.array(q_values)
+            weights = np.array(weights)
+            
+            # Calculate total sample size
+            total_samples = np.sum(weights)
+            backward_sample_sizes[k] = total_samples
+            
+            # Simply use standard deviation as the memory effect index (as a percentage)
+            backward_variation[k] = np.std(q_values/np.mean(q_values)) * 100  # Convert to percentage
+    
+    # Package results into a dictionary
+    memory_index = {
+        'forward_variation': forward_variation,
+        'backward_variation': backward_variation,
+        'forward_sample_sizes': forward_sample_sizes,
+        'backward_sample_sizes': backward_sample_sizes
+    }
+    
+    return memory_index
 
 def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, min_samples=5):
     """
