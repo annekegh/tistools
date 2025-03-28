@@ -2338,7 +2338,9 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
     import seaborn as sns
     from scipy.optimize import curve_fit
     from matplotlib.widgets import Button
-
+    # Add legend
+    from matplotlib.lines import Line2D
+    from matplotlib.lines import Line2D
     
     # Extract the probability matrix and weights matrix from q_tot
     q_probs = q_tot[0]
@@ -2540,6 +2542,7 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
     plt.tight_layout(rect=[0, 0.07, 1, 0.95])
     fig1.suptitle('TIS Memory Effect Analysis - Matrix Representations' + 
                 (' (Non-equidistant Interfaces)' if not is_equidistant else ''), fontsize=14)
+    
     # ================ Figure 2: Forward/Backward Probs + Memory Retention ================
     fig2 = plt.figure(figsize=(18, 12))
     gs2 = gridspec.GridSpec(2, 2, height_ratios=[1, 0.8])
@@ -2562,7 +2565,8 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
         valid_indices = []
         
         for i in range(k):
-            if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:  # Minimum sample threshold
+            # Include adjacent transitions only for interface 0->1
+            if (i < k-1 or (i == 0 and k == 1)) and not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
                 target_data.append(q_probs[i, k])
                 starting_positions.append(interfaces[i])
                 valid_indices.append(i)
@@ -2615,7 +2619,8 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
         valid_indices = []
         
         for i in range(k+1, n_interfaces):
-            if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:  # Minimum sample threshold
+            # Exclude adjacent transitions (i.e., exclude i=k+1)
+            if i > k+1 and not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
                 target_data.append(q_probs[i, k])
                 starting_positions.append(interfaces[i])
                 valid_indices.append(i)
@@ -2652,7 +2657,7 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
     # Add a legend with reasonable size
     ax5.legend(title='Target Interface', loc='best', fontsize=9)
     
-   # Plot 2.3: Forward Memory Retention
+    # Plot 2.3: Forward Memory Retention
     ax6 = fig2.add_subplot(gs2[1, 0])
 
     # Calculate memory retention using simplified approach
@@ -2665,43 +2670,82 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
     valid_colors = [forward_colors[k-1] for k in valid_k]
     valid_counts = [memory_index['forward_sample_sizes'][k] for k in valid_k]
 
+    # Calculate mean difference with diffusive reference for each target interface
+    forward_mean_diff = np.zeros(n_interfaces)
+    forward_mean_diff.fill(np.nan)
+    
+    for k in range(1, n_interfaces):
+        diffs = []
+        for i in range(k-1):  # Skip adjacent interface (i=k-1)
+                # Only consider non-adjacent transitions with enough samples
+                if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
+                    diffs.append(abs(q_probs[i, k] - diff_ref[i, k]))
+        
+        if diffs:
+                forward_mean_diff[k] = np.mean(diffs) * 100  # Convert to percentage
+    
+    # Extract valid mean differences to plot
+    valid_mean_diff = [forward_mean_diff[k] if not np.isnan(forward_mean_diff[k]) else 0 for k in valid_k]
+
     if valid_k:
-        # Create bar plot using interface physical positions but equal width bars
-        # We need to create a separate axis for this since bar widths don't scale with physical distance
+        # Create a twin axis for the memory retention plot
+        ax6_twin = ax6.twinx()
+        
+        # Create bar plot for variation
         bars = ax6.bar(valid_positions, valid_variation, color=valid_colors, alpha=0.7, 
-                     width=np.mean(np.diff(interfaces))*0.7)  # Use average interface spacing for width
+                            width=np.mean(np.diff(interfaces))*0.7)  # Use average interface spacing for width
+        
+        # Add line plot for mean differences
+        line = ax6_twin.plot(valid_positions, valid_mean_diff, 'o--', color='red', 
+                                    linewidth=2, markersize=8, label='Mean |Δq|')
         
         # Add annotations showing variation and sample size
         for pos, var, count in zip(valid_positions, valid_variation, valid_counts):
-            ax6.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
+                ax6.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
         
-        # Configure plot
+        # Configure main plot
         ax6.set_xticks(interfaces)
         ax6.set_xticklabels([f"{i}" for i in range(n_interfaces)])
         ax6.set_xlabel('Target Interface k')
-        ax6.set_ylabel('Memory Effect (Std. Dev. %)')
+        ax6.set_ylabel('Memory Effect (Std. Dev. %)', color='C0')
+        ax6.tick_params(axis='y', labelcolor='C0')
         ax6.set_title('Forward Memory Retention: Variation in Crossing Probabilities', fontsize=12)
+        
+        # Configure twin axis
+        ax6_twin.set_ylabel('Mean |Δq| (%)', color='red')
+        ax6_twin.tick_params(axis='y', labelcolor='red')
         
         # Set reasonable y-limits
         max_y = max(10.0, max(valid_variation) * 1.2) if valid_variation else 10.0
         ax6.set_ylim(0, max_y)
         
-        # Set x limits to match other plots
-        ax6.set_xlim(min(interfaces) - 0.1, max(interfaces) + 0.1)
+        max_y_twin = max(10.0, max(valid_mean_diff) * 1.2) if valid_mean_diff else 10.0
+        ax6_twin.set_ylim(0, max_y_twin)
+        
+        # Set x limits based on the valid data points rather than all interfaces
+        if len(valid_positions) > 0:
+                padding = np.mean(np.diff(interfaces)) if len(interfaces) > 1 else 0.5
+                ax6.set_xlim(min(valid_positions) - padding/2, max(valid_positions) + padding/2)
+        
+        # Create a combined legend
+        custom_lines = [
+                Line2D([0], [0], color='black', lw=0, marker='s', markersize=10, markerfacecolor='C0', alpha=0.7),
+                Line2D([0], [0], color='red', lw=2, marker='o', markersize=6)
+        ]
+        ax6.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left')
         
         # Add explanatory text
         mem_text = """
-        Memory Effect:
-        • Shows standard deviation of transition probabilities 
-        from different starting points to the same target interface
+        Memory Metrics:
+        • Std. Dev.: Variation in transition probabilities from different starting points 
+        • Mean |Δq|: Average deviation from diffusive reference (excluding adjacent transitions)
         • Higher values indicate stronger memory effects
-        • Shows direct variation (%) without normalization
         """
         ax6.text(0.02, 0.95, mem_text, transform=ax6.transAxes, fontsize=9,
-                bbox=dict(facecolor='white', alpha=0.8), va='top')
+                    bbox=dict(facecolor='white', alpha=0.8), va='top')
     else:
         ax6.text(0.5, 0.5, "Insufficient data for forward memory retention analysis", 
-            ha='center', va='center', transform=ax6.transAxes)
+                ha='center', va='center', transform=ax6.transAxes)
         ax6.set_xticks(interfaces)
         ax6.set_xticklabels([f"{i}" for i in range(n_interfaces)])
 
@@ -2714,36 +2758,77 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
     valid_positions = [interfaces[k] for k in valid_k]
     valid_colors = [backward_colors[k] for k in valid_k]
     valid_counts = [memory_index['backward_sample_sizes'][k] for k in valid_k]
+    
+    # Calculate mean difference with diffusive reference for each target interface
+    backward_mean_diff = np.zeros(n_interfaces)
+    backward_mean_diff.fill(np.nan)
+    
+    for k in range(n_interfaces-1):
+        diffs = []
+        for i in range(k+2, n_interfaces):  # Skip adjacent interface (i=k+1)
+                # Only consider non-adjacent transitions with enough samples
+                if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
+                    diffs.append(abs(q_probs[i, k] - diff_ref[i, k]))
+        
+        if diffs:
+                backward_mean_diff[k] = np.mean(diffs) * 100  # Convert to percentage
+    
+    # Extract valid mean differences to plot
+    valid_mean_diff = [backward_mean_diff[k] if not np.isnan(backward_mean_diff[k]) else 0 for k in valid_k]
 
     if valid_k:
+        # Create a twin axis for the memory retention plot
+        ax7_twin = ax7.twinx()
+        
         # Create bar plot using interface physical positions
         bars = ax7.bar(valid_positions, valid_variation, color=valid_colors, alpha=0.7,
-                     width=np.mean(np.diff(interfaces))*0.7)  # Use average interface spacing for width
+                            width=np.mean(np.diff(interfaces))*0.7)  # Use average interface spacing for width
+        
+        # Add line plot for mean differences
+        line = ax7_twin.plot(valid_positions, valid_mean_diff, 'o--', color='red', 
+                                    linewidth=2, markersize=8, label='Mean |Δq|')
         
         # Add annotations showing variation and sample size
         for pos, var, count in zip(valid_positions, valid_variation, valid_counts):
-            ax7.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
+                ax7.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
         
         # Configure plot
         ax7.set_xticks(interfaces)
         ax7.set_xticklabels([f"{i}" for i in range(n_interfaces)])
         ax7.set_xlabel('Target Interface k')
-        ax7.set_ylabel('Memory Effect (Std. Dev. %)')
+        ax7.set_ylabel('Memory Effect (Std. Dev. %)', color='C0')
+        ax7.tick_params(axis='y', labelcolor='C0')
         ax7.set_title('Backward Memory Retention: Variation in Crossing Probabilities', fontsize=12)
+        
+        # Configure twin axis
+        ax7_twin.set_ylabel('Mean |Δq| (%)', color='red')
+        ax7_twin.tick_params(axis='y', labelcolor='red')
         
         # Set reasonable y-limits
         max_y = max(10.0, max(valid_variation) * 1.2) if valid_variation else 10.0
         ax7.set_ylim(0, max_y)
         
-        # Set x limits to match other plots
-        ax7.set_xlim(min(interfaces) - 0.1, max(interfaces) + 0.1)
+        max_y_twin = max(10.0, max(valid_mean_diff) * 1.2) if valid_mean_diff else 10.0
+        ax7_twin.set_ylim(0, max_y_twin)
+        
+        # Set x limits based on the valid data points rather than all interfaces
+        if len(valid_positions) > 0:
+                padding = np.mean(np.diff(interfaces)) if len(interfaces) > 1 else 0.5
+                ax7.set_xlim(min(valid_positions) - padding/2, max(valid_positions) + padding/2)
+        
+        # Create a combined legend
+        custom_lines = [
+                Line2D([0], [0], color='black', lw=0, marker='s', markersize=10, markerfacecolor='C0', alpha=0.7),
+                Line2D([0], [0], color='red', lw=2, marker='o', markersize=6)
+        ]
+        ax7.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left')
         
         # Add explanatory text - same as for forward plot
         ax7.text(0.02, 0.95, mem_text, transform=ax7.transAxes, fontsize=9,
-                bbox=dict(facecolor='white', alpha=0.8), va='top')
+                    bbox=dict(facecolor='white', alpha=0.8), va='top')
     else:
         ax7.text(0.5, 0.5, "Insufficient data for backward memory retention analysis", 
-            ha='center', va='center', transform=ax7.transAxes)
+                ha='center', va='center', transform=ax7.transAxes)
         ax7.set_xticks(interfaces)
         ax7.set_xticklabels([f"{i}" for i in range(n_interfaces)])
     
@@ -2902,8 +2987,44 @@ def plot_destination_bias(p, interfaces=None, ax_forward=None, ax_backward=None)
     # Calculate expected destinations
     # For forward transitions: expected = i + expected_jump
     # For backward transitions: expected = i - expected_jump
-    forward_expected = np.arange(n_interfaces) + 1  # Simple expectation: i+1
-    backward_expected = np.arange(n_interfaces) - 1  # Simple expectation: i-1
+    # Calculate expected destinations
+    forward_expected = np.zeros_like(forward_destinations)
+    backward_expected = np.zeros_like(backward_destinations)
+    
+    for i in range(n_interfaces):
+        if forward_valid[i]:
+            # For forward transitions from i, calculate expected destination
+            # For a diffusive system, this would be the probability-weighted average
+            # of all possible destinations j where j > i
+            probs = np.zeros(n_interfaces)
+            for j in range(i+1, n_interfaces):
+                # In a diffusive system, probability decreases with distance
+                # We use a simple geometric series: p(j) = p(i+1) * r^(j-i-1)
+                # where r is a decay factor (e.g., 0.5)
+                dist_factor = 0.5 ** (j - i - 1)
+                probs[j] = dist_factor
+            
+            # Normalize probabilities
+            if np.sum(probs) > 0:
+                probs = probs / np.sum(probs)
+                # Calculate expected destination
+                forward_expected[i] = np.sum(np.arange(n_interfaces) * probs)
+        
+        if backward_valid[i]:
+            # For backward transitions from i, calculate expected destination
+            # For a diffusive system, this would be the probability-weighted average
+            # of all possible destinations j where j < i
+            probs = np.zeros(n_interfaces)
+            for j in range(i):
+                # Similar decay factor for backward transitions
+                dist_factor = 0.5 ** (i - j - 1)
+                probs[j] = dist_factor
+            
+            # Normalize probabilities
+            if np.sum(probs) > 0:
+                probs = probs / np.sum(probs)
+                # Calculate expected destination
+                backward_expected[i] = np.sum(np.arange(n_interfaces) * probs)
     
     # Calculate bias
     forward_bias = forward_destinations - forward_expected
@@ -2951,15 +3072,7 @@ def plot_directional_bias(ax, x_values, avg_destinations, expected_destinations,
                       ha='center', va='center',
                       color=text_color, fontsize=9,
                       bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.8))
-    
-    # Color the background to indicate bias direction
-    if direction == 'higher':
-        ax.axhspan(0, n_interfaces*2, alpha=0.05, color='red', label='Further destination')
-        ax.axhspan(-n_interfaces, 0, alpha=0.05, color='blue', label='Closer destination')
-    else:  # 'lower'
-        ax.axhspan(0, n_interfaces*2, alpha=0.05, color='red', label='Closer destination')
-        ax.axhspan(-n_interfaces, 0, alpha=0.05, color='blue', label='Further destination')
-    
+
     # Add shaded region showing significant bias
     valid_expected = expected_destinations[valid_mask]
     
@@ -3470,6 +3583,7 @@ def plot_free_energy_landscape(interfaces, q_matrix, q_weights=None, min_samples
     fig : matplotlib.figure.Figure
         Figure containing the free energy landscape plots
     """
+    from matplotlib.patches import Patch
     # Estimate free energy differences
     delta_G = estimate_free_energy_differences(interfaces, q_matrix, q_weights, min_samples)
     
@@ -3517,8 +3631,6 @@ def plot_free_energy_landscape(interfaces, q_matrix, q_weights=None, min_samples
     ax1.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
     ax1.grid(axis='y', alpha=0.3)
     
-    # Add legend
-    from matplotlib.patches import Patch
     legend_elements = [
         Patch(facecolor='red', alpha=0.7, label='Uphill (Barrier)'),
         Patch(facecolor='green', alpha=0.7, label='Downhill (Favorable)')
@@ -3574,14 +3686,13 @@ def pcca_analysis(M, n_clusters):
         PCCA+ object containing the clustering results.
     """
     # Ensure the transition matrix is a valid stochastic matrix
-    assert np.allclose(M.sum(axis1), 1), "Rows of the transition matrix must sum to 1."
+    assert np.allclose(M.sum(axis=1), 1), "Rows of the transition matrix must sum to 1."
 
     # Create a MarkovStateModel object
     msm = dpt.markov.msm.MarkovStateModel(M)
 
     # Perform PCCA+ analysis
     pcca = dpt.markov.pcca(M, n_clusters)
-    pcca.compute()
 
     # Print the membership matrix
     print("PCCA+ Membership Matrix:")
@@ -3589,7 +3700,7 @@ def pcca_analysis(M, n_clusters):
 
     # Print the metastable states
     print("Metastable States:")
-    for i, state in enumerate(pcca.metastable_sets):
+    for i, state in enumerate(pcca.sets):
         print(f"State {i+1}: {state}")
 
     return pcca
