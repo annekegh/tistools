@@ -253,12 +253,13 @@ def get_transition_probs_weights(w_path):
     accounting for the directional nature of interface crossing.
     """
     # Initialize the probability matrix
-    p = np.empty([w_path[0].shape[0], w_path[0].shape[0]])
-    q = np.ones([w_path[0].shape[0], w_path[0].shape[0]])
+    n_int = list(w_path.values())[0].shape[0]
+    p = np.empty([n_int, n_int])
+    q = np.ones([n_int, n_int])
     
     # Calculate q(i,k) - probability to go from i to k via direct transitions
-    for i in range(w_path[0].shape[0]):
-        for k in range(w_path[0].shape[0]):
+    for i in range(n_int):
+        for k in range(n_int):
             counts = np.zeros(2)
             if i == k:
                 # Self-transitions
@@ -275,14 +276,14 @@ def get_transition_probs_weights(w_path):
             elif i < k:
                 # Forward transitions (L→R)
                 for pe_i in range(i+1, k+1):
-                    if pe_i > w_path[0].shape[0]-1:
+                    if pe_i > n_int-1:
                         break
                     counts += [np.sum(w_path[pe_i][i][k:]), np.sum(w_path[pe_i][i][k-1:])]
                     # print(pe_i-1, i, k, np.sum(w_path[pe_i][i][k:])/np.sum(w_path[pe_i][i][k-1:]), np.sum(w_path[pe_i][i][k-1:]))
             elif i > k:
                 # Backward transitions (R→L)
                 for pe_i in range(k+2, i+2):
-                    if pe_i > w_path[0].shape[0]-1:
+                    if pe_i > n_int-1:
                         break
                     counts += [np.sum(w_path[pe_i][i][:k+1]), np.sum(w_path[pe_i][i][:k+2])]
                     # print(pe_i-1, i, k, np.sum(w_path[pe_i][i][:k+1])/np.sum(w_path[pe_i][i][:k+2]), np.sum(w_path[pe_i][i][:k+2]))
@@ -298,11 +299,11 @@ def get_transition_probs_weights(w_path):
     print(np.array2string(q, precision=4, suppress_small=True))
     
     # Calculate final transition probabilities p(i,k) from q values
-    for i in range(w_path[0].shape[0]):
-        for k in range(w_path[0].shape[0]):
+    for i in range(n_int):
+        for k in range(n_int):
             if i < k:
                 # Forward transitions
-                if k == w_path[0].shape[0]-1:
+                if k == n_int-1:
                     p[i][k] = np.prod(q[i][i+1:k+1])
                 else:
                     p[i][k] = np.prod(q[i][i+1:k+1]) * (1-q[i][k+1])
@@ -312,7 +313,7 @@ def get_transition_probs_weights(w_path):
                     p[i][k] = np.prod(q[i][k:i])
                 else:
                     p[i][k] = np.prod(q[i][k:i]) * (1-q[i][k-1])
-                # if i == w_path[0].shape[0]-1:
+                # if i == n_int-1:
                 #     p[i][k] = 0
             else:
                 # Self-transitions
@@ -331,7 +332,7 @@ def get_transition_probs_interm(w_path, weights=None, tr=False):
     """
     Calculate transition probabilities between interfaces using a weighted path averaging approach.
     
-    This function provides an alternative method to get_transition_probzz() for calculating
+    This function provides an alternative method to get_transition_probs_weights() for calculating
     transition probabilities, by explicitly considering intermediate interfaces. For each pair
     of interfaces (i,k), it:
     1. Calculates the probability of reaching each intermediate interface j from i
@@ -365,7 +366,7 @@ def get_transition_probs_interm(w_path, weights=None, tr=False):
     complex transition mechanisms.
     """
     # Get shape parameters
-    sh = w_path[0].shape
+    sh = list(w_path.values())[0].shape
     p = np.empty([sh[0], sh[0]])
     
     # Calculate transition probabilities for each pair of interfaces
@@ -491,16 +492,18 @@ def get_simple_probs(w_path):
     
     The calculation explicitly handles special cases for boundary interfaces.
     """
+    n_int = list(w_path.values())[0].shape[0]
+
     # Initialize probability matrix
-    p = np.empty([w_path[0].shape[0], w_path[0].shape[0]])
+    p = np.empty([n_int, n_int])
 
     # Calculate transition probabilities for each pair of interfaces
-    for i in range(w_path[0].shape[0]):
-        for k in range(w_path[0].shape[0]):
+    for i in range(n_int):
+        for k in range(n_int):
             if i < k:
                 # Forward transitions
-                if i == 0 or i >= w_path[0].shape[0]-2:
-                    if k == w_path[0].shape[0]-1:
+                if i == 0 or i >= n_int-2:
+                    if k == n_int-1:
                         p[i][k] = np.sum(w_path[i+1][i][k:]) / np.sum(w_path[i+1][i][i:])
                     else:
                         p[i][k] = (w_path[i+1][i][k]) / np.sum(w_path[i+1][i][i:])
@@ -509,7 +512,7 @@ def get_simple_probs(w_path):
                     p[i][k] = (w_path[i+1][i][k] + w_path[i+2][i][k]) / (np.sum(w_path[i+1][i][i:]) + np.sum(w_path[i+2][i][i:]))
             elif k < i:
                 # Backward transitions
-                if i == w_path[0].shape[0]-1:
+                if i == n_int-1:
                     p[i][k] = 0
                 else:
                     p[i][k] = (w_path[i+1][i][k] + w_path[i][i][k]) / (np.sum(w_path[i+1][i][:i]) + np.sum(w_path[i][i][:i]))
@@ -824,13 +827,13 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr=False, weights=None)
         print(f"Sum weights ensemble {i}: ", np.sum(w_path[i]))
 
     X = w_path
-    for i in range(len(interfaces)):
+    for i in range(len(pes)):
         if tr:
             if i == 2 and X[i][0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
                 X[i][1, 0] *= 2     # Time reversal needs to be adjusted to compensate for this
             elif i == len(interfaces)-1 and X[i][-1, -2] == 0:
                 X[i][-2, -1] *= 2
-            X[i] += X[i].T          # Will not be needed anymore once LML paths are separated in 0 -> 1 and 1 -> 0.
+            X[i] = (X[i] + X[i].T) / 2.0   # Properly symmetrize the matrix
     return X
 
 def compute_weight_matrix(pe, pe_id, interfaces, tr=False, weights=None):
@@ -896,11 +899,12 @@ def compute_weight_matrix(pe, pe_id, interfaces, tr=False, weights=None):
     for j in range(len(interfaces)):
         for k in range(len(interfaces)):
             if j == k:
-                    if pe_id == 1 and j == 0:
-                        X_path[j][k] = np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))
-                        continue
-                    else:
-                        X_path[j][k] = 0  
+                # Self-transitions
+                if pe_id == 1 and j == 0:
+                    X_path[j][k] = np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))
+                    continue
+                else:
+                    X_path[j][k] = 0  
             elif j < k:
                 # Forward transitions (j → k where j < k)
                 if j == 0 and k == 1:
@@ -946,14 +950,18 @@ def compute_weight_matrix(pe, pe_id, interfaces, tr=False, weights=None):
                     end_cond = np.logical_and(pe.lambmaxs >= interfaces[j], pe.lambmaxs <= interfaces[j+1])
 
                 X_path[j][k] = np.sum(select_with_masks(w, [start_cond, end_cond, dir_mask, accmask, ~loadmask]))
-    print(f"Sum weights ensemble {pe_id}: ", np.sum(X_path))
 
-    X = X_path
+    print(f"Sum weights ensemble {pe_id}: {np.sum(X_path):.4f}")
+
+    # Apply time-reversal symmetry if requested
     if tr:
-        if pe_id == 2 and X[0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
-            X[1, 0] *= 2     # Time reversal needs to be adjusted to compensate for this
-        X += X.T          # Will not be needed anymore once LML paths are separated in 0 -> 1 and 1 -> 0.
-    return X
+        if pe_id == 2 and X_path[0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now)
+            X_path[1, 0] *= 2     # Time reversal needs to be adjusted to compensate for this
+        elif pe_id == len(interfaces)-1 and X_path[-1, -2] == 0:
+            X_path[-2, -1] *= 2
+        X_path = (X_path + X_path.T) # Properly symmetrize the matrix
+    
+    return X_path
 
 
 def get_weights_staple(pe_i, flags, gen, ptypes, n_pes, ACCFLAGS, REJFLAGS, verbose=True):
@@ -1560,8 +1568,9 @@ def memory_analysis(w_path, tr=False):
     In a purely diffusive (memory-less) system, all conditional probabilities
     would be 0.5, regardless of starting point.
     """
-    q_k = np.zeros([2, w_path[0].shape[0]-1, w_path[0].shape[0], w_path[0].shape[0]])
-    for ens in range(1, w_path[0].shape[0]):
+    n_int = list(w_path.values())[0].shape[0]
+    q_k = np.zeros([2, n_int-1, n_int, n_int])
+    for ens in range(1, n_int):
         if tr:
             w_path[ens] += w_path[ens].T
         for i in range(w_path[ens].shape[0]):
@@ -1591,19 +1600,19 @@ def memory_analysis(w_path, tr=False):
         print(f"ENSEMBLE [{ens-1}*] | ID {ens}")
         print(20*'-')
         print("==== L -> R ====")
-        for intf in range(ens, w_path[0].shape[0]):
+        for intf in range(ens, n_int):
             print(f"-> interface {intf-1} is reached, probability to reach interface {intf}:")
             for start in range(ens):
                 print(f"    - START at interface {start}: {q_k[0][ens-1][start][intf]} | # weights: {q_k[1][ens-1][start][intf]}")
         print("==== R -> L ====")
         for intf in range(ens-1):
             print(f"-> interface {intf+1} is reached, probability to reach interface {intf}:")
-            for start in range(ens-1, w_path[0].shape[0]):
+            for start in range(ens-1, n_int):
                 print(f"    - START at interface {start}: {q_k[0][ens-1][start][intf]} | # weights: {q_k[1][ens-1][start][intf]}")
 
-    q_tot = np.ones([2, w_path[0].shape[0], w_path[0].shape[0]])
-    for i in range(w_path[0].shape[0]):
-        for k in range(w_path[0].shape[0]):
+    q_tot = np.ones([2, n_int, n_int])
+    for i in range(n_int):
+        for k in range(n_int):
             counts = np.zeros(2)
             if i == k:
                 if i == 0:
@@ -1618,12 +1627,12 @@ def memory_analysis(w_path, tr=False):
                 continue
             elif i < k:
                 for pe_i in range(i+1, k+1):
-                    if pe_i > w_path[0].shape[0]-1:
+                    if pe_i > n_int-1:
                         break
                     counts += [np.sum(w_path[pe_i][i][k:]), np.sum(w_path[pe_i][i][k-1:])]
             elif i > k:
                 for pe_i in range(k+2, i+2):
-                    if pe_i > w_path[0].shape[0]-1:
+                    if pe_i > n_int-1:
                         break
                     counts += [np.sum(w_path[pe_i][i][:k+1]), np.sum(w_path[pe_i][i][:k+2])]
 
@@ -1634,14 +1643,14 @@ def memory_analysis(w_path, tr=False):
     print(f"TOTAL - ALL ENSEMBLES")
     print(20*'-')
     print("==== L -> R ====")
-    for intf in range(1, w_path[0].shape[0]):
+    for intf in range(1, n_int):
         print(f"-> interface {intf-1} is reached, probability to reach interface {intf}:")
         for start in range(intf):
             print(f"    - START at interface {start}: {q_tot[0][start][intf]} | # weights: {q_tot[1][start][intf]}")
     print("==== R -> L ====")
-    for intf in range(w_path[0].shape[0]-2):
+    for intf in range(n_int-2):
         print(f"-> interface {intf+1} is reached, probability to reach interface {intf}:")
-        for start in range(intf+1, w_path[0].shape[0]):
+        for start in range(intf+1, n_int):
             print(f"    - START at interface {start}: {q_tot[0][start][intf]} | # weights: {q_tot[1][start][intf]}")
     print("\nIntermediate probabilities matrix Q:")
     print("Conditional crossing probabilities:")

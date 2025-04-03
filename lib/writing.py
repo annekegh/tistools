@@ -113,8 +113,11 @@ def write_running_estimates(filename, cycles, *args):
             for j in range(len(labels)):
                 array = running_estimates[j]
                 for col in range(array.shape[1] if len(array.shape) > 1 else 1):
-                    value = array[i, col] if len(array.shape) > 1 else array[i]
-                    value_str = f"{value:.10f}"  # Ensure consistent floating-point format
+                    value = array[i, col] if len(array.shape) > 1 else (array[i] if len(array.shape) == 1 else array.reshape(array.shape[0], -1)[i]) 
+                    try:
+                        value_str = f"{value:.10f}"  # Ensure consistent floating-point format
+                    except:
+                        print(f"Error formatting value: {value} from {labels[j]} at cycle {cycles[i]}")
                     row_values.append(f"{value_str:<{col_widths[j + 1]}} ")
 
             f.write("".join(row_values) + "\n")
