@@ -148,6 +148,26 @@ def create_distrib_first_crossing(folders, interfaces_input, outputfile, do_pdf,
         pe = read_pathensemble(ofile)
         lmrs = pe.lmrs
         flags1 = pe.flags
+
+        # extract the corresponding cycles from the pathensemble.txt file in case the  order parameter is only stored for every nth trajectory
+        flag1_ext = []
+        lmrs_ext = []
+        # calculate value of n
+        n = int(len(flags1)-1)/(len(flags)-1)
+        if n != 1:
+            for j in range(0,len(flags)):
+                for k, (flag_pe, lmr) in enumerate(zip(flags1,lmrs)):
+                    if k  == (j * n):
+                        flag_pe = str(flag_pe)
+                        flag1_ext.append(flag_pe)
+                        lmr = str(lmr)
+                        lmrs_ext.append(lmr)
+                        break
+        # overwrite flags and lmrs list from pathensemble
+        flags1 = flag1_ext
+        lmrs = np.array(lmrs_ext)
+
+
         print_lmr(lmrs, weights)
         xi = calc_xi(lmrs, weights)
         print(f"xi: {xi}")
@@ -205,4 +225,3 @@ def create_distrib_first_crossing(folders, interfaces_input, outputfile, do_pdf,
     plt.title(f"Normalized, ncycle={ncycle}, dt={dt:.3f}")
     plt.tight_layout()
     plt.savefig("crosshist.all.png")
-
