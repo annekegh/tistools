@@ -531,6 +531,9 @@ def calc_xi(lmrs, weights):
     print(f"Number of lmrs: {len(lmrs)}")
     print(f"Total weights: {np.sum(weights)}")
 
+    # make sure lmrs is an array
+    lmrs = np.array(lmrs)
+
     n_lml = np.sum((lmrs == "LML") * weights)
     n_rml = np.sum((lmrs == "RML") * weights)
     n_lmr = np.sum((lmrs == "LMR") * weights)
