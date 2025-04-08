@@ -531,6 +531,9 @@ def calc_xi(lmrs, weights):
     print(f"Number of lmrs: {len(lmrs)}")
     print(f"Total weights: {np.sum(weights)}")
 
+    # make sure lmrs is an array
+    lmrs = np.array(lmrs)
+
     n_lml = np.sum((lmrs == "LML") * weights)
     n_rml = np.sum((lmrs == "RML") * weights)
     n_lmr = np.sum((lmrs == "LMR") * weights)
@@ -581,6 +584,16 @@ def print_lmr(lmrs, weights):
     None
 
     Example
+    -------
+    >>> lmrs = np.array(['LML', 'RML', 'L*L', 'R*R'])
+    >>> weights = np.array([1, 2, 3, 4])
+    >>> print_lmr(lmrs, weights)
+    Counting paths in ensemble
+    Code   Count  Weighted Count
+    LML   1     1.00
+    RML   1     2.00
+    L*L   1     3.00
+    R*R   1     4.00
     """
     print("Counting paths in ensemble")
     print(f"{'Code':<6} {'Count':<6} {'Weighted Count':<15}")

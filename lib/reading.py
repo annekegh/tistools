@@ -606,15 +606,16 @@ def read_pathensemble(fn, ostart=0):
     data = []
     with open(fn, "r") as f:
         for line in f:
-            words = line.split()
-            cycle = int(words[0])
-            if cycle >= ostart:
-                data.append(words)
-                # Extracting specific data points from the line
-                # start_middle_end = "".join(words[3:6])  # Combine chars to a string: "L M R"
-                # length = int(words[6])  # Get length
-                # status_flag = words[7]  # Get status/flag/acceptance: "ACC"
-                # generation = words[8]  # Get generation
+            if not line.startswith("#"):
+                words = line.split()
+                cycle = int(words[0])
+                if cycle >= ostart:
+                    data.append(words)
+                    # Extracting specific data points from the line
+                    # start_middle_end = "".join(words[3:6])  # Combine chars to a string: "L M R"
+                    # length = int(words[6])  # Get length
+                    # status_flag = words[7]  # Get status/flag/acceptance: "ACC"
+                    # generation = words[8]  # Get generation
 
     pe = PathEnsemble(data)
 

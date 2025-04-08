@@ -52,9 +52,9 @@ def create_distrib(folders, interfaces_input, outputfile, do_pdf, dt, dlambda, d
     Parameters
     ----------
     folders : list of str
-        List of folder paths.
+        List of folder paths. E.g., ["somedir/000", "somedir/001", "somedir/002", ...].
     interfaces_input : list of float
-        List of interface positions.
+        List of interface positions. E.g., [lambda0,lambda1,...,lambdaN], and if lambda_-1 exists: [lambda0,lambda1,...,lambdaN, lambda_-1].
     outputfile : str
         Output filename for the figures.
     do_pdf : bool
@@ -116,6 +116,7 @@ def create_distrib(folders, interfaces_input, outputfile, do_pdf, dt, dlambda, d
             trajs = op.longtraj - offset
 
         print(f"Number of cycles: {ncycle}")
+        assert len(op.ops) == len(op.longtraj)
         w_all = np.array([weights[i] for i in range(ncycle) for k in range(lens[i])])
         print(f"One long trajectory: {len(w_all)}, {len(trajs)}")
         print("Statistics:")
@@ -129,6 +130,26 @@ def create_distrib(folders, interfaces_input, outputfile, do_pdf, dt, dlambda, d
             pe = read_pathensemble(ofile)
             lmrs = pe.lmrs
             flags1 = pe.flags
+
+            # extract the corresponding cycles from the pathensemble.txt file in case the  order parameter is only stored for every nth trajectory
+            flag1_ext = []
+            lmrs_ext = []
+            # calculate value of n
+            n = int(len(flags1)-1)/(len(flags)-1)
+            if n != 1:
+                for j in range(0,len(flags)):
+                    for k, (flag_pe, lmr) in enumerate(zip(flags1,lmrs)):
+                        if k  == (j * n):
+                            flag_pe = str(flag_pe)
+                            flag1_ext.append(flag_pe)
+                            lmr = str(lmr)
+                            lmrs_ext.append(lmr)
+                            break
+                # overwrite flags and lmrs list from pathensemble
+                flags1 = flag1_ext  
+                lmrs = np.array(lmrs_ext)
+        
+
             for i, (flag0, flag1) in enumerate(zip(flags, flags1)):
                 if flag0 != flag1:
                     raise ValueError(f"Trajectory {i} flag mismatch: {flag0} vs {flag1}")
@@ -139,6 +160,19 @@ def create_distrib(folders, interfaces_input, outputfile, do_pdf, dt, dlambda, d
         if fol in ["000", "001"]:
             cut = interfaces[0]
             nL = print_concentration_lambda0(ncycle, trajs, cut, dlambda_conc, dt, w_all, xi)
+
+        # TODO
+        # Optional:
+        # remove first and last phase point of each path, which are not part of the ensemble
+        # I think that it also works when the path length is 1
+        # Also: compute time spent in the ensemble
+        do_remove_endpoints = False
+        if do_remove_endpoints:
+            # reconstruct w_all
+            time,w_all = compute_time_in_ensemble(w_all,lens,dt)
+        else:
+            # do not store w_all
+            time_ens, _ = compute_time_in_ensemble(w_all,lens,dt)
 
         hist = np.zeros(len(bins) - 1)
         n_op = len(op_index)
@@ -161,6 +195,10 @@ def create_distrib(folders, interfaces_input, outputfile, do_pdf, dt, dlambda, d
 
         centers = edges[:-1] + np.diff(edges) / 2.
 
+        # Normalization?
+        #---------------
+        # Several options...
+        # Here: "time in interval dlambda per path" and "prob_dens"
         if do_time:
             hist = hist / ncycle * dt / dlambda
         elif do_density:
@@ -189,7 +227,8 @@ def create_distrib(folders, interfaces_input, outputfile, do_pdf, dt, dlambda, d
                     plt.legend()
                     plt.xlabel(f"Lambda (dlambda={dlambda:.3f})")
                     plt.xlim(bins[0], bins[-1])
-                    plt.ylim(ymin, ymax)
+                    if ymin is not None and ymax is not None:
+                        plt.ylim(ymin, ymax)
                     plt.ylabel("Time spent per length" if do_time else "Probability density")
                     plt.tight_layout()
                     for ext in extensions:
@@ -199,7 +238,8 @@ def create_distrib(folders, interfaces_input, outputfile, do_pdf, dt, dlambda, d
         plt.legend()
         plt.xlabel(f"Lambda (dlambda={dlambda:.3f})")
         plt.xlim(bins[0], bins[-1])
-        plt.ylim(ymin, ymax)
+        if ymin is not None and ymax is not None:
+            plt.ylim(ymin, ymax)
         plt.ylabel("Time spent per length" if do_time else "Probability density")
         plt.tight_layout()
         for ext in extensions:
