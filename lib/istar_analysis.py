@@ -1492,6 +1492,20 @@ def display_data(pes, interfaces, n_int=None, weights=None):
                     f"forward weight={X[i][idx[0]][idx[1]]:.2f}, "
                     f"backward weight={X[i][idx[1]][idx[0]]:.2f}")
         
+        # Warning for interfaces (columns) with unusually low sampling
+        total_sum = np.sum(X_tr[i])
+        col_sums = np.sum(X_tr[i], axis=0)
+        n_cols = X_tr[i].shape[1]
+        threshold = total_sum / (5 * n_cols)  # Threshold for warning: 20% of average
+        
+        low_cols = np.where(col_sums < threshold)[0]
+        if len(low_cols) > 0:
+            print("\n[WARNING] Interfaces with insufficient sampling:")
+            for col in low_cols:
+                print(f"  Interface {col}: weight sum={col_sums[col]:.2f}, "
+                    f"only {(col_sums[col]/total_sum)*100:.1f}% of total weight "
+                    f"(threshold: {threshold:.2f})")
+        
         # 5. Unweighted data with time reversal symmetry
         print("\n3b. Unweighted data with time reversal")
         C_tr = (C[i]+C[i].T)/2.0

@@ -423,8 +423,8 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
             set_taus(pe)
 
             # Skip [0-] index as it is not used for Pcross calculations
-            if i == 0:
-                continue  
+            # if i == 0:
+            #     continue  
 
             # Compute local probabilities
             plocfull = get_local_probs(pe, tr=False)
@@ -433,7 +433,7 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
         # Extract global probabilities
         psfull = [
             {ptype: data[i]["full"][ptype] for ptype in ("LMR", "RML", "RMR", "LML")}
-            for i in range(1, len(pathensembles))
+            for i in range(len(pathensembles))
         ]
         # _, _, Pcrossfull = get_globall_probs(psfull)
         _, _, Pcrossfull = get_global_probs_from_dict(psfull)
@@ -576,8 +576,8 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
                 set_taus(pe)
 
             # Skip [0-] index as it is not used for Pcross calculations
-            if i == 0:
-                continue  
+            # if i == 0:
+            #     continue  
 
             # Compute REPPTIS local probabilities
             plocfull = get_local_probs(pe, tr=False)
@@ -586,7 +586,7 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
         # Extract global probabilities
         psfull = [
             {ptype: data[i]["full"][ptype] for ptype in ("LMR", "RML", "RMR", "LML")}
-            for i in range(1, len(pathensembles))
+            for i in range(len(pathensembles))
         ]
         _, _, Pcrossfull = get_global_probs_from_dict(psfull)
 
@@ -664,6 +664,31 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
         del Mi, wi, pi, z1, z2, y1, y2,N, NS
         del Pcrossfull
         del plocMSM, pcrosslocMSM
+
+    # repptisploc = []
+    # for i, pe in enumerate(pathensembles_original):
+    #     # REPPTIS p_loc
+    #     repptisploc.append(get_local_probs(pe, tr=False))
+
+    # _, _, reppfull = get_global_probs_from_dict(repptisploc)
+    
+    # # Write REPPTIS results to log file
+    # print("\ninfunc:REPPTIS global crossing probabilities:")
+    # for i, p in enumerate(reppfull):
+    #     print(f"Interface {i}: {p:.8f}")
+
+    # repptisploc = []
+    # for i, pe in enumerate(pathensembles):
+    #     # REPPTIS p_loc
+    #     repptisploc.append(get_local_probs(pe, tr=False))
+
+    # _, _, reppfull = get_global_probs_from_dict(repptisploc)
+    
+    # # Write REPPTIS results to log file
+    # print("\ninfunc2:REPPTIS global crossing probabilities:")
+    # for i, p in enumerate(reppfull):
+    #     print(f"Interface {i}: {p:.8f}")
+
 
     # Write to file
     if pl:
