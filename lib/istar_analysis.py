@@ -231,8 +231,8 @@ def get_transition_probs_weights(w_path):
     ----------
     w_path : dict
         Dictionary containing weighted path counts between interfaces. Each element w_path[i][j][k]
-        represents the weighted count of paths that start at ensemble i, from interface j,
-        and reach interface k.
+        represents the weighted count of paths that start at ensemble i, with a turn from interface j,
+        and terminate with a turn at interface k.
     
     Returns
     -------
@@ -1187,6 +1187,89 @@ def plot_rv_repptis(pes, interfaces, numberof):
     fig.legend()
     fig.show()
 
+def cprobs_repptis_istar(pes, interfaces, n_int=None):
+    if n_int is None:
+        n_int = len(interfaces)
+    
+    X = compute_weight_matrices(pes, interfaces, len(interfaces), tr=True)
+    print("\n\n")
+
+    plocrepptis = {}
+    plocistar = {}
+    for i, pe in enumerate(pes):
+        print(f"Ensemble {i} ([{max(0,i-1)}{'+-' if i > 0 else '-'}]):")
+        plocrepptis[i] = get_local_probs(pe, tr=False)
+        print("\n")
+
+        plocistar[i] = {}
+        if i == 0:
+            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, len(interfaces), ACCFLAGS, REJFLAGS, verbose = False)
+            masks= get_lmr_masks(pe)
+            accmask = get_flag_mask(pe, "ACC")
+            loadmask = get_generation_mask(pe, "ld")
+            plocistar[i]["LML"] = [np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))/(np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))), np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))]
+            plocistar[i]["LMR"] = [np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))/(np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))), np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))]
+            plocistar[i]["RMR"] = [np.sum(select_with_masks(w, [masks["RMR"], accmask, ~loadmask]))/(np.sum(select_with_masks(w, [masks["RML"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["RMR"], accmask, ~loadmask]))), np.sum(select_with_masks(w, [masks["RMR"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["RML"], accmask, ~loadmask]))]
+            plocistar[i]["RML"] = [1 - plocistar[i]["RMR"][0], np.sum(select_with_masks(w, [masks["RMR"], accmask, ~loadmask]))+np.sum(select_with_masks(w, [masks["RML"], accmask, ~loadmask]))]
+            print(f"REPPTIS pLMR approx: {plocistar[i]['LML'][0]}\nREPPTIS pLML approx: {plocistar[i]['LML'][0]} with # weights = {plocistar[i]['LMR'][1]}\n")
+            print(f"REPPTIS pRML approx: {plocistar[i]['RML'][0]}\nREPPTIS pRMR approx: {plocistar[i]['RMR'][0]} with # weights = {plocistar[i]['RML'][1]}")
+            continue
+        # REPPTIS estimates with [i*] weights - slightly different numerically because of different weighting
+        plocistar[i]["LML"] = [np.sum(X[i][:max(1,i-1), i-1])/np.sum(X[i][:max(1,i-1), i-1:]), np.sum(X[i][:max(1,i-1), i-1:])]
+        plocistar[i]["LMR"] = [1-plocistar[i]["LML"][0], np.sum(X[i][:max(1,i-1), i-1:]), ]
+        plocistar[i]["RMR"] = [np.sum(X[i][i:, max(1, i-1)])/np.sum(X[i][i:, :i]), np.sum(X[i][i:, :i])]
+        plocistar[i]["RML"] = [1-plocistar[i]["RMR"][0], np.sum(X[i][i:, :i])]
+
+        plocistar[i]["startLMLR"] = np.zeros([3,max(1, i-1)])
+        plocistar[i]["startLMLR"] = np.array([np.array([np.sum(X[i][j, i-1])/np.sum(X[i][j, i-1:]), np.sum(X[i][j, i:])/np.sum(X[i][j, i-1:]), np.sum(X[i][j, i-1:])]) for j in range(max(1, i-1))])
+
+        plocistar[i]["startRMRL"] = np.zeros([3, len(interfaces)-i+1])
+        plocistar[i]["startRMRL"] = np.array([np.array([np.sum(X[i][j, i-1])/np.sum(X[i][j, :i]), np.sum(X[i][j, :i-1])/np.sum(X[i][j, :i]), np.sum(X[i][j, :i])]) for j in range(i, len(interfaces))])
+
+        plocistar[i]["endLMLR"] = np.zeros([3,len(interfaces)-i+1])
+        plocistar[i]["endLMLR"] = np.array([np.array([np.sum(X[i][:max(1,i-1), i-1])/(np.sum(X[i][:max(1,i-1), j])+np.sum(X[i][:max(1,i-1), i-1])), np.sum(X[i][:max(1,i-1), j])/(np.sum(X[i][:max(1,i-1), j])+np.sum(X[i][:max(1,i-1), i-1])), (np.sum(X[i][:max(1,i-1), j])+np.sum(X[i][:max(1,i-1), i-1]))]) for j in range(i, len(interfaces))])
+        plocistar[i]["endRMRL"] = np.zeros([3, max(1, i-1)])
+        plocistar[i]["endRMRL"] = np.array([np.array([np.sum(X[i][i:, i-1])/(np.sum(X[i][i:, j])+np.sum(X[i][i:, i-1])), np.sum(X[i][i:, j])/(np.sum(X[i][i:, j])+np.sum(X[i][i:, i-1])), (np.sum(X[i][i:, j])+np.sum(X[i][i:, i-1]))]) for j in range(max(0,i-1))])
+
+        plocistar[i]["full"] = np.zeros([len(interfaces), len(interfaces)])
+        for j in range(len(interfaces)):
+            for k in range(len(interfaces)):
+                if j < k:
+                    plocistar[i]["full"][j][k] = (X[i][j][k]) / np.sum(X[i][j][j:])
+                elif k < j:
+                    plocistar[i]["full"][j][k] = (X[i][j][k]) / np.sum(X[i][j][:j])
+                else:
+                    if j == 0:
+                        plocistar[i]["full"][j][k] = X[i][j][k] / np.sum(X[i][j][j:])
+                    else:
+                        plocistar[i]["full"][j][k] = 0
+
+        # pprint(plocistar)
+        print(f"Ensemble {i} ([{i-1}*]):")
+        print("    --- LMR/LML ---")
+        print(f"REPPTIS pLMR approx: {plocistar[i]['LMR'][0]} (vs. REPPTIS = {plocrepptis[i]['LMR']}) with # weights = {plocistar[i]['LMR'][1]}")
+        print(f"REPPTIS pLML fw approx: {plocistar[i]['LML'][0]} (vs. REPPTIS = {plocrepptis[i]['LML']}) with # weights = {plocistar[i]['LML'][1]}")
+        print("    START TURNS:")
+        for st, p in enumerate(plocistar[i]["startLMLR"]):
+            print(f"     -> Conditional pLMR/pLML with start turn at interface {st}: pLML={p[0]} <-> pL{st}MR {p[1]} with sum {np.sum(p[:-1])} \n    with # weights {p[-1]}")
+        print("    END TURNS:")
+        for st, p in enumerate(plocistar[i]["endLMLR"]):
+            print(f"     -> Conditional pLMR/pLML with LMR end turn at interface {st+i}: pLML={p[0]} <-> pLMR{st+i}={p[1]} with sum {np.sum(p[:-1])} \n    with # weights {p[-1]}")
+        print("    --- RML/RMR ---")
+        print(f"REPPTIS pRML approx: {plocistar[i]['RML'][0]} (vs. REPPTIS = {plocrepptis[i]['RML']}) with # weights = {plocistar[i]['RML'][1]}")
+        print(f"REPPTIS pRMR bw approx: {plocistar[i]['RMR'][0]} with # weights = {plocistar[i]['RMR'][1]}")
+        print("    START TURNS:")
+        for st, p in enumerate(plocistar[i]["startRMRL"]):
+            print(f"     -> Conditional pRML/pRMR with start turn at interface {st}: pRMR={p[0]} <-> pR{st}ML {p[1]} with sum {np.sum(p[:-1])} \n    with # weights {p[-1]}")
+        print("    END TURNS:")
+        for st, p in enumerate(plocistar[i]["endLMLR"]):
+            print(f"     -> Conditional pRML/pRMR with RML end turn at interface {st}: pRMR={p[0]} <-> pRML{st}={p[1]} with sum {np.sum(p[:-1])} \nwith # weights {p[-1]}")
+        print(f"Full conditional turn probability matrix for ensemble {i}:")
+        print(np.array_str(plocistar[i]["full"], precision=5, suppress_small=True))
+        print("\n")
+
+    return plocrepptis, plocistar
+
 def plot_rv_comp(pes, interfaces, n_repptis, n_staple, pe_idxs=None):
     """
     Compare representative trajectories for REPPTIS and iSTAR models on a single phase space diagram.
@@ -1336,6 +1419,8 @@ def display_data(pes, interfaces, n_int=None, weights=None):
     X = {}
     C = {}
     C_md = {}  # Number of paths where new MD steps are performed (shooting/WF)
+    ploc_repptis = {}
+    ploc_istar = {}
     if n_int is None:
         n_int = len(pes)
     for i, pe in enumerate(pes):
@@ -1495,7 +1580,7 @@ def display_data(pes, interfaces, n_int=None, weights=None):
         # Warning for interfaces (columns) with unusually low sampling
         total_sum = np.sum(X_tr[i])
         col_sums = np.sum(X_tr[i], axis=0)
-        n_cols = X_tr[i].shape[1]
+        n_cols = X_tr.shape[1]
         threshold = total_sum / (5 * n_cols)  # Threshold for warning: 20% of average
         
         low_cols = np.where(col_sums < threshold)[0]
@@ -1509,7 +1594,7 @@ def display_data(pes, interfaces, n_int=None, weights=None):
         # 5. Unweighted data with time reversal symmetry
         print("\n3b. Unweighted data with time reversal")
         C_tr = (C[i]+C[i].T)/2.0
-        print(np.array2string(C_tr, precision=4, suppress_small=True))
+        print(np.array2string(C_tr, precision=4, suppress_small=True))            
 
     # Combined statistics across all ensembles
     print("\n" + "="*40)
@@ -1535,6 +1620,172 @@ def display_data(pes, interfaces, n_int=None, weights=None):
     print(np.array2string(W_tr, precision=4, suppress_small=True))
 
     return C, X, W
+
+def ploc_repptis_from_staples(pes, interfaces, n_int=None, staple_weights=None):
+    """
+    Calculate and compare REPPTIS local crossing probabilities using staple weights.
+    
+    This function extracts local crossing probabilities from path ensembles using both
+    traditional REPPTIS calculations and alternative calculations based on staple-weighted
+    path counts. It provides a comprehensive comparison between these approaches.
+    
+    Parameters
+    ----------
+    pes : list
+        List of PathEnsemble objects to analyze
+    interfaces : list
+        List of interface positions
+    n_int : int, optional
+        Number of interfaces to consider. If None, uses the length of pes.
+    staple_weights : dict, optional
+        Pre-computed staple weights. If None, weights are calculated within the function.
+        
+    Returns
+    -------
+    tuple
+        (ploc_repptis, ploc_istar) - Dictionaries containing local probability estimates
+        from standard REPPTIS and iSTAR (staple-weighted) approaches.
+    """
+    masks = {}
+    ploc_repptis = {}
+    ploc_istar = {}
+    
+    # Compute weight matrices for all path ensembles
+    X = compute_weight_matrices(pes, interfaces, n_int=n_int, weights=staple_weights, tr=True)
+    
+    if n_int is None:
+        n_int = len(pes)
+
+    # Process each path ensemble
+    for i, pe in enumerate(pes):
+        print("\n" + "="*50)
+        print(f"ENSEMBLE [{i-1 if i>0 else 0}{'*' if i>0 else '-'}] | ID {i}")
+        print("="*50)
+        
+        # Get masks, weights, and other path statistics
+        masks[i] = get_lmr_masks(pe)
+        if staple_weights is None:
+            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, n_int, ACCFLAGS, REJFLAGS, verbose=False)
+        else:
+            w = staple_weights[i]
+            
+        accmask = get_flag_mask(pe, "ACC")
+        loadmask = get_generation_mask(pe, "ld")
+        md_mask = np.logical_or(pe.generation == "sh", pe.generation == "wf")
+        
+        if i == 1: 
+            md_mask = np.logical_or(md_mask, pe.generation == "s-")
+        elif i == 0: 
+            md_mask = np.logical_or(md_mask, pe.generation == "s+")
+            
+        # Log ensemble statistics
+        msg = f"Ensemble {pe.name[-3:]} summary:\n"
+        msg += f"• Total paths: {len(w)}\n"
+        msg += f"• Total ensemble weight: {np.sum(w):.2f}\n"
+        msg += f"• Accepted paths: {np.sum(accmask)}\n"
+        msg += f"• Loaded paths: {np.sum(loadmask)}"
+        logger.debug(msg)
+
+        # Calculate standard REPPTIS local probabilities
+        ploc_repptis[i] = get_local_probs(pe, tr=False)
+        ploc_istar[i] = {}
+        
+        # Special handling for first ensemble
+        if i == 0:
+            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, len(interfaces), ACCFLAGS, REJFLAGS, verbose=False)
+            masks = get_lmr_masks(pe)
+            accmask = get_flag_mask(pe, "ACC")
+            loadmask = get_generation_mask(pe, "ld")
+            
+            # Calculate LML/LMR probabilities
+            lml_weight = np.sum(select_with_masks(w, [masks["LML"], accmask, ~loadmask]))
+            lmr_weight = np.sum(select_with_masks(w, [masks["LMR"], accmask, ~loadmask]))
+            total_lm_weight = lml_weight + lmr_weight
+            
+            ploc_istar[i]["LML"] = [lml_weight/total_lm_weight if total_lm_weight > 0 else 0, total_lm_weight]
+            ploc_istar[i]["LMR"] = [lmr_weight/total_lm_weight if total_lm_weight > 0 else 0, total_lm_weight]
+            
+            # Calculate RML/RMR probabilities
+            rmr_weight = np.sum(select_with_masks(w, [masks["RMR"], accmask, ~loadmask]))
+            rml_weight = np.sum(select_with_masks(w, [masks["RML"], accmask, ~loadmask]))
+            total_rm_weight = rmr_weight + rml_weight
+            
+            ploc_istar[i]["RMR"] = [rmr_weight/total_rm_weight if total_rm_weight > 0 else 0, total_rm_weight]
+            ploc_istar[i]["RML"] = [1 - ploc_istar[i]["RMR"][0], total_rm_weight]
+            
+            print("\n📊 ENSEMBLE STATISTICS:")
+            print(f"  LMR/LML Statistics:")
+            print(f"  • pLMR from iSTAR: {ploc_istar[i]['LMR'][0]:.4f} (weight: {ploc_istar[i]['LMR'][1]:.1f})")
+            print(f"  • pLML from iSTAR: {ploc_istar[i]['LML'][0]:.4f} (weight: {ploc_istar[i]['LML'][1]:.1f})")
+            print(f"\n  RML/RMR Statistics:")
+            print(f"  • pRML from iSTAR: {ploc_istar[i]['RML'][0]:.4f} (weight: {ploc_istar[i]['RML'][1]:.1f})")
+            print(f"  • pRMR from iSTAR: {ploc_istar[i]['RMR'][0]:.4f} (weight: {ploc_istar[i]['RMR'][1]:.1f})")
+            continue
+            
+        # Calculate iSTAR probabilities for other ensembles
+        lml_sum = np.sum(X[i][:max(1,i-1), i-1])
+        lm_total = np.sum(X[i][:max(1,i-1), i-1:])
+        ploc_istar[i]["LML"] = [lml_sum/lm_total if lm_total > 0 else 0, lm_total]
+        ploc_istar[i]["LMR"] = [1-ploc_istar[i]["LML"][0], lm_total]
+        
+        rmr_sum = np.sum(X[i][i:, i-1])
+        rm_total = np.sum(X[i][i:, :i])
+        ploc_istar[i]["RMR"] = [rmr_sum/rm_total if rm_total > 0 else 0, rm_total]
+        ploc_istar[i]["RML"] = [1-ploc_istar[i]["RMR"][0], rm_total]
+        
+        # Print individual ensemble results with comparison
+        print("\n📊 INDIVIDUAL ENSEMBLE ANALYSIS:")
+        print("  LMR/LML Transition Probabilities:")
+        print(f"  • pLMR: {ploc_istar[i]['LMR'][0]:.4f} (iSTAR) vs {ploc_repptis[i]['LMR']:.4f} (REPPTIS)")
+        print(f"    - Total weight: {ploc_istar[i]['LMR'][1]:.1f}")
+        print(f"  • pLML: {ploc_istar[i]['LML'][0]:.4f} (iSTAR) vs {ploc_repptis[i]['LML']:.4f} (REPPTIS)")
+        print(f"    - Total weight: {ploc_istar[i]['LML'][1]:.1f}")
+        
+        print("\n  RML/RMR Transition Probabilities:")
+        print(f"  • pRML: {ploc_istar[i]['RML'][0]:.4f} (iSTAR) vs {ploc_repptis[i]['RML']:.4f} (REPPTIS)")
+        print(f"    - Total weight: {ploc_istar[i]['RML'][1]:.1f}")
+        print(f"  • pRMR: {ploc_istar[i]['RMR'][0]:.4f} (iSTAR) vs {ploc_repptis[i]['RMR']:.4f} (REPPTIS)")
+        print(f"    - Total weight: {ploc_istar[i]['RMR'][1]:.1f}")
+        
+        # Combined results from all ensembles
+        print("\n🔄 ALL ENSEMBLES COMBINED:")
+        print(f"  REPPTIS local probabilities from [{i-1}*]-weighted paths:")
+        
+        # Initialize combined statistics
+        ploc_istar["all"] = {}
+        
+        # Calculate LML/LMR probabilities from all ensembles
+        lml_counts = np.zeros(2)
+        for ens in range(1, i+1):
+            lml_counts[0] += np.sum(X[ens][:max(1,i-1), i-1])
+            lml_counts[1] += np.sum(X[ens][:max(1,i-1), i-1:])
+            
+        ploc_istar[i]["LMLtot"] = [lml_counts[0]/lml_counts[1] if lml_counts[1] > 0 else np.nan, lml_counts[1]]
+        ploc_istar[i]["LMRtot"] = [1 - ploc_istar[i]["LMLtot"][0] if not np.isnan(ploc_istar[i]["LMLtot"][0]) else np.nan, lml_counts[1]]
+        
+        # Calculate RML/RMR probabilities from all ensembles
+        rmr_counts = np.zeros(2)
+        for ens in range(i, n_int):
+            rmr_counts[0] += np.sum(X[ens][i:, i-1])
+            rmr_counts[1] += np.sum(X[ens][i:, :i])
+            
+        ploc_istar[i]["RMRtot"] = [rmr_counts[0]/rmr_counts[1] if rmr_counts[1] > 0 else np.nan, rmr_counts[1]]
+        ploc_istar[i]["RMLtot"] = [1 - ploc_istar[i]["RMRtot"][0] if not np.isnan(ploc_istar[i]["RMRtot"][0]) else np.nan, rmr_counts[1]]
+        
+        # Print aggregated results
+        print("\n  LMR/LML Transition Probabilities (Combined):")
+        print(f"  • pLMR: {ploc_istar[i]['LMRtot'][0]:.4f} (iSTAR) vs {ploc_repptis[i]['LMR']:.4f} (REPPTIS)")
+        print(f"    - Total weight: {ploc_istar[i]['LMRtot'][1]:.1f}")
+        print(f"  • pLML: {ploc_istar[i]['LMLtot'][0]:.4f} (iSTAR) vs {ploc_repptis[i]['LML']:.4f} (REPPTIS)")
+        print(f"    - Total weight: {ploc_istar[i]['LMLtot'][1]:.1f}")
+        
+        print("\n  RML/RMR Transition Probabilities (Combined):")
+        print(f"  • pRML: {ploc_istar[i]['RMLtot'][0]:.4f} (iSTAR) vs {ploc_repptis[i]['RML']:.4f} (REPPTIS)")
+        print(f"    - Total weight: {ploc_istar[i]['RMLtot'][1]:.1f}")
+        print(f"  • pRMR: {ploc_istar[i]['RMRtot'][0]:.4f} (iSTAR) vs {ploc_repptis[i]['RMR']:.4f} (REPPTIS)")
+        print(f"    - Total weight: {ploc_istar[i]['RMRtot'][1]:.1f}")
+
+    return ploc_repptis, ploc_istar
 
 
 def memory_analysis(w_path, tr=False):
@@ -1770,565 +2021,6 @@ def ploc_memory(pathensembles, interfaces, trr=True):
 
     return plocs
 
-def plot_memory_analysis_old(q_tot, p, interfaces=None):
-    """
-    Generate comprehensive visualizations for memory effect analysis in TIS simulations.
-    
-    This function creates three organized figures that analyze memory effects from multiple perspectives:
-    1. Matrix heatmaps: memory effect matrix, memory effect ratio, and memory asymmetry
-    2. Forward/backward probability plots with corresponding memory retention bar charts
-    3. Additional memory effect visualizations including decay profiles and relaxation times
-    
-    Parameters
-    ----------
-    q_tot : numpy.ndarray
-        A matrix with shape [2, n_interfaces, n_interfaces] where:
-        - q_tot[0][i][k]: conditional crossing probabilities
-        - q_tot[1][i][k]: sample counts for each calculation
-    p : numpy.ndarray
-        Transition probability matrix between interfaces.
-    interfaces : list, optional
-        The interface positions for axis labeling. If None, uses sequential indices.
-        
-    Returns
-    -------
-    tuple
-        A tuple containing three matplotlib.figure.Figure objects:
-        - fig1: Matrix heatmaps (memory effect matrix, ratio, asymmetry)
-        - fig2: Forward/backward probability plots with memory retention bar charts
-        - fig3: Memory decay profiles and additional visualizations
-    """
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from matplotlib.colors import LinearSegmentedColormap
-    import matplotlib.gridspec as gridspec
-    import matplotlib.colors as colors
-    import seaborn as sns
-    from scipy.optimize import curve_fit
-    
-    # Set seaborn style for better aesthetics
-    sns.set(style="whitegrid", context="paper", font_scale=1.1)
-    
-    # Extract the probability matrix and weights matrix from q_tot
-    q_probs = q_tot[0]
-    q_weights = q_tot[1]
-    n_interfaces = q_probs.shape[0]
-    
-    if interfaces is None:
-        interfaces = list(range(n_interfaces))
-    
-    # Function to generate high-contrast colors for plots
-    def generate_high_contrast_colors(n):
-        if n <= 1:
-            return ["#1f77b4"]  # Default blue for single item
-        
-        if n <= 10:
-            # Use seaborn's color_palette for better colors
-            return sns.color_palette("viridis", n)
-        else:
-            # For more interfaces, use viridis with adjusted spacing
-            cmap1 = plt.cm.get_cmap('viridis')
-            
-            # Get colors with deliberate spacing for better contrast
-            colors_list = []
-            for i in range(n):
-                # Distribute colors with slight variations in spacing
-                # This avoids adjacent indices having too similar colors
-                pos = (i / max(1, n-1)) * 0.85 + 0.1  # Scale to range 0.1-0.95
-                
-                # Introduce small oscillations in color position for adjacent indices
-                if i % 2 == 1:
-                    pos = min(0.95, pos + 0.05)
-                    
-                colors_list.append(colors.to_hex(cmap1(pos)))
-                
-            return colors_list
-    
-    # Exponential decay function for fitting memory effects
-    def exp_decay(x, a, tau, c):
-        return a * np.exp(-x / tau) + c
-    
-    # ================ Figure 1: Matrix Heatmaps ================
-    fig1 = plt.figure(figsize=(18, 7))
-    gs1 = gridspec.GridSpec(1, 3, width_ratios=[1.2, 1, 1])
-    
-    # Create custom colormap for memory effect heatmap
-    cmap_memory = LinearSegmentedColormap.from_list('memory_effect', 
-                                                  [(0, 'blue'), (0.5, 'white'), (1, 'red')], N=256)
-    
-    # Plot 1.1: Memory Effect Matrix (q_probs)
-    ax1 = fig1.add_subplot(gs1[0])
-    masked_data = np.ma.masked_invalid(q_probs)  # Mask NaN values
-    im1 = ax1.imshow(masked_data, cmap=cmap_memory, vmin=0, vmax=1, 
-                    interpolation='none', aspect='auto')
-    
-    # Add colorbar
-    cbar1 = fig1.colorbar(im1, ax=ax1, label='Probability')
-    
-    # Add reference line at 0.5
-    cbar1.ax.axhline(y=0.5, color='black', linestyle='--', linewidth=1)
-    cbar1.ax.text(1.5, 0.5, '0.5 (diffusive)', va='center', ha='left', fontsize=9)
-    
-    # Add annotations for probability values and sample sizes
-    for i in range(n_interfaces):
-        for k in range(n_interfaces):
-            if not np.isnan(q_probs[i, k]) and not np.ma.is_masked(masked_data[i, k]):
-                weight = q_weights[i, k]
-                text = f"{q_probs[i, k]:.2f}\n(n={int(weight)})" if weight > 0 else "N/A"
-                color = 'black' if 0.2 < q_probs[i, k] < 0.8 else 'white'
-                ax1.text(k, i, text, ha='center', va='center', color=color, fontsize=8)
-    
-    # Set ticks and labels
-    ax1.set_xticks(np.arange(n_interfaces))
-    ax1.set_yticks(np.arange(n_interfaces))
-    ax1.set_xticklabels([f"{i}" for i in range(n_interfaces)])
-    ax1.set_yticklabels([f"{i}" for i in range(n_interfaces)])
-    ax1.set_xlabel('Target Interface k')
-    ax1.set_ylabel('Starting Interface i')
-    ax1.set_title('Memory Effect Matrix: q(i,k)', fontsize=12)
-    
-    # Plot 1.2: Memory Effect Ratio
-    ax2 = fig1.add_subplot(gs1[1])
-    
-    # Calculate memory effect ratio: P/(1-P) compared to diffusive 0.5/(1-0.5)=1
-    memory_ratio = np.zeros_like(q_probs)
-    memory_ratio.fill(np.nan)
-    
-    for i in range(n_interfaces):
-        for k in range(n_interfaces):
-            if not np.isnan(q_probs[i, k]) and q_probs[i, k] != 0 and q_probs[i, k] != 1:
-                memory_ratio[i, k] = (q_probs[i, k] / (1 - q_probs[i, k])) / 1.0  # Normalize by diffusive ratio of 1
-    
-    # Plot heatmap with logarithmic scale
-    im2 = ax2.imshow(memory_ratio, cmap='RdBu_r', norm=colors.LogNorm(vmin=0.1, vmax=10))
-    
-    # Add colorbar
-    cbar2 = fig1.colorbar(im2, ax=ax2, label='Probability Ratio P/(1-P) [log scale]')
-    
-    # Add annotations for ratio values
-    for i in range(n_interfaces):
-        for k in range(n_interfaces):
-            if not np.isnan(memory_ratio[i, k]) and q_weights[i, k] > 5:
-                text_color = 'black'
-                if memory_ratio[i, k] > 5 or memory_ratio[i, k] < 0.2:
-                    text_color = 'white'
-                ax2.text(k, i, f"{memory_ratio[i, k]:.2f}", ha='center', va='center', 
-                       color=text_color, fontsize=8)
-    
-    ax2.set_xlabel('Target Interface k')
-    ax2.set_ylabel('Starting Interface i')
-    ax2.set_title('Memory Effect Ratio: Deviation from Diffusive Behavior', fontsize=12)
-    ax2.set_xticks(range(n_interfaces))
-    ax2.set_yticks(range(n_interfaces))
-    ax2.set_xticklabels([f"{i}" for i in range(n_interfaces)])
-    ax2.set_yticklabels([f"{i}" for i in range(n_interfaces)])
-    
-    # Plot 1.3: Memory Asymmetry
-    ax3 = fig1.add_subplot(gs1[2])
-    
-    # Calculate memory asymmetry for pairs of interfaces (i, j) using the p matrix
-    memory_asymmetry = np.zeros_like(p)
-    memory_asymmetry.fill(np.nan)
-    
-    for i in range(n_interfaces):
-        for j in range(n_interfaces):
-            if i != j:
-                # Asymmetry is the difference between forward and backward transition probabilities
-                memory_asymmetry[i, j] = p[i, j] - p[j, i]
-    
-    # Plot heatmap
-    im3 = ax3.imshow(memory_asymmetry, cmap='RdBu', vmin=-0.5, vmax=0.5)
-    
-    # Add colorbar
-    cbar3 = fig1.colorbar(im3, ax=ax3, label='Probability Asymmetry (i→j vs j→i)')
-    
-    # Add annotations
-    for i in range(n_interfaces):
-        for j in range(n_interfaces):
-            if not np.isnan(memory_asymmetry[i, j]):
-                text_color = 'black'
-                if abs(memory_asymmetry[i, j]) > 0.3:
-                    text_color = 'white'
-                ax3.text(j, i, f"{memory_asymmetry[i, j]:.2f}", ha='center', va='center', 
-                       color=text_color, fontsize=8)
-    
-    ax3.set_xlabel('Target Interface j')
-    ax3.set_ylabel('Starting Interface i')
-    ax3.set_title('Memory Asymmetry: Forward vs. Backward Transitions', fontsize=12)
-    ax3.set_xticks(range(n_interfaces))
-    ax3.set_yticks(range(n_interfaces))
-    ax3.set_xticklabels([f"{i}" for i in range(n_interfaces)])
-    ax3.set_yticklabels([f"{i}" for i in range(n_interfaces)])
-    
-    # Add explanatory text
-    desc_text = """
-    Memory Effect Matrix: Shows conditional crossing probabilities q(i,k).
-    • For i<k: probability that a path starting at i and reaching k-1 will reach k
-    • For i>k: probability that a path starting at i and reaching k+1 will reach k
-    
-    In a purely diffusive process, all values would be 0.5.
-    Values > 0.5 (red) indicate bias toward crossing, < 0.5 (blue) indicate bias toward returning.
-    """
-    fig1.text(0.02, 0.02, desc_text, fontsize=10, wrap=True)
-    
-    plt.tight_layout(rect=[0, 0.07, 1, 0.95])
-    fig1.suptitle('TIS Memory Effect Analysis - Matrix Representations', fontsize=14)
-    
-    # ================ Figure 2: Forward/Backward Probs + Memory Retention ================
-    fig2 = plt.figure(figsize=(18, 12))
-    gs2 = gridspec.GridSpec(2, 2, height_ratios=[1, 0.8])
-    
-    # Create colors for targets
-    forward_targets = [k for k in range(1, n_interfaces)]
-    forward_colors = generate_high_contrast_colors(len(forward_targets))
-    
-    backward_targets = [k for k in range(n_interfaces-1)]
-    backward_colors = generate_high_contrast_colors(len(backward_targets)) 
-    
-    # Plot 2.1: Forward Transition Probabilities (L→R)
-    ax4 = fig2.add_subplot(gs2[0, 0])
-    
-    # For each target interface k, plot q(i,k) for all starting interfaces i<k
-    for idx, k in enumerate(forward_targets):
-        target_data = []
-        starting_interfaces = []
-        
-        # For interface 0, include adjacent transition to interface 1
-        if k == 1:
-            if not np.isnan(q_probs[0, k]) and q_weights[0, k] > 5:
-                target_data.append(q_probs[0, k])
-                starting_interfaces.append(0)
-        
-        # For all targets, include transitions from any starting point
-        for i in range(k):
-            # For interface 0, include all transitions (even adjacent)
-            if i == 0:
-                if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
-                    target_data.append(q_probs[i, k])
-                    starting_interfaces.append(i)
-            # For other interfaces, skip adjacent transitions (i+1 = k)
-            elif i < k-1:  # Only include non-adjacent transitions for i>0
-                if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
-                    target_data.append(q_probs[i, k])
-                    starting_interfaces.append(i)
-        
-        if target_data:
-            ax4.plot(starting_interfaces, target_data, 'o-', 
-                   label=f'Target: {k}', linewidth=2, markersize=8,
-                   color=forward_colors[idx])
-    
-    # Add reference line at 0.5
-    ax4.axhline(y=0.5, color='gray', linestyle='--', alpha=0.7)
-    
-    # Configure the forward plot
-    ax4.set_xlabel('Starting Interface i')
-    ax4.set_ylabel('Probability q(i,k)')
-    ax4.set_title('Forward Transition Probabilities (L→R)', fontsize=12)
-    ax4.set_ylim(0, 1.05)
-    ax4.set_xlim(-0.5, n_interfaces-1.5)
-    ax4.set_xticks(range(n_interfaces))
-    ax4.legend(title='Target Interface k', loc='best')
-    
-    # Plot 2.2: Backward Transition Probabilities (R→L)
-    ax5 = fig2.add_subplot(gs2[0, 1])
-    
-    # For each target interface k, plot q(i,k) for all starting interfaces i>k
-    for idx, k in enumerate(backward_targets):
-        target_data = []
-        starting_interfaces = []
-        for i in range(k+2, n_interfaces):  # Skip adjacent (i = k+1)
-            if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
-                target_data.append(q_probs[i, k])
-                starting_interfaces.append(i)
-        
-        if target_data:
-            ax5.plot(starting_interfaces, target_data, 'o-', 
-                   label=f'Target: {k}', linewidth=2, markersize=8,
-                   color=backward_colors[idx])
-    
-    # Add reference line at 0.5
-    ax5.axhline(y=0.5, color='gray', linestyle='--', alpha=0.7)
-    
-    # Configure the backward plot
-    ax5.set_xlabel('Starting Interface i')
-    ax5.set_ylabel('Probability q(i,k)')
-    ax5.set_title('Backward Transition Probabilities (R→L)', fontsize=12)
-    ax5.set_ylim(0, 1.05)
-    ax5.set_xlim(0.5, n_interfaces-0.5)
-    ax5.set_xticks(range(n_interfaces))
-    ax5.legend(title='Target Interface k', loc='best')
-    
-    # Plot 2.3: Forward Memory Retention
-    ax6 = fig2.add_subplot(gs2[1, 0])
-    
-    # Calculate memory retention using relative standard deviation
-    memory_retention = np.zeros(n_interfaces)
-    
-    for k in range(1, n_interfaces):
-        # Get all probabilities for reaching k from different starting points
-        # Exclude i=k (q(i,i)=0) and i=k-1 (q(i,i+1)=1) for i>0
-        probs = []
-        for i in range(k-1):
-            if i == 0 or i < k-1:  # Include adjacent transitions for i=0
-                if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
-                    probs.append(q_probs[i, k])
-        
-        if len(probs) > 1:
-            # Calculate relative standard deviation (RSD = std/mean * 100%)
-            mean_prob = np.mean(probs)
-            if mean_prob > 0:  # Avoid division by zero
-                std_prob = np.std(probs)
-                memory_retention[k] = (std_prob / mean_prob) * 100  # As percentage
-            else:
-                memory_retention[k] = np.nan
-    
-    # Plot the memory retention (RSD)
-    valid_k = [k for k in range(1, n_interfaces) if not np.isnan(memory_retention[k])]
-    valid_retention = [memory_retention[k] for k in valid_k]
-    valid_colors = [forward_colors[k-1] for k in valid_k]  # Match colors to targets in forward plot
-    
-    if valid_k:
-        bars6 = ax6.bar(valid_k, valid_retention, color=valid_colors, alpha=0.7)
-        
-        # Add annotations for memory retention values
-        for i, k in enumerate(valid_k):
-            ax6.text(k, valid_retention[i] + 1, f"{valid_retention[i]:.1f}%", ha='center', fontsize=9)
-        
-        ax6.set_xlabel('Target Interface k')
-        ax6.set_ylabel('Relative Standard Deviation (%)')
-        ax6.set_title('Forward Memory Retention: Variability in Forward Transitions', fontsize=12)
-        ax6.set_xticks(range(1, n_interfaces))
-        ax6.set_ylim(0, max(valid_retention) * 1.2 if valid_retention else 10)
-    else:
-        ax6.text(0.5, 0.5, "Insufficient data for forward memory retention analysis", 
-               ha='center', va='center', transform=ax6.transAxes)
-    
-    # Plot 2.4: Backward Memory Retention
-    ax7 = fig2.add_subplot(gs2[1, 1])
-    
-    # Calculate backward memory retention
-    backward_memory_retention = np.zeros(n_interfaces)
-    
-    for k in range(n_interfaces-1):
-        # Get all probabilities for reaching k from different starting points i>k+1
-        probs = [q_probs[i, k] for i in range(k+2, n_interfaces) if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5]
-        if len(probs) > 1:
-            mean_prob = np.mean(probs)
-            if mean_prob > 0:  # Avoid division by zero
-                std_prob = np.std(probs)
-                backward_memory_retention[k] = (std_prob / mean_prob) * 100  # As percentage
-            else:
-                backward_memory_retention[k] = np.nan
-    
-    # Plot the backward memory retention (RSD)
-    valid_k = [k for k in range(n_interfaces-1) if not np.isnan(backward_memory_retention[k])]
-    valid_retention = [backward_memory_retention[k] for k in valid_k]
-    valid_colors = [backward_colors[k] for k in valid_k]  # Match colors to targets in backward plot
-    
-    if valid_k:
-        bars7 = ax7.bar(valid_k, valid_retention, color=valid_colors, alpha=0.7)
-        
-        # Add annotations for memory retention values
-        for i, k in enumerate(valid_k):
-            ax7.text(k, valid_retention[i] + 1, f"{valid_retention[i]:.1f}%", ha='center', fontsize=9)
-        
-        ax7.set_xlabel('Target Interface k')
-        ax7.set_ylabel('Relative Standard Deviation (%)')
-        ax7.set_title('Backward Memory Retention: Variability in Backward Transitions', fontsize=12)
-        ax7.set_xticks(range(n_interfaces-1))
-        ax7.set_ylim(0, max(valid_retention) * 1.2 if valid_retention else 10)
-    else:
-        ax7.text(0.5, 0.5, "Insufficient data for backward memory retention analysis", 
-               ha='center', va='center', transform=ax7.transAxes)
-    
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    fig2.suptitle('TIS Memory Effect Analysis - Transition Probabilities and Memory Retention', fontsize=14)
-    
-    # ================ Figure 3: Memory Decay Profiles and Additional Visualizations ================
-    fig3 = plt.figure(figsize=(18, 14))
-    gs3 = gridspec.GridSpec(2, 2)
-    
-    # Plot 3.1: Memory Decay with Distance (Forward transitions)
-    ax8 = fig3.add_subplot(gs3[0, 0])
-    
-    # Calculate memory effect as deviation from 0.5
-    memory_data = np.zeros((n_interfaces-1, n_interfaces-1))
-    memory_data.fill(np.nan)
-    
-    for start_i in range(n_interfaces-1):
-        for target_k in range(start_i+1, n_interfaces):
-            # Calculate distance between interfaces
-            distance = target_k - start_i
-            # Memory effect is deviation from 0.5
-            if not np.isnan(q_probs[start_i, target_k]) and q_weights[start_i, target_k] > 5:
-                memory_data[start_i, distance-1] = abs(q_probs[start_i, target_k] - 0.5)
-    
-    # Plot heatmap
-    sns.heatmap(memory_data, cmap='viridis', ax=ax8, 
-                cbar_kws={'label': '|Probability - 0.5| (Memory Effect Strength)'})
-    
-    ax8.set_xlabel('Interface Distance (k - i)')
-    ax8.set_ylabel('Starting Interface i')
-    ax8.set_title('Memory Effect Decay with Distance (Forward L→R)', fontsize=12)
-    ax8.set_xticks(np.arange(n_interfaces-1) + 0.5)
-    ax8.set_xticklabels(np.arange(1, n_interfaces))
-    ax8.set_yticks(np.arange(n_interfaces-1) + 0.5)
-    ax8.set_yticklabels(np.arange(n_interfaces-1))
-    
-    # Plot 3.2: Memory Decay with Distance (Backward transitions)
-    ax9 = fig3.add_subplot(gs3[0, 1])
-    
-    # Calculate memory effect for backward transitions
-    backward_memory_data = np.zeros((n_interfaces-1, n_interfaces-1))
-    backward_memory_data.fill(np.nan)
-    
-    for start_i in range(1, n_interfaces):
-        for target_k in range(start_i):
-            # Calculate distance between interfaces
-            distance = start_i - target_k
-            # Memory effect is deviation from 0.5
-            if not np.isnan(q_probs[start_i, target_k]) and q_weights[start_i, target_k] > 5:
-                backward_memory_data[start_i-1, distance-1] = abs(q_probs[start_i, target_k] - 0.5)
-    
-    # Plot heatmap
-    sns.heatmap(backward_memory_data, cmap='viridis', ax=ax9, 
-                cbar_kws={'label': '|Probability - 0.5| (Memory Effect Strength)'})
-    
-    ax9.set_xlabel('Interface Distance (i - k)')
-    ax9.set_ylabel('Starting Interface i')
-    ax9.set_title('Memory Effect Decay with Distance (Backward R→L)', fontsize=12)
-    ax9.set_xticks(np.arange(n_interfaces-1) + 0.5)
-    ax9.set_xticklabels(np.arange(1, n_interfaces))
-    ax9.set_yticks(np.arange(n_interfaces-1) + 0.5)
-    ax9.set_yticklabels(np.arange(1, n_interfaces))
-    
-    # Plot 3.3: Memory Effect by Jump Distance
-    ax10 = fig3.add_subplot(gs3[1, 0])
-    
-    max_distance = n_interfaces - 1
-    distances = range(1, max_distance + 1)
-    
-    # Create colors for jump distances
-    jump_colors = generate_high_contrast_colors(max_distance)
-    
-    for idx, dist in enumerate(distances):
-        probs = []
-        starting_positions = []
-        for i in range(n_interfaces - dist):
-            k = i + dist
-            if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:  # Minimum sample threshold
-                probs.append(q_probs[i, k])
-                starting_positions.append(i)
-                
-        if probs:
-            ax10.plot(starting_positions, probs, 'o-', 
-                    label=f'Δλ = {dist}', linewidth=2, markersize=8,
-                    color=jump_colors[idx])
-    
-    # Add reference line at 0.5
-    ax10.axhline(y=0.5, color='gray', linestyle='--', alpha=0.7)
-    
-    # Configure the jump distance plot
-    ax10.set_xlabel('Starting Interface i')
-    ax10.set_ylabel('Probability q(i, i+dist)')
-    ax10.set_title('Memory Effect by Jump Distance (L→R)', fontsize=12)
-    ax10.set_ylim(0, 1.05)
-    ax10.set_xlim(-0.5, n_interfaces-1.5)
-    ax10.set_xticks(range(n_interfaces))
-    ax10.legend(title='Jump Distance Δλ', loc='best')
-    
-    # Plot 3.4: Deviations from Diffusive Behavior in Transitions
-    ax11 = fig3.add_subplot(gs3[1, 1])
-
-    # Create array for adjacency transitions (i to i+1 and i to i-1) using p matrix
-    adjacent_forward = np.zeros(n_interfaces - 1)
-    adjacent_backward = np.zeros(n_interfaces - 1)
-
-    for i in range(n_interfaces - 1):
-        if i < p.shape[0] and i+1 < p.shape[1]:
-            adjacent_forward[i] = p[i, i+1] - 0.5
-        
-    for i in range(1, n_interfaces):
-        if i < p.shape[0] and i-1 < p.shape[1]:
-            adjacent_backward[i-1] = p[i, i-1] - 0.5
-
-    # Calculate y_limit for plot
-    y_limit = max(np.nanmax(np.abs(adjacent_forward)), np.nanmax(np.abs(adjacent_backward))) * 1.2
-
-    # Use the same colors from forward/backward transitions plots for consistency
-    forward_base_color = sns.color_palette()[0]   # Base color for forward transitions
-    backward_base_color = sns.color_palette()[1]  # Base color for backward transitions
-
-    # Create bars with consistent colors that match the legend
-    # For forward transitions: separate into positive and negative values
-    pos_mask_fwd = adjacent_forward >= 0
-    neg_mask_fwd = adjacent_forward < 0
-    
-    # Positive forward bars (higher alpha)
-    ax11.bar(np.arange(n_interfaces-1)[pos_mask_fwd] - 0.2, adjacent_forward[pos_mask_fwd], 0.4, 
-                    color=forward_base_color, edgecolor='black', linewidth=0.5, alpha=0.85,
-                    label='Forward (i → i+1)')
-    
-    # Negative forward bars (lower alpha)
-    ax11.bar(np.arange(n_interfaces-1)[neg_mask_fwd] - 0.2, adjacent_forward[neg_mask_fwd], 0.4, 
-                    color=forward_base_color, edgecolor='black', linewidth=0.5, alpha=0.4)
-    
-    # For backward transitions: separate into positive and negative values
-    pos_mask_bwd = adjacent_backward >= 0
-    neg_mask_bwd = adjacent_backward < 0
-    
-    # Positive backward bars (higher alpha)
-    ax11.bar(np.arange(n_interfaces-1)[pos_mask_bwd] + 0.2, adjacent_backward[pos_mask_bwd], 0.4, 
-                    color=backward_base_color, edgecolor='black', linewidth=0.5, alpha=0.85,
-                    label='Backward (i+1 → i)')
-    
-    # Negative backward bars (lower alpha)
-    ax11.bar(np.arange(n_interfaces-1)[neg_mask_bwd] + 0.2, adjacent_backward[neg_mask_bwd], 0.4, 
-                    color=backward_base_color, edgecolor='black', linewidth=0.5, alpha=0.4)
-
-    # Add zero line
-    ax11.axhline(y=0, color='k', linestyle='-', alpha=0.5)
-
-    # Add shaded regions to indicate bias direction
-    ax11.axhspan(0, y_limit, alpha=0.1, color='green', label='Bias toward crossing')
-    ax11.axhspan(-y_limit, 0, alpha=0.1, color='red', label='Bias toward returning')
-
-    # Add annotations with improved visibility
-    for i, v in enumerate(adjacent_forward):
-        if not np.isnan(v):
-            offset = 0.02 if v >= 0 else -0.08
-            ax11.text(i - 0.2, v + offset, f"{v:.2f}", ha='center', fontsize=9, 
-                    fontweight='bold', color='black')
-
-    for i, v in enumerate(adjacent_backward):
-        if not np.isnan(v):
-            offset = 0.02 if v >= 0 else -0.08
-            ax11.text(i + 0.2, v + offset, f"{v:.2f}", ha='center', fontsize=9, 
-                    fontweight='bold', color='black')
-
-    # Add explanatory note about bias
-    ax11.text(0.02, 0.02, 
-            "Positive values: Bias toward crossing (>0.5)\nNegative values: Bias toward returning (<0.5)",
-            transform=ax11.transAxes, fontsize=10, va='bottom', ha='left',
-            bbox=dict(facecolor='white', alpha=0.7, boxstyle='round'))
-
-    # Set better y limits to show all bars clearly
-    max_abs_val = max(np.nanmax(np.abs(adjacent_forward)), np.nanmax(np.abs(adjacent_backward)))
-    y_limit = max(0.5, max_abs_val * 1.3)
-    ax11.set_ylim(-y_limit, y_limit)
-
-    ax11.set_xlabel('Interface Pair (i, i+1)')
-    ax11.set_ylabel('Deviation from Diffusive (P - 0.5)')
-    ax11.set_title('Memory Effect in Adjacent Transitions', fontsize=12)
-    ax11.set_xticks(np.arange(n_interfaces-1))
-    ax11.set_xticklabels([f"{i},{i+1}" for i in range(n_interfaces - 1)])
-    ax11.legend(loc='upper right')
-    
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    fig3.suptitle('TIS Memory Effect Analysis - Decay Profiles and Additional Metrics', fontsize=14)
-    
-    return fig1, fig2, fig3
-
 def plot_memory_analysis(q_tot, p, interfaces=None):
     """
     Generate comprehensive visualizations for memory effect analysis in TIS simulations
@@ -2363,7 +2055,6 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
     from matplotlib.widgets import Button
     # Add legend
     from matplotlib.lines import Line2D
-    from matplotlib.lines import Line2D
     
     # Extract the probability matrix and weights matrix from q_tot
     q_probs = q_tot[0]
@@ -2381,8 +2072,15 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
         else:
             is_equidistant = True
     
+    # Generate more descriptive state labels
+    state_labels = generate_state_labels(n_interfaces)
+
+    M = construct_M_istar(p, 2*n_interfaces, n_interfaces)
+    
     # Calculate diffusive reference probabilities based on interface spacing
-    diff_ref = calculate_diffusive_reference_spacing(interfaces)
+    # diff_ref = calculate_diffusive_reference_spacing(interfaces)
+    # diff_ref = calculate_diffusive_reference_from_turn_stationary(M, n_interfaces)
+    diff_ref = calculate_q_ik_reference_from_stationary(M, n_interfaces)
     
     # Function to generate high-contrast colors for plots
     def generate_high_contrast_colors(n):
@@ -2463,7 +2161,7 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
                 color = 'black' if abs(memory_effect[i, j]) < 0.3 else 'white'
                 ax1.text(j, i, text, ha='center', va='center', color=color, fontsize=7)
     
-    # Set ticks and labels using index values
+    # Set ticks and labels using state labels
     ax1.set_xticks(np.arange(n_interfaces))
     ax1.set_yticks(np.arange(n_interfaces))
     ax1.set_xticklabels([f"{i}" for i in range(n_interfaces)])
@@ -2598,7 +2296,7 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
         if target_data:
             # Plot actual probabilities with physical positions on x-axis
             ax4.plot(starting_positions, target_data, 'o-', 
-                    label=f'Target: {k}', linewidth=2, markersize=8,
+                    label=(f'Target: {k}$\\supset$' if k < n_interfaces-1 else f'Target: {k}'), linewidth=2, markersize=8,
                     color=forward_colors[idx])
             
             # Plot diffusive reference as dashed lines
@@ -2606,7 +2304,7 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
                     color=forward_colors[idx], alpha=0.5)
     
     # Configure the forward plot
-    ax4.set_xlabel('Interface Position (λ)')
+    ax4.set_xlabel('Starting interface Position (λ$\\subset$)')
     ax4.set_ylabel('Probability q(i,k)')
     ax4.set_title('Forward Transition Probabilities (L→R)', fontsize=12)
     ax4.set_ylim(0, 1.05)
@@ -2616,8 +2314,8 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
     ax4.set_xlim(min(interfaces) - 0.1, interfaces[n_interfaces-2] + 0.1)
     # Set the physical positions of interfaces on the x-axis
     ax4.set_xticks(interfaces)
-    # But label them with their indices
-    ax4.set_xticklabels([f"{i}" for i in range(n_interfaces)])
+    # Use state_labels for the tick labels
+    ax4.set_xticklabels(["0→"]+[f"{i}$\\subset$" for i in range(1, n_interfaces-1)] + [f"{n_interfaces-1}"])
     
     # Add explanatory text about the dashed lines
     ref_text = """
@@ -2652,7 +2350,7 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
         if target_data:
             # Plot actual probabilities with physical positions on x-axis
             ax5.plot(starting_positions, target_data, 'o-', 
-                    label=f'Target: {k}', linewidth=2, markersize=8,
+                    label=(f'Target: {k}$\\subset$' if k > 0 else f'Target: {k}'), linewidth=2, markersize=8,
                     color=backward_colors[idx])
             
             # Plot diffusive reference as dashed lines
@@ -2660,7 +2358,7 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
                     color=backward_colors[idx], alpha=0.5)
     
     # Configure the backward plot
-    ax5.set_xlabel('Interface Position (λ)')
+    ax5.set_xlabel('Starting interface Position (λ)$\\supset$')
     ax5.set_ylabel('Probability q(i,k)')
     ax5.set_title('Backward Transition Probabilities (R→L)', fontsize=12)
     ax5.set_ylim(0, 1.05)
@@ -2670,8 +2368,8 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
     ax5.set_xlim(interfaces[1] - 0.1, max(interfaces) + 0.1)
     # Set the physical positions of interfaces on the x-axis
     ax5.set_xticks(interfaces)
-    # But label them with their indices
-    ax5.set_xticklabels([f"{i}" for i in range(n_interfaces)])
+    # Use state_labels for the tick labels
+    ax5.set_xticklabels(["0←"]+[f"{i}$\\supset$" for i in range(1, n_interfaces-1)] + [f"{n_interfaces-1}"])
     
     # Add explanatory text about the dashed lines
     ax5.text(0.02, 0.02, ref_text, transform=ax5.transAxes, fontsize=9,
@@ -2709,6 +2407,8 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
     
     # Extract valid mean differences to plot
     valid_mean_diff = [forward_mean_diff[k] if not np.isnan(forward_mean_diff[k]) else 0 for k in valid_k]
+    # Use state_labels for valid_k
+    valid_state_labels = [(f'{k}$\\supset$' if k < n_interfaces-1 else f'{k}') for k in valid_k]
 
     if valid_k:
         # Create a twin axis for the memory retention plot
@@ -2723,12 +2423,12 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
                                     linewidth=2, markersize=8, label='Mean |Δq|')
         
         # Add annotations showing variation and sample size
-        for pos, var, count in zip(valid_positions, valid_variation, valid_counts):
+        for pos, var, count, label in zip(valid_positions, valid_variation, valid_counts, valid_state_labels):
                 ax6.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
         
         # Configure main plot
         ax6.set_xticks(interfaces)
-        ax6.set_xticklabels([f"{i}" for i in range(n_interfaces)])
+        ax6.set_xticklabels([(f'{k}$\\supset$' if k < n_interfaces-1 else f'{k}') for k in range(n_interfaces)])
         ax6.set_xlabel('Target Interface k')
         ax6.set_ylabel('Memory Effect (Std. Dev. %)', color='C0')
         ax6.tick_params(axis='y', labelcolor='C0')
@@ -2758,19 +2458,19 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
         ax6.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left')
         
         # Add explanatory text
-        mem_text = """
-        Memory Metrics:
-        • Std. Dev.: Variation in transition probabilities from different starting points 
-        • Mean |Δq|: Average deviation from diffusive reference (excluding adjacent transitions)
-        • Higher values indicate stronger memory effects
-        """
-        ax6.text(0.02, 0.95, mem_text, transform=ax6.transAxes, fontsize=9,
-                    bbox=dict(facecolor='white', alpha=0.8), va='top')
+        # mem_text = """
+        # Memory Metrics:
+        # • Std. Dev.: Variation in transition probabilities from different starting points 
+        # • Mean |Δq|: Average deviation from diffusive reference (excluding adjacent transitions)
+        # • Higher values indicate stronger memory effects
+        # """
+        # ax6.text(0.02, 0.95, mem_text, transform=ax6.transAxes, fontsize=9,
+        #             bbox=dict(facecolor='white', alpha=0.8), va='top')
     else:
         ax6.text(0.5, 0.5, "Insufficient data for forward memory retention analysis", 
                 ha='center', va='center', transform=ax6.transAxes)
         ax6.set_xticks(interfaces)
-        ax6.set_xticklabels([f"{i}" for i in range(n_interfaces)])
+        ax6.set_xticklabels([f"{k}$\\subset$" for k in range(n_interfaces)])
 
     # Plot 2.4: Backward Memory Retention
     ax7 = fig2.add_subplot(gs2[1, 1])
@@ -2781,6 +2481,8 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
     valid_positions = [interfaces[k] for k in valid_k]
     valid_colors = [backward_colors[k] for k in valid_k]
     valid_counts = [memory_index['backward_sample_sizes'][k] for k in valid_k]
+    # Use state_labels for valid_k
+    valid_state_labels = [(f'{k}$\\subset$' if k > 0 else f'{k}') for k in valid_k]
     
     # Calculate mean difference with diffusive reference for each target interface
     backward_mean_diff = np.zeros(n_interfaces)
@@ -2812,12 +2514,12 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
                                     linewidth=2, markersize=8, label='Mean |Δq|')
         
         # Add annotations showing variation and sample size
-        for pos, var, count in zip(valid_positions, valid_variation, valid_counts):
+        for pos, var, count, label in zip(valid_positions, valid_variation, valid_counts, valid_state_labels):
                 ax7.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
         
         # Configure plot
         ax7.set_xticks(interfaces)
-        ax7.set_xticklabels([f"{i}" for i in range(n_interfaces)])
+        ax7.set_xticklabels([(f'{k}$\\subset$' if k > 0 else f'{k}') for k in range(n_interfaces)])
         ax7.set_xlabel('Target Interface k')
         ax7.set_ylabel('Memory Effect (Std. Dev. %)', color='C0')
         ax7.tick_params(axis='y', labelcolor='C0')
@@ -2847,13 +2549,13 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
         ax7.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left')
         
         # Add explanatory text - same as for forward plot
-        ax7.text(0.02, 0.95, mem_text, transform=ax7.transAxes, fontsize=9,
-                    bbox=dict(facecolor='white', alpha=0.8), va='top')
+        # ax7.text(0.02, 0.95, mem_text, transform=ax7.transAxes, fontsize=9,
+        #             bbox=dict(facecolor='white', alpha=0.8), va='top')
     else:
         ax7.text(0.5, 0.5, "Insufficient data for backward memory retention analysis", 
                 ha='center', va='center', transform=ax7.transAxes)
         ax7.set_xticks(interfaces)
-        ax7.set_xticklabels([f"{i}" for i in range(n_interfaces)])
+        ax7.set_xticklabels([(f'{k}$\\subset$' if k > 0 else f'{k}') for k in range(n_interfaces)])
     
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     fig2.suptitle('TIS Memory Effect Analysis - Transition Probabilities and Memory Retention', fontsize=14)
@@ -2881,13 +2583,17 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
     sns.heatmap(memory_data, cmap='viridis', ax=ax8, 
                 cbar_kws={'label': '|Probability - Diffusive Reference|'})
     
+    # Generate labels for rows and columns based on state_labels
+    row_labels = [(f'{i}$\\subset$' if k > 0 else f'{k}') for i in range(n_interfaces-1)]
+    col_labels = [f"Dist: {i+1}" for i in range(n_interfaces-1)]
+    
     ax8.set_xlabel('Interface Distance (k - i)')
     ax8.set_ylabel('Starting Interface i')
     ax8.set_title('Memory Effect Decay with Distance (Forward L→R)', fontsize=12)
     ax8.set_xticks(np.arange(n_interfaces-1) + 0.5)
-    ax8.set_xticklabels(np.arange(1, n_interfaces))
+    ax8.set_xticklabels(col_labels)
     ax8.set_yticks(np.arange(n_interfaces-1) + 0.5)
-    ax8.set_yticklabels([f"{i}" for i in range(n_interfaces-1)])
+    ax8.set_yticklabels(row_labels)
     
     # Plot 3.2: Memory Decay with Physical Distance
     ax9 = fig3.add_subplot(gs3[0, 1])
@@ -2911,241 +2617,60 @@ def plot_memory_analysis(q_tot, p, interfaces=None):
     sns.heatmap(backward_memory_data, cmap='viridis', ax=ax10, 
                 cbar_kws={'label': '|Probability - Diffusive Reference|'})
     
+    # Generate labels for rows and columns
+    row_labels = [(f'{i}$\\supset$' if i > 0 else f'{i}') for i in range(n_interfaces-1)]
+    col_labels = [f"Dist: {i+1}" for i in range(n_interfaces-1)]
+    
     ax10.set_xlabel('Interface Distance (i - k)')
     ax10.set_ylabel('Starting Interface i')
     ax10.set_title('Memory Effect Decay with Distance (Backward R→L)', fontsize=12)
     ax10.set_xticks(np.arange(n_interfaces-1) + 0.5)
-    ax10.set_xticklabels(np.arange(1, n_interfaces))
+    ax10.set_xticklabels(col_labels)
     ax10.set_yticks(np.arange(n_interfaces-1) + 0.5)
-    ax10.set_yticklabels([f"{i+1}" for i in range(n_interfaces-1)])
+    ax10.set_yticklabels(row_labels)
     
     # Plot 3.4: Deviations from Diffusive Behavior in Transitions
     ax11 = fig3.add_subplot(gs3[1, 1])
 
-    plot_destination_bias(p, interfaces, ax_forward=ax11, ax_backward=ax9)
+    plot_destination_bias(p, interfaces, ax_forward=ax11, ax_backward=ax9, state_labels=state_labels)
     
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     fig3.suptitle('TIS Memory Effect Analysis - Decay Profiles and Additional Metrics', fontsize=14)
     
     return fig1, fig2, fig3
 
-def plot_destination_bias(p, interfaces=None, ax_forward=None, ax_backward=None):
+def generate_state_labels(n_interfaces):
     """
-    Create separate visualizations showing the average destination interface for forward 
-    and backward transitions.
+    Generate descriptive state labels for interface states.
     
     Parameters:
     -----------
-    p : numpy.ndarray
-        Transition probability matrix where p[i,j] is the probability of
-        transitioning from interface i to interface j
-    interfaces : list or array, optional
-        The positions of the interfaces along the reaction coordinate.
-        If None, uses sequential indices.
-    ax_forward : matplotlib.Axes, optional
-        Axes to plot forward transitions on. If None, creates a new figure and axes.
-    ax_backward : matplotlib.Axes, optional
-        Axes to plot backward transitions on. If None, creates a new figure and axes.
-        
+    n_interfaces : int
+        Number of interfaces in the system
+    
     Returns:
     --------
-    tuple
-        (ax_forward, ax_backward): The axes containing the forward and backward plots
+    list
+        List of descriptive labels for each state
     """
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    
-    n_interfaces = p.shape[0]
-    
-    if interfaces is None:
-        interfaces = list(range(n_interfaces))
-        is_equidistant = True
-    else:
-        # Check if interfaces are equidistant
-        if len(interfaces) > 2:
-            diffs = np.diff(interfaces)
-            is_equidistant = np.allclose(diffs, diffs[0], rtol=0.05)
-        else:
-            is_equidistant = True
-    
-    # Create new figures if axes not provided
-    if ax_forward is None:
-        _, ax_forward = plt.subplots(figsize=(10, 6))
-    if ax_backward is None:
-        _, ax_backward = plt.subplots(figsize=(10, 6))
-    
-    # Calculate forward average destinations (i→j where i<j)
-    forward_destinations = np.zeros(n_interfaces)
-    forward_valid = np.zeros(n_interfaces, dtype=bool)
-    
-    for i in range(n_interfaces-1):  # Skip last interface (no forward transitions)
-        # Extract forward transitions (j > i)
-        forward_probs = p[i, i+1:]
-        forward_targets = np.arange(i+1, n_interfaces)
-        
-        # Calculate weighted average if there are transitions
-        if np.sum(forward_probs) > 0:
-            forward_destinations[i] = np.sum(forward_targets * forward_probs) / np.sum(forward_probs)
-            forward_valid[i] = True
-        else:
-            forward_destinations[i] = np.nan  # No valid forward transitions
-    
-    # Calculate backward average destinations (i→j where i>j)
-    backward_destinations = np.zeros(n_interfaces)
-    backward_valid = np.zeros(n_interfaces, dtype=bool)
-    
-    for i in range(1, n_interfaces):  # Skip first interface (no backward transitions)
-        # Extract backward transitions (j < i)
-        backward_probs = p[i, :i]
-        backward_targets = np.arange(i)
-        
-        # Calculate weighted average if there are transitions
-        if np.sum(backward_probs) > 0:
-            backward_destinations[i] = np.sum(backward_targets * backward_probs) / np.sum(backward_probs)
-            backward_valid[i] = True
-        else:
-            backward_destinations[i] = np.nan  # No valid backward transitions
-    
-    # Calculate expected destinations
-    # For forward transitions: expected = i + expected_jump
-    # For backward transitions: expected = i - expected_jump
-    # Calculate expected destinations
-    forward_expected = np.zeros_like(forward_destinations)
-    backward_expected = np.zeros_like(backward_destinations)
+    state_labels = []
+    middle = n_interfaces 
     
     for i in range(n_interfaces):
-        if forward_valid[i]:
-            # For forward transitions from i, calculate expected destination
-            # For a diffusive system, this would be the probability-weighted average
-            # of all possible destinations j where j > i
-            probs = np.zeros(n_interfaces)
-            for j in range(i+1, n_interfaces):
-                # In a diffusive system, probability decreases with distance
-                # We use a simple geometric series: p(j) = p(i+1) * r^(j-i-1)
-                # where r is a decay factor (e.g., 0.5)
-                dist_factor = 0.5 ** (j - i - 1)
-                probs[j] = dist_factor
-            
-            # Normalize probabilities
-            if np.sum(probs) > 0:
-                probs = probs / np.sum(probs)
-                # Calculate expected destination
-                forward_expected[i] = np.sum(np.arange(n_interfaces) * probs)
-        
-        if backward_valid[i]:
-            # For backward transitions from i, calculate expected destination
-            # For a diffusive system, this would be the probability-weighted average
-            # of all possible destinations j where j < i
-            probs = np.zeros(n_interfaces)
-            for j in range(i):
-                # Similar decay factor for backward transitions
-                dist_factor = 0.5 ** (i - j - 1)
-                probs[j] = dist_factor
-            
-            # Normalize probabilities
-            if np.sum(probs) > 0:
-                probs = probs / np.sum(probs)
-                # Calculate expected destination
-                backward_expected[i] = np.sum(np.arange(n_interfaces) * probs)
+        if i == 0:
+            state_labels.append("[0$^-$]")
+        elif i == 1:
+            state_labels.append("[0←]")
+        elif i == 2:
+            state_labels.append("[0→]")
+        elif i <= middle:
+            state_labels.append(f"[{i-2}$\\subset$]")
+        elif middle < i < n_interfaces - 1:
+            state_labels.append(f"[{i-middle}$\\supset$]")
+        else:
+            state_labels.append(f"[{i-middle}]")
     
-    # Calculate bias
-    forward_bias = forward_destinations - forward_expected
-    backward_bias = backward_destinations - backward_expected
-    
-    # Get x values for plotting
-    x_values = np.arange(n_interfaces) if is_equidistant else np.array(interfaces)
-    
-    # Plot forward transitions
-    plot_directional_bias(ax_forward, x_values, forward_destinations, forward_expected, 
-                       forward_bias, forward_valid, 'Forward Transitions (i→j where i<j)', 'higher',
-                       interfaces, is_equidistant)
-    
-    # Plot backward transitions
-    plot_directional_bias(ax_backward, x_values, backward_destinations, backward_expected, 
-                       backward_bias, backward_valid, 'Backward Transitions (i→j where i>j)', 'lower',
-                       interfaces, is_equidistant)
-    
-    return ax_forward, ax_backward
-
-def plot_directional_bias(ax, x_values, avg_destinations, expected_destinations, bias, valid_mask,
-                       title, direction, interfaces, is_equidistant):
-    """Helper function to create a directional bias plot on the given axes"""
-    import numpy as np
-    
-    n_interfaces = len(x_values)
-    
-    # Plot expected destination
-    ax.plot(x_values[valid_mask], expected_destinations[valid_mask], '--', color='gray', 
-           label='Expected destination')
-    
-    # Plot actual average destination
-    ax.plot(x_values[valid_mask], avg_destinations[valid_mask], 'o-', color='blue', linewidth=2,
-           markersize=8, label='Actual average')
-    
-    # Add annotations showing the bias
-    for i, valid in enumerate(valid_mask):
-        if valid:
-            bias_text = f"{bias[i]:.2f}"
-            text_color = 'red' if bias[i] > 0.2 else ('blue' if bias[i] < -0.2 else 'black')
-            ax.annotate(bias_text, 
-                      xy=(x_values[i], avg_destinations[i]), 
-                      xytext=(0, 10 if bias[i] > 0 else -15),
-                      textcoords='offset points',
-                      ha='center', va='center',
-                      color=text_color, fontsize=9,
-                      bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.8))
-
-    # Add shaded region showing significant bias
-    valid_expected = expected_destinations[valid_mask]
-    
-    # Configure the plot
-    ax.set_xlabel('Starting Interface i')
-    ax.set_ylabel('Average Destination Interface')
-    ax.set_title(f'Average Destination Analysis: {title}', fontsize=12)
-    
-    # Set appropriate axis limits
-    valid_y = avg_destinations[valid_mask]
-    if len(valid_y) > 0:
-        y_min, y_max = np.nanmin(valid_y), np.nanmax(valid_y)
-        expected_min, expected_max = np.nanmin(valid_expected), np.nanmax(valid_expected)
-        
-        y_min = min(y_min, expected_min)
-        y_max = max(y_max, expected_max)
-        
-        y_range = y_max - y_min
-        buffer = 0.5 if is_equidistant else (interfaces[1] - interfaces[0]) / 2
-        ax.set_xlim(np.min(x_values) - buffer, np.max(x_values) + buffer)
-        ax.set_ylim(y_min - y_range*0.1, y_max + y_range*0.1)
-    
-    # Add gridlines for easier reading
-    ax.grid(True, linestyle='--', alpha=0.6)
-    
-    # Create a better legend
-    handles, labels = ax.get_legend_handles_labels()
-    keep_indices = [0, 1, 3]  # Just keep the main curves and diffusive range
-    ax.legend([handles[i] for i in keep_indices if i < len(handles)], 
-             [labels[i] for i in keep_indices if i < len(labels)],
-             loc='best', fontsize=10)
-    
-    # Add explanatory text
-    if direction == 'higher':
-        info_text = """
-        Average destination for forward transitions (i→j where i<j):
-        • Numbers indicate deviation from expected destination
-        • Positive values (red): Paths go further than expected
-        • Negative values (blue): Paths go less far than expected
-        """
-    else:  # 'lower'
-        info_text = """
-        Average destination for backward transitions (i→j where i>j):
-        • Numbers indicate deviation from expected destination
-        • Positive values (red): Paths go less far back than expected
-        • Negative values (blue): Paths go further back than expected
-        """
-    
-    ax.text(0.02, 0.02, info_text, transform=ax.transAxes, fontsize=9,
-          bbox=dict(facecolor='white', alpha=0.9, boxstyle='round'), va='bottom')
+    return state_labels
 
 def calculate_memory_effect_index(q_probs, q_weights, min_samples=5):
     """
@@ -3443,6 +2968,227 @@ def calculate_diffusive_reference_spacing(interfaces):
     
     return diff_ref
 
+def calculate_q_ik_reference_from_stationary(M, n_interfaces):
+    """
+    Calculate diffusive reference conditional crossing probabilities (q_ik) 
+    using the stationary distribution of a turn-based MSM.
+    
+    Parameters:
+    -----------
+    M : numpy.ndarray
+        Transition matrix of turns, where M[i,j] is the probability 
+        of going from a turn at state i to a turn at state j
+    n_interfaces : int
+        Number of interfaces in the system
+        
+    Returns:
+    --------
+    q_ref : numpy.ndarray
+        A matrix of reference conditional crossing probabilities q(i,k)
+        for memory-less diffusive dynamics
+    """
+    import numpy as np
+    from scipy import linalg
+    
+    # Calculate stationary distribution of the turn-based MSM
+    eigenvalues, eigenvectors = linalg.eig(M.T)
+    idx = np.argmin(np.abs(eigenvalues - 1.0))
+    pi = np.real(eigenvectors[:, idx])
+    pi = pi / np.sum(pi)  # Normalize to probability distribution
+    
+    # Initialize result matrix
+    q_ref = np.zeros((n_interfaces, n_interfaces))
+    q_ref.fill(np.nan)
+    
+    # Map turn states to interfaces
+    interface_states = {}
+    for i in range(n_interfaces):
+        interface_states[i] = []
+        
+    # Map each turn state to its corresponding interface
+    # State 0: [0^-], 1: [0←], 2: [0→], 3-(n_interfaces+2): [i⊂], (n_interfaces+2)-end: [i⊃]
+    for i in range(len(pi)):
+        if i == 0:
+            # [0^-] maps to interface 0
+            interface_states[0].append(i)
+        elif i == 1:
+            # [0←] maps to interface 0
+            interface_states[0].append(i)
+        elif i == 2:
+            # [0→] maps to interface 0
+            interface_states[0].append(i)
+        elif i <= n_interfaces:
+            # [i⊂] maps to interface (i-2)
+            interface_idx = i - 2
+            if 0 <= interface_idx < n_interfaces:
+                interface_states[interface_idx].append(i)
+        else:
+            # [i⊃] maps to interface (i-n_interfaces)
+            interface_idx = i - n_interfaces
+            if 0 <= interface_idx < n_interfaces:
+                interface_states[interface_idx].append(i)
+    
+    # Group stationary distribution by interface
+    interface_pi = np.zeros(n_interfaces)
+    for i in range(n_interfaces):
+        if interface_states[i]:
+            for state_idx in interface_states[i]:
+                interface_pi[i] += pi[state_idx]
+    
+    # Calculate flux and committor probabilities
+    for i in range(n_interfaces):
+        for k in range(n_interfaces):
+            if i == k:
+                # No self transitions in q_ik context
+                q_ref[i, k] = 0.0
+                continue
+                
+            # For q_ik, we're calculating the probability that a path starting 
+            # from interface i and having reached interface k-1 (when i<k) or 
+            # k+1 (when i>k) will reach interface k
+            
+            if i < k:
+                # Forward transitions: q(i,k) = P(reach k | started at i and reached k-1)
+                # For a memory-less system based on free energy differences:
+                if k > 0 and interface_pi[k-1] > 0 and interface_pi[k] > 0:
+                    # Derive from free energy difference between k-1 and k
+                    delta_G = -np.log(interface_pi[k] / interface_pi[k-1])
+                    q_ref[i, k] = 1.0 / (1.0 + np.exp(delta_G))
+                else:
+                    q_ref[i, k] = 0.5  # Default value
+                    
+            elif i > k:
+                # Backward transitions: q(i,k) = P(reach k | started at i and reached k+1)
+                # For a memory-less system based on free energy differences:
+                if k+1 < n_interfaces and interface_pi[k+1] > 0 and interface_pi[k] > 0:
+                    # Derive from free energy difference between k+1 and k
+                    delta_G = -np.log(interface_pi[k] / interface_pi[k+1])
+                    q_ref[i, k] = 1.0 / (1.0 + np.exp(delta_G))
+                else:
+                    q_ref[i, k] = 0.5  # Default value
+    
+    return q_ref
+
+def calculate_diffusive_reference_from_turn_stationary(M, n_interfaces):
+    """
+    Calculate diffusive reference probabilities based on the stationary distribution
+    of the turn-based transition matrix.
+    
+    Parameters:
+    -----------
+    M : numpy.ndarray
+        Transition matrix of turns, where M[i,j] is the probability 
+        of going from a turn at state i to a turn at state j
+    n_interfaces : int
+        Number of interfaces in the system
+        
+    Returns:
+    --------
+    diff_ref : numpy.ndarray
+        A matrix of diffusive reference probabilities for each i,k pair
+    """
+    import numpy as np
+    from scipy import linalg
+    
+    # Calculate stationary distribution of the turn-based MSM
+    eigenvalues, eigenvectors = linalg.eig(M.T)
+    idx = np.argmin(np.abs(eigenvalues - 1.0))
+    pi = np.real(eigenvectors[:, idx])
+    pi = pi / np.sum(pi)  # Normalize to probability distribution
+    
+    # Initialize result matrix
+    diff_ref = np.zeros((n_interfaces, n_interfaces))
+    diff_ref.fill(np.nan)
+    
+    # Map turn states to interfaces
+    interface_states = {}
+    for i in range(n_interfaces):
+        interface_states[i] = []
+        
+    # Map each turn state to its corresponding interface
+    # State 0: [0^-], 1: [0←], 2: [0→], 3-(n_interfaces+2): [i⊂], (n_interfaces+2)-end: [i⊃]
+    for i in range(len(pi)):
+        if i == 0:
+            # [0^-] maps to interface 0
+            interface_states[0].append(i)
+        elif i == 1:
+            # [0←] maps to interface 0
+            interface_states[0].append(i)
+        elif i == 2:
+            # [0→] maps to interface 0
+            interface_states[0].append(i)
+        elif i <= n_interfaces:
+            # [i⊂] maps to interface (i-2)
+            interface_idx = i - 2
+            if 0 <= interface_idx < n_interfaces:
+                interface_states[interface_idx].append(i)
+        else:
+            # [i⊃] maps to interface (i-n_interfaces)
+            interface_idx = i - n_interfaces
+            if 0 <= interface_idx < n_interfaces:
+                interface_states[interface_idx].append(i)
+    
+    # Aggregate state probabilities by interface
+    interface_pi = np.zeros(n_interfaces)
+    for i in range(n_interfaces):
+        if interface_states[i]:
+            for state_idx in interface_states[i]:
+                interface_pi[i] += pi[state_idx]
+    
+    # Calculate diffusive reference based on stationary distribution ratios
+    for i in range(n_interfaces):
+        # Self-transitions
+        diff_ref[i, i] = 0.0
+        
+        # Forward transitions (i → j where j > i)
+        for j in range(i+1, n_interfaces):
+            if j == i+1:  # Adjacent interfaces
+                # For a diffusive process, the q_ij probability depends on the ratio 
+                # of stationary probabilities in a Markovian system
+                if interface_pi[i] > 0 and interface_pi[j] > 0:
+                    # Use Boltzmann formula based on free energy difference
+                    diff_ref[i, j] = interface_pi[j] / (interface_pi[i] + interface_pi[j])
+                else:
+                    diff_ref[i, j] = 0.5  # Default if no data
+            else:  # Non-adjacent interfaces
+                # For non-adjacent transitions, use chain rule
+                # The probability to go from i to j is the product of 
+                # transitioning through all intermediate interfaces
+                if all(np.isfinite(diff_ref[k, k+1]) for k in range(i, j)):
+                    p_forward = 1.0
+                    for k in range(i, j):
+                        p_forward *= diff_ref[k, k+1]
+                    diff_ref[i, j] = p_forward
+                else:
+                    # If we don't have all intermediate probabilities, 
+                    # fall back to direct comparison of stationary probabilities
+                    if interface_pi[i] > 0 and interface_pi[j] > 0:
+                        diff_ref[i, j] = interface_pi[j] / (interface_pi[i] + interface_pi[j])
+                    else:
+                        # Default: probability decreases with distance
+                        diff_ref[i, j] = 0.5 ** (j - i)
+                        
+        # Backward transitions (i → j where j < i)
+        for j in range(i-1, -1, -1):
+            if j == i-1:  # Adjacent interfaces
+                if interface_pi[i] > 0 and interface_pi[j] > 0:
+                    diff_ref[i, j] = interface_pi[j] / (interface_pi[i] + interface_pi[j])
+                else:
+                    diff_ref[i, j] = 0.5  # Default if no data
+            else:  # Non-adjacent interfaces
+                if all(np.isfinite(diff_ref[k, k-1]) for k in range(i, j, -1)):
+                    p_backward = 1.0
+                    for k in range(i, j, -1):
+                        p_backward *= diff_ref[k, k-1]
+                    diff_ref[i, j] = p_backward
+                else:
+                    if interface_pi[i] > 0 and interface_pi[j] > 0:
+                        diff_ref[i, j] = interface_pi[j] / (interface_pi[i] + interface_pi[j])
+                    else:
+                        diff_ref[i, j] = 0.5 ** (i - j)
+    
+    return diff_ref
+
 def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_samples=5):
     """
     Estimate free energy differences between interfaces from conditional crossing probabilities,
@@ -3692,6 +3438,599 @@ def plot_free_energy_landscape(interfaces, q_matrix, q_weights=None, min_samples
     
     return fig
 
+def plot_destination_bias(p, interfaces=None, ax_forward=None, ax_backward=None, state_labels=None):
+    """
+    Create separate visualizations showing the average destination interface for forward 
+    and backward transitions.
+    
+    Parameters:
+    -----------
+    p : numpy.ndarray
+        Transition probability matrix where p[i,j] is the probability of
+        transitioning from interface i to interface j
+    interfaces : list or array, optional
+        The positions of the interfaces along the reaction coordinate.
+        If None, uses sequential indices.
+    ax_forward : matplotlib.Axes, optional
+        Axes to plot forward transitions on. If None, creates a new figure and axes.
+    ax_backward : matplotlib.Axes, optional
+        Axes to plot backward transitions on. If None, creates a new figure and axes.
+    state_labels : list, optional
+        Descriptive labels for each state. If None, uses sequential indices.
+        
+    Returns:
+    --------
+    tuple
+        (ax_forward, ax_backward): The axes containing the forward and backward plots
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    
+    n_interfaces = p.shape[0]
+    
+    if interfaces is None:
+        interfaces = list(range(n_interfaces))
+        is_equidistant = True
+    else:
+        # Check if interfaces are equidistant
+        if len(interfaces) > 2:
+            diffs = np.diff(interfaces)
+            is_equidistant = np.allclose(diffs, diffs[0], rtol=0.05)
+        else:
+            is_equidistant = True
+    
+    # Generate state labels if not provided
+    if state_labels is None:
+        state_labels = generate_state_labels(n_interfaces)
+    
+    # Create new figures if axes not provided
+    if ax_forward is None:
+        _, ax_forward = plt.subplots(figsize=(10, 6))
+    if ax_backward is None:
+        _, ax_backward = plt.subplots(figsize=(10, 6))
+    
+    # Calculate forward average destinations (i→j where i<j)
+    forward_destinations = np.zeros(n_interfaces)
+    forward_valid = np.zeros(n_interfaces, dtype=bool)
+    
+    for i in range(n_interfaces-1):  # Skip last interface (no forward transitions)
+        # Extract forward transitions (j > i)
+        forward_probs = p[i, i+1:]
+        forward_targets = np.arange(i+1, n_interfaces)
+        
+        # Calculate weighted average if there are transitions
+        if np.sum(forward_probs) > 0:
+            forward_destinations[i] = np.sum(forward_targets * forward_probs) / np.sum(forward_probs)
+            forward_valid[i] = True
+        else:
+            forward_destinations[i] = np.nan  # No valid forward transitions
+    
+    # Calculate backward average destinations (i→j where i>j)
+    backward_destinations = np.zeros(n_interfaces)
+    backward_valid = np.zeros(n_interfaces, dtype=bool)
+    
+    for i in range(1, n_interfaces):  # Skip first interface (no backward transitions)
+        # Extract backward transitions (j < i)
+        backward_probs = p[i, :i]
+        backward_targets = np.arange(i)
+        
+        # Calculate weighted average if there are transitions
+        if np.sum(backward_probs) > 0:
+            backward_destinations[i] = np.sum(backward_targets * backward_probs) / np.sum(backward_probs)
+            backward_valid[i] = True
+        else:
+            backward_destinations[i] = np.nan  # No valid backward transitions
+    
+    # Calculate expected destinations
+    # For forward transitions: expected = i + expected_jump
+    # For backward transitions: expected = i - expected_jump
+    # Calculate expected destinations
+    forward_expected = np.zeros_like(forward_destinations)
+    backward_expected = np.zeros_like(backward_destinations)
+    
+    for i in range(n_interfaces):
+        if forward_valid[i]:
+            # For forward transitions from i, calculate expected destination
+            # For a diffusive system, this would be the probability-weighted average
+            # of all possible destinations j where j > i
+            probs = np.zeros(n_interfaces)
+            for j in range(i+1, n_interfaces):
+                # In a diffusive system, probability decreases with distance
+                # We use a simple geometric series: p(j) = p(i+1) * r^(j-i-1)
+                # where r is a decay factor (e.g., 0.5)
+                dist_factor = 0.5 ** (j - i - 1)
+                probs[j] = dist_factor
+            
+            # Normalize probabilities
+            if np.sum(probs) > 0:
+                probs = probs / np.sum(probs)
+                # Calculate expected destination
+                forward_expected[i] = np.sum(np.arange(n_interfaces) * probs)
+        
+        if backward_valid[i]:
+            # For backward transitions from i, calculate expected destination
+            # For a diffusive system, this would be the probability-weighted average
+            # of all possible destinations j where j < i
+            probs = np.zeros(n_interfaces)
+            for j in range(i):
+                # Similar decay factor for backward transitions
+                dist_factor = 0.5 ** (i - j - 1)
+                probs[j] = dist_factor
+            
+            # Normalize probabilities
+            if np.sum(probs) > 0:
+                probs = probs / np.sum(probs)
+                # Calculate expected destination
+                backward_expected[i] = np.sum(np.arange(n_interfaces) * probs)
+    
+    # Calculate bias
+    forward_bias = forward_destinations - forward_expected
+    backward_bias = backward_destinations - backward_expected
+    
+    # Get x values for plotting
+    x_values = np.arange(n_interfaces) if is_equidistant else np.array(interfaces)
+    
+    # Plot forward transitions
+    plot_directional_bias(ax_forward, x_values, forward_destinations, forward_expected, 
+                       forward_bias, forward_valid, 'Forward Transitions (i→j where i<j)', 'higher',
+                       interfaces, is_equidistant, [(f'{i}$\\supset$' if i > 0 else f'{i}') for i in range(n_interfaces-1)])
+    
+    # Plot backward transitions
+    plot_directional_bias(ax_backward, x_values, backward_destinations, backward_expected, 
+                       backward_bias, backward_valid, 'Backward Transitions (i→j where i>j)', 'lower',
+                       interfaces, is_equidistant, [(f'{i}$\\supset$' if i > 0 else f'{i}') for i in range(n_interfaces-1)])
+    
+    return ax_forward, ax_backward
+
+def plot_directional_bias(ax, x_values, avg_destinations, expected_destinations, bias, valid_mask,
+                       title, direction, interfaces, is_equidistant, state_labels=None):
+    """Helper function to create a directional bias plot on the given axes"""
+    import numpy as np
+    
+    n_interfaces = len(x_values)
+    
+    if state_labels is None:
+        state_labels = generate_state_labels(n_interfaces)
+    
+    if direction == 'higher':
+        xxt = [(f'{i}$\\subset$' if i > 0 else f'{i}') for i in range(n_interfaces-1)] + [f'{n_interfaces-1}']
+        yyt = [(f'{i}' if i > 0 else f'{i}') for i in range(n_interfaces)]
+    else:
+        xxt = [(f'{i}$\\supset$' if i > 0 else f'{i}') for i in range(n_interfaces-1)] + [f'{n_interfaces-1}']
+        yyt = [(f'{i}' if i > 0 else f'{i}') for i in range(n_interfaces)]
+    
+    # Plot expected destination
+    ax.plot(x_values[valid_mask], expected_destinations[valid_mask], '--', color='gray', 
+           label='Expected destination')
+    
+    # Plot actual average destination
+    ax.plot(x_values[valid_mask], avg_destinations[valid_mask], 'o-', color='blue', linewidth=2,
+           markersize=8, label='Actual average')
+    
+    # Add annotations showing the bias
+    for i, valid in enumerate(valid_mask):
+        if valid:
+            bias_text = f"{bias[i]:.2f}"
+            text_color = 'red' if bias[i] > 0.2 else ('blue' if bias[i] < -0.2 else 'black')
+            ax.annotate(bias_text, 
+                      xy=(x_values[i], avg_destinations[i]), 
+                      xytext=(0, 10 if bias[i] > 0 else -15),
+                      textcoords='offset points',
+                      ha='center', va='center',
+                      color=text_color, fontsize=9,
+                      bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.8))
+
+    # Configure the plot
+    ax.set_xlabel('Starting Interface i')
+    ax.set_ylabel('Average Destination Interface')
+    ax.set_title(f'Average Destination Analysis: {title}', fontsize=12)
+    
+    # Set appropriate axis limits
+    valid_y = avg_destinations[valid_mask]
+    if len(valid_y) > 0:
+        y_min, y_max = np.nanmin(valid_y), np.nanmax(valid_y)
+        expected_min, expected_max = np.nanmin(expected_destinations[valid_mask]), np.nanmax(expected_destinations[valid_mask])
+        
+        y_min = min(y_min, expected_min)
+        y_max = max(y_max, expected_max)
+        
+        y_range = y_max - y_min
+        buffer = 0.5 if is_equidistant else (interfaces[1] - interfaces[0]) / 2
+        ax.set_xlim(np.min(x_values) - buffer, np.max(x_values) + buffer)
+        ax.set_ylim(y_min - y_range*0.1, y_max + y_range*0.1)
+    
+    # Add gridlines for easier reading
+    ax.grid(True, linestyle='--', alpha=0.6)
+    
+    # Create a better legend
+    handles, labels = ax.get_legend_handles_labels()
+    keep_indices = [0, 1]  # Just keep the main curves
+    ax.legend([handles[i] for i in keep_indices if i < len(handles)], 
+             [labels[i] for i in keep_indices if i < len(labels)],
+             loc='best', fontsize=10)
+    
+    # Set the x-axis ticks and labels using state_labels
+    ax.set_xticks(x_values)
+    ax.set_xticklabels(xxt)
+    
+    # Create y-ticks with state labels
+    y_ticks = np.arange(n_interfaces)
+    ax.set_yticks(y_ticks)
+    ax.set_yticklabels(yyt)
+    
+    # Add explanatory text
+    if direction == 'higher':
+        info_text = """
+        Average destination for forward transitions (i→j where i<j):
+        • Numbers indicate deviation from expected destination
+        • Positive values (red): Paths go further than expected
+        • Negative values (blue): Paths go less far than expected
+        """
+    else:  # 'lower'
+        info_text = """
+        Average destination for backward transitions (i→j where i>j):
+        • Numbers indicate deviation from expected destination
+        • Positive values (red): Paths go less far back than expected
+        • Negative values (blue): Paths go further back than expected
+        """
+    
+    ax.text(0.02, 0.02, info_text, transform=ax.transAxes, fontsize=9,
+          bbox=dict(facecolor='white', alpha=0.9, boxstyle='round'), va='bottom')
+
+def analyze_network_connectivity_optimized(M, source_state=0, sink_state=-1, max_paths=10):
+    """
+    Analyze the connectivity of a transition network efficiently without enumerating all paths.
+    
+    Parameters
+    ----------
+    M : np.ndarray
+        Transition matrix representing the Markov state model
+    source_state : int, optional
+        Index of the source state (default: 0)
+    sink_state : int, optional
+        Index of the sink state (default: -1)
+    max_paths : int, optional
+        Maximum number of paths to sample for visualization (default: 10)
+        
+    Returns
+    -------
+    dict
+        Dictionary containing connectivity analysis results
+    """
+    import numpy as np
+    from scipy import sparse
+    from scipy.sparse.csgraph import connected_components, shortest_path
+    import networkx as nx
+    import matplotlib.pyplot as plt
+    
+    n_states = M.shape[0]
+    sink_idx = n_states - 1 if sink_state == -1 else sink_state
+    
+    # Generate state labels for the plot
+    state_labels = generate_state_labels(n_states)
+    
+    # Create a graph representation where edges exist if M[i,j] > 0
+    graph = (M > 0).astype(int)
+    
+    # Find strongly connected components (nodes with paths in both directions)
+    n_strong, strong_labels = connected_components(
+        sparse.csr_matrix(graph), directed=True, connection='strong'
+    )
+    
+    # Find weakly connected components (nodes connected ignoring direction)
+    n_weak, weak_labels = connected_components(
+        sparse.csr_matrix(graph), directed=True, connection='weak'
+    )
+    
+    # Check path existence and get predecessor information
+    try:
+        path_lengths, predecessors = shortest_path(
+            sparse.csr_matrix(graph), directed=True, 
+            indices=source_state, return_predecessors=True
+        )
+        direct_path_exists = np.isfinite(path_lengths[sink_idx])
+    except:
+        direct_path_exists = False
+        predecessors = None
+        path_lengths = None
+    
+    # Create NetworkX graph for visualization
+    G = nx.DiGraph()
+    
+    # Add edges with transition probabilities as weights
+    for i in range(n_states):
+        for j in range(n_states):
+            if M[i, j] > 0:
+                G.add_edge(i, j, weight=M[i, j])
+    
+    # Find critical nodes using edge betweenness centrality
+    # This identifies bottleneck edges without enumerating all paths
+    if direct_path_exists:
+        # Calculate edge betweenness centrality only for edges on paths between source and sink
+        # This is much more efficient than calculating for the entire graph
+        subgraph_nodes = set()
+        
+        # Use a different algorithm to find a sample of paths for visualization
+        # First use Yen's algorithm to find k-shortest paths
+        try:
+            sample_paths = []
+            for i, path in enumerate(nx.shortest_simple_paths(G, source_state, sink_idx, weight='weight')):
+                if i >= max_paths:
+                    break
+                sample_paths.append(path)
+                subgraph_nodes.update(path)
+        except nx.NetworkXNoPath:
+            sample_paths = []
+        
+        # If we couldn't get paths with the above method, reconstruct at least one path using predecessors
+        if not sample_paths and predecessors is not None:
+            path = [sink_idx]
+            current = sink_idx
+            while current != source_state:
+                if current < 0 or predecessors[current] < 0:
+                    # No path found
+                    path = []
+                    break
+                current = predecessors[current]
+                path.append(current)
+            path.reverse()
+            if path:
+                sample_paths.append(path)
+                subgraph_nodes.update(path)
+        
+        # Find critical nodes using a different approach
+        if len(subgraph_nodes) > 2:  # If we have nodes besides source and sink
+            # Create a subgraph containing only the nodes on the sampled paths
+            subgraph = G.subgraph(subgraph_nodes).copy()
+            
+            # See if source and sink are still connected if we remove each node
+            critical_nodes = set()
+            for node in subgraph_nodes:
+                # Skip source and sink
+                if node == source_state or node == sink_idx:
+                    continue
+                    
+                # Remove node and check connectivity
+                temp_graph = subgraph.copy()
+                temp_graph.remove_node(node)
+                if not nx.has_path(temp_graph, source_state, sink_idx):
+                    critical_nodes.add(node)
+        else:
+            critical_nodes = set()
+    else:
+        sample_paths = []
+        critical_nodes = set()
+    
+    # Create visualization
+    plt.figure(figsize=(10, 8))
+    
+    # Use a more deterministic layout if possible
+    try:
+        pos = nx.kamada_kawai_layout(G)
+    except:
+        pos = nx.spring_layout(G, seed=42)  # Use seed for reproducibility
+    
+    # Node colors based on strongly connected component
+    node_colors = [strong_labels[i] for i in range(n_states)]
+    
+    # Draw the basic graph with node labels using state_labels
+    nx.draw(G, pos, with_labels=True, node_color=node_colors, 
+           labels={i: state_labels[i] for i in range(n_states)},
+           cmap=plt.cm.tab10, node_size=500, alpha=0.8)
+    
+    # Highlight source and sink
+    nx.draw_networkx_nodes(G, pos, nodelist=[source_state], 
+                          node_color='green', node_size=700)
+    nx.draw_networkx_nodes(G, pos, nodelist=[sink_idx], 
+                          node_color='red', node_size=700)
+    
+    # Highlight critical nodes
+    if critical_nodes:
+        nx.draw_networkx_nodes(G, pos, nodelist=list(critical_nodes), 
+                              node_color='yellow', node_size=600)
+    
+    # If a direct path exists, highlight one of the paths
+    if sample_paths:
+        shortest = sample_paths[0]  # Just use the first path
+        path_edges = list(zip(shortest[:-1], shortest[1:]))
+        nx.draw_networkx_edges(G, pos, edgelist=path_edges, 
+                              edge_color='red', width=2)
+    
+    plt.title(f"Network Analysis: {n_strong} Strong Components, {n_weak} Weak Components")
+    
+    # Create legend patches with state_labels for source and sink
+    legend_patches = [
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='green', 
+                 markersize=10, label=f'Source State: {state_labels[source_state]}'),
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='red', 
+                 markersize=10, label=f'Sink State: {state_labels[sink_idx]}')
+    ]
+    if critical_nodes:
+        legend_patches.append(
+            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='yellow', 
+                     markersize=10, label='Critical Bridge States')
+        )
+    plt.legend(handles=legend_patches, loc='upper right')
+    
+    return {
+        'n_strong_components': n_strong,
+        'strong_component_labels': strong_labels,
+        'n_weak_components': n_weak,
+        'weak_component_labels': weak_labels,
+        'direct_path_exists': direct_path_exists,
+        'critical_nodes': critical_nodes,
+        'sample_paths': sample_paths,
+        'network_graph': G
+    }
+
+def find_network_bottlenecks(M, source_state=0, sink_state=-1):
+    """
+    Identify bottlenecks in the transition network where removing
+    a small number of edges would disconnect source from sink.
+    
+    Parameters
+    ----------
+    M : np.ndarray
+        Transition matrix representing the Markov state model
+    source_state : int, optional
+        Index of the source state (default: 0)
+    sink_state : int, optional
+        Index of the sink state (default: -1)
+        
+    Returns
+    -------
+    dict
+        Dictionary containing bottleneck analysis results
+    """
+    import numpy as np
+    import networkx as nx
+    import matplotlib.pyplot as plt
+    
+    n_states = M.shape[0]
+    sink_idx = n_states - 1 if sink_state == -1 else sink_state
+    
+    # Generate state labels for the plot
+    state_labels = generate_state_labels(n_states)
+    
+    # Create weighted directed graph
+    G = nx.DiGraph()
+    
+    # Add edges with transition probabilities as weights
+    for i in range(n_states):
+        for j in range(n_states):
+            if M[i,j] > 0:
+                G.add_edge(i, j, capacity=M[i,j])
+    
+    # Calculate minimum cut
+    try:
+        cut_value, partition = nx.minimum_cut(G, source_state, sink_idx)
+        reachable, non_reachable = partition
+        
+        # Find the edges in the cut
+        cut_edges = []
+        for u in reachable:
+            for v in non_reachable:
+                if G.has_edge(u, v):
+                    cut_edges.append((u, v))
+        
+        # Visualize the network with cut highlighted
+        plt.figure(figsize=(10, 8))
+        pos = nx.spring_layout(G)
+        
+        # Draw the basic graph with updated node labels
+        nx.draw(G, pos, with_labels=True, node_color='lightblue', 
+               labels={i: state_labels[i] for i in range(n_states)},
+               node_size=500, alpha=0.8)
+        
+        # Highlight source and sink
+        nx.draw_networkx_nodes(G, pos, nodelist=[source_state], 
+                              node_color='green', node_size=700)
+        nx.draw_networkx_nodes(G, pos, nodelist=[sink_idx], 
+                              node_color='red', node_size=700)
+        
+        # Highlight cut edges
+        nx.draw_networkx_edges(G, pos, edgelist=cut_edges, 
+                              edge_color='red', width=2, style='dashed')
+        
+        plt.title(f"Network Min-Cut Analysis: Cut Value = {cut_value:.4f}")
+        
+        # Create legend with state labels for source and sink
+        legend_patches = [
+            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='green', 
+                     markersize=10, label=f'Source State: {state_labels[source_state]}'),
+            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='red', 
+                     markersize=10, label=f'Sink State: {state_labels[sink_idx]}'),
+            plt.Line2D([0], [0], color='red', linestyle='dashed', 
+                     label='Min-Cut Edges')
+        ]
+        plt.legend(handles=legend_patches, loc='upper right')
+        
+        return {
+            'cut_value': cut_value,
+            'reachable_from_source': reachable,
+            'non_reachable_from_source': non_reachable,
+            'cut_edges': cut_edges
+        }
+    except nx.NetworkXError:
+        print("No path exists from source to sink.")
+        return None
+    
+def calculate_effective_transitions(M, source_state=0, sink_state=-1, max_steps=100):
+    """
+    Calculate effective transition probabilities from source to sink,
+    factoring in the possibility of multi-step transitions.
+    
+    Parameters
+    ----------
+    M : np.ndarray
+        Transition matrix representing the Markov state model
+    source_state : int, optional
+        Index of the source state (default: 0)
+    sink_state : int, optional
+        Index of the sink state (default: -1)
+    max_steps : int, optional
+        Maximum number of steps to consider (default: 100)
+        
+    Returns
+    -------
+    dict
+        Dictionary containing effective transition probabilities and paths
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    
+    n_states = M.shape[0]
+    sink_idx = n_states - 1 if sink_state == -1 else sink_state
+    
+    # Generate state labels for the plot
+    state_labels = generate_state_labels(n_states)
+    
+    # Initialize probability matrix for different number of steps
+    P = np.zeros((max_steps+1, n_states, n_states))
+    P[0] = np.eye(n_states)  # Identity matrix for 0 steps
+    P[1] = M  # 1-step transition is just M
+    
+    # Calculate multi-step transition matrices
+    for i in range(2, max_steps+1):
+        P[i] = np.dot(P[i-1], M)
+    
+    # Extract source-to-sink probabilities for each number of steps
+    source_sink_probs = np.zeros(max_steps+1)
+    for i in range(max_steps+1):
+        source_sink_probs[i] = P[i][source_state, sink_idx]
+    
+    # Calculate cumulative probability (probability of reaching within n steps)
+    # This accounts for the absorbing nature of the sink state
+    cumulative_probs = np.zeros(max_steps+1)
+    curr_prob = 0
+    
+    for i in range(1, max_steps+1):
+        # Probability of reaching in exactly i steps without having reached earlier
+        new_arrival_prob = source_sink_probs[i] - curr_prob
+        if new_arrival_prob < 0:  # Numerical issues
+            new_arrival_prob = 0
+        curr_prob += new_arrival_prob
+        cumulative_probs[i] = curr_prob
+    
+    # Plot the results
+    plt.figure(figsize=(10, 6))
+    
+    plt.plot(range(max_steps+1), source_sink_probs, 'b.-', label='N-step probability')
+    plt.plot(range(max_steps+1), cumulative_probs, 'r.-', label='Cumulative probability')
+    
+    plt.xlabel('Number of Steps')
+    plt.ylabel('Probability')
+    plt.title(f'Effective Transition Probability from {state_labels[source_state]} to {state_labels[sink_idx]}')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    return {
+        'n_step_probabilities': source_sink_probs,
+        'cumulative_probabilities': cumulative_probs,
+        'effective_probability': cumulative_probs[-1]
+    }
+
 def pcca_analysis(M, n_clusters):
     """
     Perform PCCA+ analysis on the Markov State Model transition matrix.
@@ -3708,6 +4047,10 @@ def pcca_analysis(M, n_clusters):
     pcca : dpt.markov.PCCA
         PCCA+ object containing the clustering results.
     """
+    # Generate state labels for printing
+    n_states = M.shape[0]
+    state_labels = generate_state_labels(n_states)
+    
     # Ensure the transition matrix is a valid stochastic matrix
     assert np.allclose(M.sum(axis=1), 1), "Rows of the transition matrix must sum to 1."
 
@@ -3721,9 +4064,11 @@ def pcca_analysis(M, n_clusters):
     print("PCCA+ Membership Matrix:")
     print(pcca.memberships)
 
-    # Print the metastable states
+    # Print the metastable states with state labels
     print("Metastable States:")
-    for i, state in enumerate(pcca.sets):
-        print(f"State {i+1}: {state}")
+    for i, state_set in enumerate(pcca.sets):
+        # Convert state indices to state labels
+        labeled_states = [state_labels[idx] for idx in state_set]
+        print(f"State {i+1}: {labeled_states} (indices: {state_set})")
 
     return pcca
