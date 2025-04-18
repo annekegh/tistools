@@ -112,8 +112,8 @@ def write_running_estimates(filename, cycles, *args):
 
             for j in range(len(labels)):
                 array = running_estimates[j]
-                for col in range(array.shape[1] if len(array.shape) > 1 else 1):
-                    value = array[i, col] if len(array.shape) > 1 else (array[i] if len(array.shape) == 1 else array.reshape(array.shape[0], -1)[i]) 
+                for col in range(len(array) if len(array[i].shape) > 1 else 1):
+                    value = array[i, col] if len(array.shape) == 2 else (array[i] if len(array.shape) == 1 else array.reshape(array.shape[0], -1)[i, col]) 
                     try:
                         value_str = f"{value:.10f}"  # Ensure consistent floating-point format
                     except:

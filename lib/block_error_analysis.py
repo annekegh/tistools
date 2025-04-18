@@ -176,11 +176,11 @@ def block_error_analysis_staple(path_ensembles, interfaces, interval, load=False
             print("Invalid data in file, recalculating...")
 
             # If data is invalid, recalculate running estimates
-            _, _, p_staple, pmms, pmps, ppms, ppps, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl)
+            _, _, p_staple, q_staple, pmms, pmps, ppms, ppps, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl)
     else:
         # If loading is disabled or the file doesn't exist, calculate running estimates
         print("First time calculating the data file ...")
-        _, _, p_staple, pmms, pmps, ppms, ppps, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl)
+        _, _, p_staple, q_staple, pmms, pmps, ppms, ppps, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl)
 
     block_error_calculation(np.array(Pcrossfulls_repptis)[:,-1], interval, "Pcross_repptis")
     block_error_calculation(pcrepptis_MSM, interval, "Pcross_repp_MSM")
@@ -562,7 +562,7 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
     # Prepare result storage
     cycles, taus = [], []
     Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = [], [], []
-    pmms, pmps, ppms, ppps, p_staple = [], [], [], [], []
+    pmms, pmps, ppms, ppps, p_staple, q_staple = [], [], [], [], [], []
     pathtypes = ("LML", "LMR", "RML", "RMR")
     
     # Iterate over cycle numbers with interval steps
@@ -621,7 +621,7 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
 
         NS = 2*N
         wi = compute_weight_matrices(pathensembles, interfaces, len(interfaces), True)
-        pi = get_transition_probs_weights(wi)
+        pi, qi = get_transition_probs_weights(wi)
         M = construct_M_istar(pi, max(4, 2*len(interfaces)), len(interfaces))
 
         plocMSM = np.ones(len(interfaces))
@@ -653,6 +653,7 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
         pcrepptis_MSM.append(y1_repp[0][0])
         pcstaple_MSM.append(pcrosslocMSM)
         p_staple.append(pi)
+        q_staple.append(qi)
         pmms.append(pmm)
         pmps.append(pmp)
         ppms.append(ppm)
@@ -661,7 +662,7 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
 
         # Not sure if we need this, need to check later
         del data
-        del Mi, wi, pi, z1, z2, y1, y2,N, NS
+        del Mi, wi, pi, qi, z1, z2, y1, y2,N, NS
         del Pcrossfull
         del plocMSM, pcrosslocMSM
 
@@ -704,4 +705,4 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
         np.array(Pcrossfulls_repptis)[:, 1:], "P_Cross_native",
         np.array(pcrepptis_MSM), "P_cross_REPPTISMSM"
     )
-    return cycles, taus, p_staple, pmms, pmps, ppms, ppps, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM
+    return cycles, taus, p_staple, q_staple, pmms, pmps, ppms, ppps, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM
