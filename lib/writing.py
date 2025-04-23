@@ -14,54 +14,145 @@ def write_plot_block_error(filename, running_estimate, rel_errors, interval):
     """
     Generates and saves a block error analysis plot and writes results to a text file.
 
-    This function creates a plot of relative error vs. block length, highlighting 
-    the average relative error in the second half of the dataset. It also saves the 
-    computed values in a `.txt` file.
+    This function creates a single plot of relative error vs. block length for all components,
+    highlighting the average relative error in the second half of the dataset.
 
     Parameters
     ----------
     filename : str
         The output filename.
     
-    running_estimate : list or np.ndarray
-        The sequence of running estimates.
+    running_estimate : np.ndarray
+        The sequence of running estimates. Can be multi-dimensional.
 
-    rel_errors : list or np.ndarray
-        The computed relative errors for different block lengths.
+    rel_errors : np.ndarray
+        The computed relative errors for different block lengths. Can be multi-dimensional.
 
+    interval : int
+        Interval between blocks.
     """
-    x = np.arange(1, len(rel_errors) + 1)  # Block lengths (x-axis)
-    best_estimate = running_estimate[-1]  # The final, most accurate estimate
-    second_half_err_avg = np.mean(rel_errors[len(rel_errors) // 2:])  # Avg error in second half
-
-    # Set up the plot
-    plt.ioff()
-    plt.figure(figsize=(10, 6))
-    plt.plot(x * interval, rel_errors, label="Relative Error")
-    plt.axhline(y=second_half_err_avg, color='r', linestyle='--',
-                label=f"Second Half Avg = {second_half_err_avg:.4f}")
+    # Convert to numpy arrays if they're not already
+    running_estimate = np.array(running_estimate)
+    rel_errors = np.array(rel_errors)
     
-    # Labels and title
-    plt.xlabel("Block Length")
-    plt.ylabel("Relative Error")
-    plt.title(f"Best Estimate = {best_estimate:.4f}, "
-              f"Relative Error = {100 * second_half_err_avg:.2f} %")
-    plt.legend()
-
-    # Save the figure
-    plt.savefig(filename, dpi=500, bbox_inches='tight')
-    plt.close()
-
-    # Write results to a text file
+    # Handle scalar inputs by reshaping
+    if rel_errors.ndim == 1:
+        rel_errors = rel_errors.reshape(-1, 1)
+        running_estimate = running_estimate.reshape(-1, 1)
+    
+    x = np.arange(1, rel_errors.shape[0] + 1)  # Block lengths (x-axis)
+    
+    # Get the number of components (entries in higher dimensions)
+    num_components = np.prod(rel_errors.shape[1:])
+    component_shape = rel_errors.shape[1:]
+    
+    # Create component names for headers
+    component_names = []
+    for flat_idx in range(num_components):
+        if len(component_shape) > 0:
+            indices = np.unravel_index(flat_idx, component_shape)
+            idx_str = "_".join(map(str, indices))
+            component_names.append(f"component_{idx_str}")
+        else:
+            component_names.append(f"component_{flat_idx}")
+    
+    # Determine column widths for better alignment
+    col_width = 15  # Standard column width
+    block_width = max(col_width, len("# Block-Length") + 2)
+    
+    # Create a text file for all results
     with open(filename + ".txt", "w") as f:
         f.write(f"# Length of the dataset: {len(running_estimate)} with interval of {interval}\n")
-        f.write(f"# Best estimate: {best_estimate:.12f}\n")
-        f.write(f"# Averaged relative error: {second_half_err_avg:.12f}\n")
-        f.write("# ===============================\n")
-        f.write("# Block-Length\tRelative-Error\n")
+        f.write("# ===============================\n\n")
         
+        # Write header for the table with all components
+        f.write(f"{'# Block-Length':<{block_width}}")
+        for name in component_names:
+            f.write(f"{name:>{col_width}}")
+        f.write("\n")
+        
+        # Write separator line
+        f.write(f"{'-' * block_width}")
+        for _ in range(num_components):
+            f.write(f"{'-' * col_width}")
+        f.write("\n")
+        
+        # Write the component best estimates
+        f.write(f"{'# Best estimate':<{block_width}}")
+        for flat_idx in range(num_components):
+            if len(component_shape) > 0:
+                indices = np.unravel_index(flat_idx, component_shape)
+                component_estimate = running_estimate[(slice(None),) + indices]
+            else:
+                component_estimate = running_estimate[:, flat_idx]
+            best_estimate = component_estimate[-1]
+            f.write(f"{best_estimate:>{col_width}.12f}")
+        f.write("\n")
+        
+        # Write the component averaged relative errors
+        f.write(f"{'# Avg rel error':<{block_width}}")
+        for flat_idx in range(num_components):
+            if len(component_shape) > 0:
+                indices = np.unravel_index(flat_idx, component_shape)
+                component_data = rel_errors[(slice(None),) + indices]
+            else:
+                component_data = rel_errors[:, flat_idx]
+            second_half_err_avg = np.mean(component_data[len(component_data) // 2:])
+            f.write(f"{second_half_err_avg:>{col_width}.12f}")
+        f.write("\n")
+        
+        # Write separator before data rows
+        f.write(f"{'-' * block_width}")
+        for _ in range(num_components):
+            f.write(f"{'-' * col_width}")
+        f.write("\n")
+        
+        # Write data rows with all components on same row
         for i in range(len(x)):
-            f.write(f"{x[i]*interval}\t{rel_errors[i]:.12f}\n")
+            f.write(f"{x[i]*interval:>{block_width-1}d} ")
+            for flat_idx in range(num_components):
+                if len(component_shape) > 0:
+                    indices = np.unravel_index(flat_idx, component_shape)
+                    component_data = rel_errors[(slice(None),) + indices]
+                else:
+                    component_data = rel_errors[:, flat_idx]
+                f.write(f"{component_data[i]:>{col_width}.12f}")
+            f.write("\n")
+        
+        # Create a single plot for all components
+        plt.ioff()
+        plt.figure(figsize=(10, 6))
+        
+        # Colors for different components
+        colors = plt.cm.tab10(np.linspace(0, 1, num_components))
+        
+        for flat_idx in range(num_components):
+            if len(component_shape) > 0:
+                indices = np.unravel_index(flat_idx, component_shape)
+                component_name = component_names[flat_idx]
+                component_data = rel_errors[(slice(None),) + indices]
+                component_estimate = running_estimate[(slice(None),) + indices]
+            else:
+                component_name = component_names[flat_idx]
+                component_data = rel_errors[:, flat_idx]
+                component_estimate = running_estimate[:, flat_idx]
+            
+            best_estimate = component_estimate[-1]
+            second_half_err_avg = np.mean(component_data[len(component_data) // 2:])
+            
+            plt.plot(x * interval, component_data, color=colors[flat_idx], 
+                    label=f"{component_name}: est={best_estimate:.4f}, err={100*second_half_err_avg:.2f}%")
+            plt.axhline(y=second_half_err_avg, color=colors[flat_idx], linestyle='--', alpha=0.5)
+        
+        # Labels and title
+        plt.xlabel("Block Length")
+        plt.ylabel("Relative Error")
+        plt.title(f"Block Error Analysis - {num_components} Components")
+        plt.legend()
+        
+        # Save the single figure with all components
+        plt.savefig(filename, dpi=500, bbox_inches='tight')
+        plt.close()
 
 
 def write_running_estimates(filename, cycles, *args):
@@ -93,12 +184,12 @@ def write_running_estimates(filename, cycles, *args):
 
     for idx, label in enumerate(labels):
         array_shape = running_estimates[idx].shape
-        num_columns = array_shape[1] if len(array_shape) > 1 else 1  # Number of columns in the data
+        num_columns = np.prod(array_shape[1:]) if len(array_shape) > 1 else 1  # Number of columns in the data
 
         for i in range(num_columns):
             extended_label = f"{label}_{i}+" if num_columns > 1 else label  # Labeling for multi-column data
             extended_labels.append(extended_label)
-            col_widths.append(max(len(extended_label), 18))  # Ensure sufficient column width
+            col_widths.append(max(len(extended_label)+1, 18))  # Ensure sufficient column width
 
     # Write the data to file
     with open(filename, "w") as f:
@@ -112,12 +203,20 @@ def write_running_estimates(filename, cycles, *args):
 
             for j in range(len(labels)):
                 array = running_estimates[j]
-                for col in range(len(array) if len(array[i].shape) > 1 else 1):
-                    value = array[i, col] if len(array.shape) == 2 else (array[i] if len(array.shape) == 1 else array.reshape(array.shape[0], -1)[i, col]) 
+                if len(array.shape) > 1:
+                    for col in range(array[i].size):
+                        value = array[i, col] if len(array.shape) == 2 else array.reshape(array.shape[0], -1)[i, col]
+                        try:
+                            value_str = f"{value:.10f}"  # Ensure consistent floating-point format
+                        except:
+                            print(f"Error formatting value: {value} from {labels[j]} at cycle {cycles[i]}")
+                        row_values.append(f"{value_str:<{col_widths[int(np.sum([np.prod(running_estimates[k].shape[1:]) for k in range(j)]) + col+1)]}}")  # Adjust column width based on previous columns
+                else:
+                    value = array[i]
                     try:
                         value_str = f"{value:.10f}"  # Ensure consistent floating-point format
                     except:
                         print(f"Error formatting value: {value} from {labels[j]} at cycle {cycles[i]}")
-                    row_values.append(f"{value_str:<{col_widths[j + 1]}} ")
+                    row_values.append(f"{value_str:<{col_widths[int(np.sum([np.prod(running_estimates[k].shape[1:]) for k in range(j)]) +1)]}}")
 
             f.write("".join(row_values) + "\n")

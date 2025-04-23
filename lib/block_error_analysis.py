@@ -184,7 +184,8 @@ def block_error_analysis_staple(path_ensembles, interfaces, interval, load=False
 
     block_error_calculation(np.array(Pcrossfulls_repptis)[:,-1], interval, "Pcross_repptis")
     block_error_calculation(pcrepptis_MSM, interval, "Pcross_repp_MSM")
-    block_error_calculation(np.array(pcstaple_MSM)[:, -1], interval, "Pcross")
+    block_error_calculation(np.array(pcstaple_MSM), interval, "Pcross")
+    block_error_calculation(np.array(p_staple), interval, "pstaple")
 
 
 def block_error_calculation(running_estimate, interval, label):
@@ -216,10 +217,10 @@ def block_error_calculation(running_estimate, interval, label):
         blocked_estimate = running_estimate[block_length::block_length]  
         
         # Perform recursive blocking to obtain block-averaged values
-        blocked_values = recursive_blocker(blocked_estimate)  
+        blocked_values = np.array(recursive_blocker(blocked_estimate))
 
         # Compute absolute and relative errors
-        abs_err = np.sqrt(np.var(blocked_values, ddof=1) / len(blocked_values))  
+        abs_err = np.sqrt(np.var(blocked_values, ddof=1, axis=0) / len(blocked_values))  
         rel_err = abs_err / best_avg  
         
         rel_errors.append(rel_err)
@@ -701,7 +702,7 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
         np.array(pmps), "P_LMR",
         np.array(ppms), "P_RML",
         np.array(ppps), "P_RMR",
-        # np.array(p_staple), "Pi_staple",
+        np.array(p_staple), "Pi_staple",
         np.array(Pcrossfulls_repptis)[:, 1:], "P_Cross_native",
         np.array(pcrepptis_MSM), "P_cross_REPPTISMSM"
     )
