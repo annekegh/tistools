@@ -808,7 +808,7 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr=False, weights=None)
                             # dir_mask = np.logical_or(pe.dirs == -1, masks[i]["RMR"])
                         elif i == 2:
                             dir_mask = masks[i]["LML"]
-                    elif j == len(interfaces)-2 and k == len(interfaces)-1:
+                    elif j == len(interfaces)-1 and k == len(interfaces)-2:
                         dir_mask = masks[i]["RMR"]
                     else:
                         dir_mask = pe.dirs == -1
@@ -1509,7 +1509,7 @@ def display_data(pes, interfaces, n_int=None, weights=None):
                             dir_mask = np.full_like(pe.dirs, True)   # For now no distinction yet for [1*] paths: classify all paths as 1 -> 0. Later: check if shooting point comes before or after crossing lambda_1/lambda_max
                         else:
                             dir_mask = np.full_like(pe.dirs, False)
-                    elif j == len(interfaces)-2 and k == len(interfaces)-1:
+                    elif j == len(interfaces)-1 and k == len(interfaces)-2:
                         dir_mask = masks[i]["RMR"]
                     else:
                         dir_mask = pe.dirs == -1
@@ -2077,17 +2077,17 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
     # Calculate diffusive reference probabilities based on interface spacing
     diff_ref = calculate_diffusive_reference_spacing(interfaces)
     # diff_ref = calculate_q_ik_reference_from_stationary_improved(M, n_interfaces)
-    # _, plocs_repptis = ploc_repptis_from_staples(pes, interfaces, n_int=n_interfaces)
+    plocs_repptis, plocs_istar = ploc_repptis_from_staples(pes, interfaces, n_int=n_interfaces)
     # diff_ref = np.zeros_like(q_probs)
     # for i in range(n_interfaces):
     #     for k in range(n_interfaces):
     #         if i < k:
-    #                 diff_ref[i][k] = plocs_repptis[k]["LMRtot"][0]
+    #                 diff_ref[i][k] = plocs_repptis[k]["LMR"][0]
     #         elif k < i and k < n_interfaces-2:
-    #             diff_ref[i][k] = plocs_repptis[k+2]["RMLtot"][0]
+    #             diff_ref[i][k] = plocs_repptis[k+2]["RML"][0]
     #         else:
     #             if i == 0:
-    #                 diff_ref[i][k] = plocs_repptis[i+1]["LMLtot"][0]
+    #                 diff_ref[i][k] = plocs_repptis[i+1]["LML"][0]
     
     # Function to generate high-contrast colors for plots
     def generate_high_contrast_colors(n):
@@ -2287,6 +2287,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
         starting_positions = []
         ref_probs = []
         valid_indices = []
+        repptisp = []
         
         for i in range(k):
             # Include adjacent transitions only for interface 0->1
@@ -2295,6 +2296,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
                 starting_positions.append(interfaces[i])
                 valid_indices.append(i)
                 ref_probs.append(diff_ref[i, k])
+                repptisp.append(plocs_repptis[k]["LMR"])
         
         if target_data:
             # Plot actual probabilities with physical positions on x-axis
@@ -2303,7 +2305,9 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
                     color=forward_colors[idx])
             
             # Plot diffusive reference as dashed lines
-            ax4.plot(starting_positions, ref_probs, '--', 
+            ax4.plot(starting_positions, ref_probs, '--',
+                    color=forward_colors[idx], alpha=0.5)
+            ax4.plot(starting_positions, repptisp, ':',
                     color=forward_colors[idx], alpha=0.5)
     
     # Configure the forward plot
@@ -2326,8 +2330,8 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
     • Based on free energy differences between interfaces
     • Calculated using detailed balance principle
     """
-    ax4.text(0.02, 0.02, ref_text, transform=ax4.transAxes, fontsize=9, 
-             bbox=dict(facecolor='white', alpha=0.8))
+    # ax4.text(0.02, 0.02, ref_text, transform=ax4.transAxes, fontsize=9, 
+    #          bbox=dict(facecolor='white', alpha=0.8))
     
     # Add a legend with reasonable size
     ax4.legend(title='Target Region', loc='best', fontsize=9)
@@ -2667,7 +2671,7 @@ def generate_state_labels(n_interfaces):
             state_labels.append("[0→]")
         elif i <= middle:
             state_labels.append(f"[{i-2}$\\subset$]")
-        elif middle < i < n_interfaces - 1:
+        elif middle < i < 2*n_interfaces - 1:
             state_labels.append(f"[{i-middle}$\\supset$]")
         else:
             state_labels.append(f"[{i-middle}]")
@@ -2970,280 +2974,575 @@ def calculate_diffusive_reference_spacing(interfaces):
     
     return diff_ref
 
-def calculate_q_ik_reference_from_stationary_improved(M, n_interfaces):
+def analyze_memory_vs_free_energy_effects(interfaces, q_matrix, q_weights=None, min_samples=5, memory_threshold=0.3):
     """
-    Calculate diffusive reference conditional crossing probabilities (q_ik) 
-    using the stationary distribution of a turn-based MSM with correct transition pathways.
+    Analyze whether observed turn-based transition probabilities between interfaces are best explained
+    by free energy differences or by memory effects (history dependence).
     
-    Parameters:
-    -----------
-    M : numpy.ndarray
-        Transition matrix of turns, where M[i,j] is the probability 
-        of going from a turn at state i to a turn at state j
-    n_interfaces : int
-        Number of interfaces in the system
+    This function compares observed conditional crossing probabilities (q_i,k) against what would
+    be expected from a purely diffusive model with free energy differences. Significant deviations
+    indicate memory effects where future turns depend on the history of previous turns.
+    
+    Parameters
+    ----------
+    interfaces : list or array
+        The positions of the interfaces along the reaction coordinate
+    q_matrix : numpy.ndarray
+        Matrix of conditional crossing probabilities where q[i,k] is the probability
+        that a path starting with a turn at interface i and reaching k-1 (for i<k) or k+1 (for i>k)
+        will make a turn at interface k
+    q_weights : numpy.ndarray, optional
+        Matrix of sample counts for each q_matrix value (for statistical confidence)
+    min_samples : int, optional
+        Minimum number of samples required to consider a q value valid
+    memory_threshold : float, optional
+        Threshold for determining significant memory effects (relative deviation)
         
-    Returns:
-    --------
-    q_ref : numpy.ndarray
-        A matrix of reference conditional crossing probabilities q(i,k)
-        for memory-less diffusive dynamics
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - 'free_energy_differences': Matrix of estimated free energy differences
+        - 'predicted_q_matrix': Matrix of predicted q values from free energy model
+        - 'memory_effects': Matrix quantifying the memory effect strength
+        - 'memory_significance': Matrix indicating if memory effects are significant
+        - 'interface_classification': Classification of each interface as 
+          'free_energy_dominated', 'memory_dominated', or 'mixed'
+        - 'overall_classification': Overall assessment of the system
+        - 'turn_based_metrics': Additional metrics specific to turn-based analysis
+          
+    Notes
+    -----
+    The function accounts for the turn-based nature of q_i,k values by:
+    1. Recognizing that q_i,k represents the probability of a trajectory making a turn at k
+       after previously making a turn at i and reaching k-1 or k+1
+    2. Differentiating between the forward (i<k) and backward (i>k) turn-based transitions
+    3. Comparing with an appropriate diffusive reference model for turn-based dynamics
+    
+    Memory effects in turn-based dynamics often indicate the presence of hidden slow variables
+    or complex kinetics that aren't captured by the chosen reaction coordinate.
     """
     import numpy as np
-    from scipy import linalg
+    import matplotlib.pyplot as plt
     
-    # Calculate stationary distribution of the turn-based MSM
-    eigenvalues, eigenvectors = linalg.eig(M.T)
-    idx = np.argmin(np.abs(eigenvalues - 1.0))
-    pi = np.real(eigenvectors[:, idx])
-    pi = pi / np.sum(pi)  # Normalize to probability distribution
+    n_interfaces = len(interfaces)
     
-    # Initialize result matrix
-    q_ref = np.zeros((n_interfaces, n_interfaces))
-    q_ref.fill(np.nan)
+    # Step 1: Estimate free energy differences between adjacent interfaces
+    # This accounts for the turn-based nature of the system
+    delta_G = estimate_free_energy_differences(interfaces, q_matrix, q_weights, min_samples)
     
-    # Map turn states to interfaces
-    interface_states = {}
+    # Step 2: Predict conditional crossing probabilities from the free energy model
+    # These are the expected q values for a memory-less diffusive process with the same free energy profile
+    predicted_q = np.zeros_like(q_matrix)
+    predicted_q.fill(np.nan)
+    
+    # For diagonal elements (self-transitions), probability is 0
     for i in range(n_interfaces):
-        interface_states[i] = {'A_turns': [], 'B_turns': []}
-        
-    # Map each turn state to its corresponding interface
-    # State 0: [0^-], 1: [0←], 2: [0→], 3-(n_interfaces): [i⊃], (n_interfaces+1)-end: [i⊂]
-    for i in range(len(pi)):
-        if i == 0:
-            # [0^-] maps to interface 0 (basin A)
-            interface_states[0]['B_turns'].append(i)
-        elif i == 1:
-            # [0←] maps to interface 0 as B→B turn
-            interface_states[0]['A_turns'].append(i)
-        elif i == 2:
-            # [0→] maps to interface 0 as A→A turn
-            interface_states[0]['B_turns'].append(i)
-        elif i <= n_interfaces:
-            # [i⊃] are turns at interface (i-2) from A direction back to A
-            interface_idx = i - 2
-            if 0 <= interface_idx < n_interfaces:
-                interface_states[interface_idx]['A_turns'].append(i)
-        else:
-            # [i⊂] are turns at interface (i-n_interfaces) from B direction back to B
-            interface_idx = i - n_interfaces
-            if 0 <= interface_idx < n_interfaces:
-                interface_states[interface_idx]['B_turns'].append(i)
+        predicted_q[i, i] = 0.0
     
-    # Calculate q_ik reference values using transition path theory
+    # Calculate reference probabilities based solely on local free energy differences
+    # For forward transitions (i<k):
+    for k in range(1, n_interfaces):
+        # The diffusive reference q(i,k) depends only on the free energy difference between k-1 and k
+        # not on the starting interface i
+        ref_prob = 0.5  # Default value
+        
+        if not np.isnan(delta_G[k-1, k]):
+            # Use Boltzmann factor for the free energy difference
+            ref_prob = 1.0 / (1.0 + np.exp(delta_G[k-1, k]))
+        
+        # Apply this reference to all starting interfaces i < k
+        # But for adjacent interfaces (i=k-1), the probability is 1.0 by definition
+        for i in range(k):
+            if i == k-1:
+                # Adjacent interfaces always have probability 1.0
+                predicted_q[i, k] = 1.0
+            else:
+                # Non-adjacent interfaces use the diffusive reference
+                predicted_q[i, k] = ref_prob
+    
+    # For backward transitions (i>k):
+    for k in range(n_interfaces-1):
+        # The diffusive reference q(i,k) depends only on the free energy difference between k+1 and k
+        # not on the starting interface i
+        ref_prob = 0.5  # Default value
+        
+        if not np.isnan(delta_G[k+1, k]):
+            # Use Boltzmann factor for the free energy difference
+            ref_prob = 1.0 / (1.0 + np.exp(delta_G[k+1, k]))
+        
+        # Apply this reference to all starting interfaces i > k
+        # But for adjacent interfaces (i=k+1), the probability is 1.0 by definition
+        for i in range(k+1, n_interfaces):
+            if i == k+1:
+                # Adjacent interfaces always have probability 1.0
+                predicted_q[i, k] = 1.0
+            else:
+                # Non-adjacent interfaces use the diffusive reference
+                predicted_q[i, k] = ref_prob
+    
+    # Step 3: Calculate memory effects as deviations from predicted values
+    memory_effects = np.zeros_like(q_matrix)
+    memory_effects.fill(np.nan)
+    
+    # Calculate absolute and relative memory effects
     for i in range(n_interfaces):
         for k in range(n_interfaces):
-            if i == k:
-                # No self-transitions in q_ik context
-                q_ref[i, k] = 0.0
-                continue
-            
-            if i < k:
-                # Forward transitions: q(i,k) = P(reach k | started at i⊂ and reached k-1)
-                # We need to calculate the probability of a path from interface k-1 reaching k
-                # This is based on the flux from k-1 to k compared to the flux from k-1 to all interfaces
-                
-                # For interface k-1, calculate outgoing flux distribution
-                if k > 1 and k < n_interfaces:
-                    total_outflux_k_minus_1 = 0.0
-                    flux_to_k = 0.0
-                    
-                    # Calculate flux from B-turns at k-1 to all other states
-                    b_turn_indices = interface_states[k-1]['B_turns']
-                    for src_idx in b_turn_indices:
-                        # Calculate total flux out from this turn state
-                        for dest_idx in range(len(pi)):
-                            if M[src_idx, dest_idx] > 0:
-                                flux = pi[src_idx] * M[src_idx, dest_idx]
-                                total_outflux_k_minus_1 += flux
-                                
-                                # Check if this transition contributes to reaching interface k
-                                # This is where we need to trace actual turn-to-turn paths
-                                # A simplified approach is to check if the destination is at interface k
-                                # or can lead to interface k in the next step
-                                if dest_idx in interface_states[k]['B_turns'] or dest_idx in interface_states[k]['A_turns']:
-                                    flux_to_k += flux
-                                else:
-                                    # Check second-order transitions
-                                    for third_idx in range(len(pi)):
-                                        if (M[dest_idx, third_idx] > 0 and 
-                                            (third_idx in interface_states[k]['B_turns'] or 
-                                             third_idx in interface_states[k]['A_turns'])):
-                                            # Approximate contribution from two-step transitions
-                                            # (with reduced weight to prioritize direct transitions)
-                                            flux_to_k += 0.5 * flux * M[dest_idx, third_idx]
-                    
-                    # Calculate reference probability as fraction of flux going toward k
-                    if total_outflux_k_minus_1 > 0:
-                        q_ref[i, k] = flux_to_k / total_outflux_k_minus_1
-                    else:
-                        # Fall back to interface stationary distribution ratio
-                        total_k_minus_1 = sum(pi[idx] for idx in interface_states[k-1]['B_turns'])
-                        total_k = sum(pi[idx] for idx in interface_states[k]['B_turns'])
-                        if total_k_minus_1 > 0 and total_k > 0:
-                            q_ref[i, k] = total_k / (total_k + total_k_minus_1)
-                        else:
-                            q_ref[i, k] = 0.5  # Default if no data
-                else:
-                    q_ref[i, k] = 0.5  # Default for boundary interfaces
-            
-            elif i > k:
-                # Backward transitions: q(i,k) = P(reach k | started at i⊃ and reached k+1)
-                # Similar logic as above but for backward transitions
-                
-                if k < n_interfaces-1 and k >= 0:
-                    total_outflux_k_plus_1 = 0.0
-                    flux_to_k = 0.0
-                    
-                    # Calculate flux from A-turns at k+1 to all other states
-                    a_turn_indices = interface_states[k+1]['A_turns']
-                    for src_idx in a_turn_indices:
-                        # Calculate total flux out from this turn state
-                        for dest_idx in range(len(pi)):
-                            if M[src_idx, dest_idx] > 0:
-                                flux = pi[src_idx] * M[src_idx, dest_idx]
-                                total_outflux_k_plus_1 += flux
-                                
-                                # Check if this transition contributes to reaching interface k
-                                if dest_idx in interface_states[k]['B_turns'] or dest_idx in interface_states[k]['A_turns']:
-                                    flux_to_k += flux
-                                else:
-                                    # Check second-order transitions
-                                    for third_idx in range(len(pi)):
-                                        if (M[dest_idx, third_idx] > 0 and 
-                                            (third_idx in interface_states[k]['B_turns'] or 
-                                             third_idx in interface_states[k]['A_turns'])):
-                                            # Approximate contribution from two-step transitions
-                                            flux_to_k += 0.5 * flux * M[dest_idx, third_idx]
-                    
-                    # Calculate reference probability as fraction of flux going toward k
-                    if total_outflux_k_plus_1 > 0:
-                        q_ref[i, k] = flux_to_k / total_outflux_k_plus_1
-                    else:
-                        # Fall back to interface stationary distribution ratio
-                        total_k_plus_1 = sum(pi[idx] for idx in interface_states[k+1]['A_turns'])
-                        total_k = sum(pi[idx] for idx in interface_states[k]['A_turns'])
-                        if total_k_plus_1 > 0 and total_k > 0:
-                            q_ref[i, k] = total_k / (total_k + total_k_plus_1)
-                        else:
-                            q_ref[i, k] = 0.5  # Default if no data
-                else:
-                    q_ref[i, k] = 0.5  # Default for boundary interfaces
+            if i != k and not np.isnan(q_matrix[i, k]) and not np.isnan(predicted_q[i, k]):
+                # Only consider values with enough samples
+                if q_weights is None or q_weights[i, k] >= min_samples:
+                    # Calculate relative deviation
+                    if predicted_q[i, k] > 0:
+                        # Relative deviation as percentage
+                        memory_effects[i, k] = (q_matrix[i, k] - predicted_q[i, k]) / predicted_q[i, k]
     
-    return q_ref
+    # Step 4: Determine significance of memory effects
+    memory_significance = np.zeros_like(q_matrix, dtype=bool)
+    
+    for i in range(n_interfaces):
+        for k in range(n_interfaces):
+            if not np.isnan(memory_effects[i, k]):
+                memory_significance[i, k] = abs(memory_effects[i, k]) > memory_threshold
+    
+    # Step 5: Specialized analysis for turn-based dynamics
+    turn_persistence = analyze_turn_persistence(q_matrix, q_weights, min_samples)
+    
+    # Step 6: Classify each interface by dominant effect type
+    interface_classification = {}
+    
+    for i in range(n_interfaces):
+        # Count significant memory effects for transitions starting at this interface
+        memory_count = np.sum(memory_significance[i, :])
+        total_transitions = np.sum(~np.isnan(memory_effects[i, :]))
+        
+        if total_transitions == 0:
+            interface_classification[i] = "insufficient_data"
+        elif memory_count / total_transitions > 0.5:
+            interface_classification[i] = "memory_dominated"
+        elif memory_count / total_transitions < 0.2:
+            interface_classification[i] = "free_energy_dominated"
+        else:
+            interface_classification[i] = "mixed"
+    
+    # Step 7: Classify the overall system
+    total_significant_memory = np.sum(memory_significance)
+    total_valid_transitions = np.sum(~np.isnan(memory_effects))
+    
+    if total_valid_transitions == 0:
+        overall_classification = "insufficient_data"
+    elif total_significant_memory / total_valid_transitions > 0.5:
+        overall_classification = "memory_dominated"
+    elif total_significant_memory / total_valid_transitions < 0.2:
+        overall_classification = "free_energy_dominated"
+    else:
+        overall_classification = "mixed"
+    
+    # Step 8: Calculate directional memory effects (forward vs backward)
+    forward_memory = 0
+    forward_count = 0
+    backward_memory = 0
+    backward_count = 0
+    
+    for i in range(n_interfaces):
+        for k in range(n_interfaces):
+            if i < k and not np.isnan(memory_effects[i, k]):  # Forward
+                forward_memory += abs(memory_effects[i, k])
+                forward_count += 1
+            elif i > k and not np.isnan(memory_effects[i, k]):  # Backward
+                backward_memory += abs(memory_effects[i, k])
+                backward_count += 1
+    
+    # Average memory effects in each direction
+    avg_forward_memory = forward_memory / forward_count if forward_count > 0 else 0
+    avg_backward_memory = backward_memory / backward_count if backward_count > 0 else 0
+    
+    # Return comprehensive analysis results
+    return {
+        'free_energy_differences': delta_G,
+        'predicted_q_matrix': predicted_q,
+        'memory_effects': memory_effects,
+        'memory_significance': memory_significance,
+        'interface_classification': interface_classification,
+        'overall_classification': overall_classification,
+        'avg_forward_memory': avg_forward_memory,
+        'avg_backward_memory': avg_backward_memory,
+        'forward_vs_backward': 'forward_dominated' if avg_forward_memory > avg_backward_memory * 1.5 else 
+                               'backward_dominated' if avg_backward_memory > avg_forward_memory * 1.5 else
+                               'balanced',
+        'turn_based_metrics': turn_persistence
+    }
 
-def calculate_q_ik_reference_from_stationary(M, n_interfaces):
+def analyze_turn_persistence(q_matrix, q_weights=None, min_samples=5):
     """
-    Calculate diffusive reference conditional crossing probabilities (q_ik) 
-    using the stationary distribution of a turn-based MSM.
+    Analyze turn persistence patterns in the system to detect memory effects specific to turn-based dynamics.
     
-    Parameters:
-    -----------
-    M : numpy.ndarray
-        Transition matrix of turns, where M[i,j] is the probability 
-        of going from a turn at state i to a turn at state j
-    n_interfaces : int
-        Number of interfaces in the system
-        
-    Returns:
-    --------
-    q_ref : numpy.ndarray
-        A matrix of reference conditional crossing probabilities q(i,k)
-        for memory-less diffusive dynamics
+    Parameters
+    ----------
+    q_matrix : numpy.ndarray
+        Matrix of conditional crossing probabilities
+    q_weights : numpy.ndarray, optional
+        Matrix of sample counts for each q_matrix value
+    min_samples : int, optional
+        Minimum number of samples required to consider a q value valid
+    
+    Returns
+    -------
+    dict
+        Dictionary containing turn persistence metrics
     """
     import numpy as np
-    from scipy import linalg
     
-    # Calculate stationary distribution of the turn-based MSM
-    eigenvalues, eigenvectors = linalg.eig(M.T)
-    idx = np.argmin(np.abs(eigenvalues - 1.0))
-    pi = np.real(eigenvectors[:, idx])
-    pi = pi / np.sum(pi)  # Normalize to probability distribution
+    n_interfaces = q_matrix.shape[0]
     
-    # Initialize result matrix
-    q_ref = np.zeros((n_interfaces, n_interfaces))
-    q_ref.fill(np.nan)
+    # Calculate average turn skipping - how many interfaces we typically jump over when making turns
+    avg_turn_skip = np.zeros(n_interfaces)
+    avg_turn_skip.fill(np.nan)
     
-    # Map turn states to interfaces with their direction type
-    interface_states = {}
     for i in range(n_interfaces):
-        interface_states[i] = {'A_turns': [], 'B_turns': []}
+        valid_distances = []
+        valid_weights = []
         
-    # Map each turn state to its corresponding interface
-    # State 0: [0^-], 1: [0←], 2: [0→], 3-(n_interfaces): [i⊃], (n_interfaces+1)-end: [i⊂]
-    for i in range(len(pi)):
-        if i == 0:
-            # [0^-] maps to interface 0 (basin A)
-            interface_states[0]['B_turns'].append(i)
-        elif i == 1:
-            # [0←] maps to interface 0 as B→B turn
-            interface_states[0]['A_turns'].append(i)
-        elif i == 2:
-            # [0→] maps to interface 0 as A→A turn
-            interface_states[0]['B_turns'].append(i)
-        elif i <= n_interfaces:
-            # [i⊂] are turns at interface (i-2) from B direction back to B
-            interface_idx = i - 2
-            if 0 <= interface_idx < n_interfaces:
-                interface_states[interface_idx]['B_turns'].append(i)
-        else:
-            # [i⊃] are turns at interface (i-n_interfaces) from A direction back to A
-            interface_idx = i - n_interfaces
-            if 0 <= interface_idx < n_interfaces:
-                interface_states[interface_idx]['A_turns'].append(i)
-    
-    # Aggregate stationary distribution by interface and turn type
-    interface_pi = {}
-    for i in range(n_interfaces):
-        interface_pi[i] = {'A_turns': 0.0, 'B_turns': 0.0}
-        
-        # Sum pi values for A→A turns at this interface
-        for state_idx in interface_states[i]['A_turns']:
-            interface_pi[i]['A_turns'] += pi[state_idx]
-            
-        # Sum pi values for B→B turns at this interface
-        for state_idx in interface_states[i]['B_turns']:
-            interface_pi[i]['B_turns'] += pi[state_idx]
-    
-    # Calculate q_ik reference values
-    for i in range(n_interfaces):
         for k in range(n_interfaces):
-            if i == k:
-                # No self-transitions in q_ik context
-                q_ref[i, k] = 0.0
-                continue
-            
-            if i < k:
-                # Forward transitions: q(i,k) = P(reach k | started at i⊂ and reached k-1)
-                # Per the definition, we need the conditional probability for paths
-                # starting at interface i from B direction (i⊂)
-                
-                if k > 1 and interface_pi[k-1]['B_turns'] > 0 and interface_pi[k]['B_turns'] > 0:
-                    # For systems following detailed balance, this ratio gives the free energy difference
-                    # between states k-1 and k when approached from the B direction
-                    delta_G = -np.log(interface_pi[k]['B_turns'] / interface_pi[k-1]['B_turns'])
-                    # Convert to conditional crossing probability using Boltzmann relationship
-                    q_ref[i, k] = 1.0 / (1.0 + np.exp(delta_G))
-                else:
-                    # Default to 0.5 if no sufficient data
-                    q_ref[i, k] = 0.5
-            
-            elif i > k:
-                # Backward transitions: q(i,k) = P(reach k | started at i⊃ and reached k+1)
-                # Per the definition, we need the conditional probability for paths
-                # starting at interface i from A direction (i⊃)
-                
-                if k < n_interfaces-1 and interface_pi[k+1]['A_turns'] > 0 and interface_pi[k]['A_turns'] > 0:
-                    # For systems following detailed balance, this ratio gives the free energy difference
-                    # between states k+1 and k when approached from the A direction
-                    delta_G = -np.log(interface_pi[k]['A_turns'] / interface_pi[k+1]['A_turns'])
-                    # Convert to conditional crossing probability using Boltzmann relationship
-                    q_ref[i, k] = 1.0 / (1.0 + np.exp(delta_G))
-                else:
-                    # Default to 0.5 if no sufficient data
-                    q_ref[i, k] = 0.5
+            if i != k and not np.isnan(q_matrix[i, k]):
+                # Only consider values with enough samples
+                if q_weights is None or q_weights[i, k] >= min_samples:
+                    # Distance between turns (number of interfaces skipped)
+                    distance = abs(k - i)
+                    weight = q_matrix[i, k]
+                    if q_weights is not None:
+                        sample_weight = q_weights[i, k]
+                    else:
+                        sample_weight = 1
+                    
+                    valid_distances.append(distance)
+                    valid_weights.append(weight * sample_weight)
+        
+        if valid_distances:
+            # Calculate weighted average distance
+            avg_turn_skip[i] = np.average(valid_distances, weights=valid_weights)
     
-    return q_ref
+    # Calculate turn asymmetry - tendency to make forward vs backward turns
+    turn_asymmetry = np.zeros(n_interfaces)
+    turn_asymmetry.fill(np.nan)
+    
+    for i in range(1, n_interfaces-1):  # Skip boundary interfaces
+        forward_prob = 0
+        backward_prob = 0
+        forward_count = 0
+        backward_count = 0
+        
+        for k in range(n_interfaces):
+            if k > i and not np.isnan(q_matrix[i, k]):
+                # Forward turn
+                if q_weights is None or q_weights[i, k] >= min_samples:
+                    forward_prob += q_matrix[i, k]
+                    forward_count += 1
+            elif k < i and not np.isnan(q_matrix[i, k]):
+                # Backward turn
+                if q_weights is None or q_weights[i, k] >= min_samples:
+                    backward_prob += q_matrix[i, k]
+                    backward_count += 1
+        
+        # Normalize by count
+        if forward_count > 0:
+            forward_prob /= forward_count
+        if backward_count > 0:
+            backward_prob /= backward_count
+        
+        # Calculate asymmetry (-1 to 1 scale)
+        if forward_prob + backward_prob > 0:
+            turn_asymmetry[i] = (forward_prob - backward_prob) / (forward_prob + backward_prob)
+    
+    # Calculate transition sharpness - how focused the transitions are
+    # High values indicate sharp transitions (focused on specific targets)
+    # Low values indicate diffuse transitions (spread across many targets)
+    transition_sharpness = np.zeros(n_interfaces)
+    transition_sharpness.fill(np.nan)
+    
+    for i in range(n_interfaces):
+        valid_probs = []
+        
+        for k in range(n_interfaces):
+            if i != k and not np.isnan(q_matrix[i, k]):
+                if q_weights is None or q_weights[i, k] >= min_samples:
+                    valid_probs.append(q_matrix[i, k])
+        
+        if len(valid_probs) > 1:
+            # Calculate entropy-based measure of sharpness
+            # Normalize probabilities first
+            norm_probs = np.array(valid_probs) / np.sum(valid_probs)
+            # Calculate entropy (higher entropy = lower sharpness)
+            entropy = -np.sum(norm_probs * np.log(norm_probs + 1e-10))
+            # Convert to sharpness (1 - normalized entropy)
+            max_entropy = np.log(len(valid_probs))
+            if max_entropy > 0:
+                transition_sharpness[i] = 1.0 - entropy / max_entropy
+            else:
+                transition_sharpness[i] = np.nan
+    
+    return {
+        'avg_turn_skip': avg_turn_skip,
+        'turn_asymmetry': turn_asymmetry,
+        'transition_sharpness': transition_sharpness
+    }
+
+def visualize_turn_based_analysis(analysis_results, interfaces, q_matrix, q_weights=None):
+    """
+    Create visualizations of the turn-based memory vs free energy analysis.
+    
+    Parameters
+    ----------
+    analysis_results : dict
+        Output from analyze_memory_vs_free_energy_effects function
+    interfaces : list or array
+        The positions of the interfaces along the reaction coordinate
+    q_matrix : numpy.ndarray
+        Original matrix of conditional crossing probabilities
+    q_weights : numpy.ndarray, optional
+        Matrix of sample counts for each q_matrix value
+        
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        Figure containing the visualization
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from matplotlib.colors import LinearSegmentedColormap
+    
+    n_interfaces = len(interfaces)
+    
+    # Extract results
+    delta_G = analysis_results['free_energy_differences']
+    predicted_q = analysis_results['predicted_q_matrix']
+    memory_effects = analysis_results['memory_effects']
+    memory_significance = analysis_results['memory_significance']
+    turn_metrics = analysis_results['turn_based_metrics']
+    
+    # Create a figure with multiple subplots
+    fig = plt.figure(figsize=(16, 18))
+    
+    # Create a GridSpec layout to better control spacing
+    from matplotlib.gridspec import GridSpec
+    gs = GridSpec(3, 2, figure=fig, hspace=0.3, wspace=0.3)
+    
+    # Add overall classification information at the top as a title
+    overall = analysis_results['overall_classification'].replace("_", " ").title()
+    forward_vs_backward = analysis_results['forward_vs_backward'].replace("_", " ").title()
+    title_text = f'Turn-Based Memory vs Free Energy Analysis\nOverall: {overall} ({forward_vs_backward})'
+    fig.text(0.5, 0.98, title_text, ha='center', va='top', fontsize=16, weight='bold')
+    
+    # Plot 1: Free Energy Profile (top-left)
+    ax1 = fig.add_subplot(gs[0, 0])
+    
+    # Calculate cumulative free energy profile
+    cumulative_G = np.zeros(n_interfaces)
+    for i in range(1, n_interfaces):
+        # Add up all the delta_G values from the first interface
+        valid_path = True
+        for j in range(i):
+            if np.isnan(delta_G[j, j+1]):
+                valid_path = False
+                break
+            cumulative_G[i] += delta_G[j, j+1]
+        
+        if not valid_path:
+            cumulative_G[i] = np.nan
+    
+    # Plot the free energy profile
+    ax1.plot(interfaces, cumulative_G, 'o-', linewidth=2, color='blue')
+    
+    # Add marker points with annotations
+    for i, (pos, g) in enumerate(zip(interfaces, cumulative_G)):
+        if not np.isnan(g):
+            ax1.plot(pos, g, 'o', markersize=8, color='blue')
+            ax1.text(pos, g + 0.1, f"{g:.2f}", ha='center', va='bottom', fontsize=9)
+    
+    ax1.set_xlabel('Interface Position')
+    ax1.set_ylabel('Free Energy G (kT)')
+    ax1.set_title('Free Energy Profile from Turn-Based Transitions', fontsize=12)
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot 2: Memory Effect Heatmap (top-right)
+    ax2 = fig.add_subplot(gs[0, 1])
+    
+    # Create a diverging colormap for memory effects
+    cmap_memory = LinearSegmentedColormap.from_list('memory_effect', 
+                                                  [(0, 'blue'), (0.5, 'white'), (1, 'red')], N=256)
+    
+    # Create a masked array for NaN values
+    masked_memory = np.ma.masked_invalid(memory_effects)
+    
+    # Determine color range symmetrically around zero
+    max_effect = np.nanmax(np.abs(memory_effects))
+    
+    # Plot the heatmap
+    im = ax2.imshow(masked_memory, cmap=cmap_memory, vmin=-max_effect, vmax=max_effect, 
+                   interpolation='none', aspect='auto')
+    
+    # Add colorbar
+    cbar = fig.colorbar(im, ax=ax2, label='Memory Effect (q - q_predicted) / q_predicted')
+    
+    # Add annotations
+    for i in range(n_interfaces):
+        for j in range(n_interfaces):
+            if not np.isnan(memory_effects[i, j]):
+                sig_mark = '*' if memory_significance[i, j] else ''
+                text = f"{memory_effects[i, j]:.2f}{sig_mark}"
+                color = 'black' if abs(memory_effects[i, j]) < 0.5 else 'white'
+                ax2.text(j, i, text, ha='center', va='center', color=color, fontsize=9)
+    
+    ax2.set_xticks(range(n_interfaces))
+    ax2.set_yticks(range(n_interfaces))
+    ax2.set_xticklabels([f"{i}" for i in range(n_interfaces)])
+    ax2.set_yticklabels([f"{i}" for i in range(n_interfaces)])
+    ax2.set_xlabel('Target Turn at Interface k')
+    ax2.set_ylabel('Starting Turn at Interface i')
+    ax2.set_title('Memory Effects: Deviation from Free Energy Model', fontsize=12)
+    
+    # Plot 3: Comparison of Observed vs Predicted Turn Probabilities (middle-left)
+    ax3 = fig.add_subplot(gs[1, 0])
+    
+    # Only include non-diagonal elements with valid data
+    valid_points = []
+    for i in range(n_interfaces):
+        for j in range(n_interfaces):
+            if i != j and not np.isnan(q_matrix[i, j]) and not np.isnan(predicted_q[i, j]):
+                valid_points.append((predicted_q[i, j], q_matrix[i, j], memory_significance[i, j],
+                                    f"{i}→{j}"))
+    
+    if valid_points:
+        # Unpack the valid points
+        x_vals, y_vals, significance, labels = zip(*valid_points)
+        
+        # Plot the theoretical 1:1 line
+        ax3.plot([0, 1], [0, 1], '--', color='gray', alpha=0.7)
+        
+        # Plot each point, colored by significance
+        for x, y, sig, label in zip(x_vals, y_vals, significance, labels):
+            color = 'red' if sig else 'blue'
+            ax3.scatter(x, y, color=color, s=50, alpha=0.7)
+            ax3.annotate(label, (x, y), xytext=(5, 5), textcoords='offset points')
+        
+        ax3.set_xlabel('Predicted Turn Probability (Free Energy Model)')
+        ax3.set_ylabel('Observed Turn Probability')
+        ax3.set_title('Observed vs Predicted Turn Probabilities', fontsize=12)
+        ax3.grid(True, alpha=0.3)
+        ax3.set_xlim(0, 1)
+        ax3.set_ylim(0, 1)
+        
+        # Add legend
+        ax3.scatter([], [], color='blue', label='Free Energy Dominated')
+        ax3.scatter([], [], color='red', label='Memory Effects')
+        ax3.legend()
+    else:
+        ax3.text(0.5, 0.5, "Insufficient valid data for comparison",
+                ha='center', va='center', transform=ax3.transAxes)
+    
+    # Plot 4: Turn Metrics - Average Turn Skip (middle-right)
+    ax4 = fig.add_subplot(gs[1, 1])
+    
+    # Plot average turn skip
+    avg_turn_skip = turn_metrics['avg_turn_skip']
+    valid_indices = ~np.isnan(avg_turn_skip)
+    
+    if np.any(valid_indices):
+        bars = ax4.bar(np.array(range(n_interfaces))[valid_indices], 
+                      avg_turn_skip[valid_indices], alpha=0.7)
+        
+        # Add value annotations
+        for bar in bars:
+            height = bar.get_height()
+            ax4.text(bar.get_x() + bar.get_width()/2., height + 0.05,
+                    f"{height:.2f}", ha='center', va='bottom', fontsize=9)
+        
+        ax4.set_xlabel('Interface')
+        ax4.set_ylabel('Average Turn Skip (interfaces)')
+        ax4.set_title('Average Distance Between Consecutive Turns', fontsize=12)
+        ax4.set_xticks(range(n_interfaces))
+        ax4.set_xticklabels([f"{i}" for i in range(n_interfaces)])
+        ax4.grid(True, axis='y', alpha=0.3)
+    else:
+        ax4.text(0.5, 0.5, "Insufficient data for turn skip analysis",
+                ha='center', va='center', transform=ax4.transAxes)
+    
+    # Plot 5: Turn Asymmetry (bottom-left)
+    ax5 = fig.add_subplot(gs[2, 0])
+    
+    # Plot turn asymmetry
+    turn_asymmetry = turn_metrics['turn_asymmetry']
+    valid_indices = ~np.isnan(turn_asymmetry)
+    
+    if np.any(valid_indices):
+        bars = ax5.bar(np.array(range(n_interfaces))[valid_indices], 
+                      turn_asymmetry[valid_indices], alpha=0.7)
+        
+        # Color bars based on direction (forward/backward bias)
+        for i, bar in enumerate(bars):
+            idx = np.arange(n_interfaces)[valid_indices][i]
+            asym = turn_asymmetry[idx]
+            bar.set_color('green' if asym > 0 else 'red')
+            
+            # Add value annotations
+            ax5.text(bar.get_x() + bar.get_width()/2., 
+                    asym + 0.05 if asym >= 0 else asym - 0.1,
+                    f"{asym:.2f}", ha='center', va='center', fontsize=9)
+        
+        ax5.set_xlabel('Interface')
+        ax5.set_ylabel('Turn Asymmetry (-1 to 1)')
+        ax5.set_title('Forward vs Backward Turn Preference', fontsize=12)
+        ax5.set_xticks(range(n_interfaces))
+        ax5.set_xticklabels([f"{i}" for i in range(n_interfaces)])
+        ax5.set_ylim(-1.1, 1.1)
+        ax5.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+        ax5.grid(True, alpha=0.3)
+        
+        # Add legend
+        ax5.text(0.02, 0.95, "Green: Forward bias (i→k where k>i)\nRed: Backward bias (i→k where k<i)",
+                transform=ax5.transAxes, fontsize=10, va='top',
+                bbox=dict(facecolor='white', alpha=0.8))
+    else:
+        ax5.text(0.5, 0.5, "Insufficient data for turn asymmetry analysis",
+                ha='center', va='center', transform=ax5.transAxes)
+    
+    # Plot 6: Transition Sharpness (bottom-right)
+    ax6 = fig.add_subplot(gs[2, 1])
+    
+    # Plot transition sharpness
+    transition_sharpness = turn_metrics['transition_sharpness']
+    valid_indices = ~np.isnan(transition_sharpness)
+    
+    if np.any(valid_indices):
+        bars = ax6.bar(np.array(range(n_interfaces))[valid_indices], 
+                      transition_sharpness[valid_indices], alpha=0.7)
+        
+        # Add value annotations
+        for bar in bars:
+            height = bar.get_height()
+            ax6.text(bar.get_x() + bar.get_width()/2., height + 0.02,
+                    f"{height:.2f}", ha='center', va='bottom', fontsize=9)
+        
+        ax6.set_xlabel('Interface')
+        ax6.set_ylabel('Transition Sharpness (0-1)')
+        ax6.set_title('Turn Destination Specificity', fontsize=12)
+        ax6.set_xticks(range(n_interfaces))
+        ax6.set_xticklabels([f"{i}" for i in range(n_interfaces)])
+        ax6.set_ylim(0, 1.1)
+        ax6.grid(True, axis='y', alpha=0.3)
+        
+        # Add explanation
+        ax6.text(0.02, 0.95, "Higher values indicate more focused transitions\nLower values indicate diffuse transitions",
+                transform=ax6.transAxes, fontsize=10, va='top',
+                bbox=dict(facecolor='white', alpha=0.8))
+    else:
+        ax6.text(0.5, 0.5, "Insufficient data for transition sharpness analysis",
+                ha='center', va='center', transform=ax6.transAxes)
+    
+    # Adjust layout to use the entire figure space effectively
+    plt.tight_layout(rect=[0, 0, 1, 0.95])  # Leave room at top for title
+    
+    return fig
 
 def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_samples=5):
     """
@@ -3255,7 +3554,9 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
     interfaces : list or array
         The positions of the interfaces along the reaction coordinate
     q_matrix : numpy.ndarray
-        Matrix of conditional crossing probabilities
+        Matrix of conditional crossing probabilities where q[i,k] is the probability
+        that a path starting at interface i and reaching k-1 (for i<k) or k+1 (for i>k)
+        will reach interface k.
     q_weights : numpy.ndarray, optional
         Matrix of sample counts for each q_matrix value
     min_samples : int, optional
@@ -3279,108 +3580,80 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
         mean_spacing = np.mean(spacings)
         relative_spacings = spacings / mean_spacing if mean_spacing > 0 else np.ones_like(spacings)
     
-    # First try to estimate delta_G from non-adjacent q-values with distance=2
-    for i in range(n_interfaces-2):
-        # Skip cases where i=0 or i+2=n_interfaces-1 (boundary states)
-        if i == 0 or i+2 >= n_interfaces-1:
-            continue
+    # Estimate delta_G from appropriate q-values
+    
+    # First edge case: between interfaces 0 and 1
+    if n_interfaces > 2:
+        # Backward: Use q[2,0] (probability to reach 0 when starting at 2 and having reached 1)
+        valid_backward_01 = (not np.isnan(q_matrix[2, 0]) and
+                           (q_weights is None or q_weights[2, 0] >= min_samples) and
+                           q_matrix[2, 0] > 0 and q_matrix[2, 0] < 1)
+        if valid_backward_01:
+            # Only backward data available
+            dG_01 = np.log(q_matrix[2, 0] / (1 - q_matrix[2, 0]))
+            delta_G[0, 1] = dG_01
+            delta_G[1, 0] = -dG_01
+    
+    # Middle interfaces
+    for i in range(1, n_interfaces-1):  # Skip boundary interfaces (0 and n_interfaces-1)
+        # For each interface pair i and i+1
+        if i+1 < n_interfaces-1:  # Make sure we're not at the last pair
+            # Forward: Compare q[i-1,i+1] (probability to reach i+1 when starting at i-1 and having reached i)
+            # Backward: Compare q[i+2,i] (probability to reach i when starting at i+2 and having reached i+1)
             
-        # Forward transition i -> i+2
-        valid_forward = (not np.isnan(q_matrix[i, i+2]) and 
-                        (q_weights is None or q_weights[i, i+2] >= min_samples) and
-                        q_matrix[i, i+2] > 0 and q_matrix[i, i+2] < 1)
-                        
-        # Backward transition i+2 -> i
-        valid_backward = (not np.isnan(q_matrix[i+2, i]) and 
-                         (q_weights is None or q_weights[i+2, i] >= min_samples) and
-                         q_matrix[i+2, i] > 0 and q_matrix[i+2, i] < 1)
+            valid_forward = (i-1 >= 0 and  # Make sure i-1 is valid
+                            not np.isnan(q_matrix[i-1, i+1]) and 
+                            (q_weights is None or q_weights[i-1, i+1] >= min_samples) and
+                            q_matrix[i-1, i+1] > 0 and q_matrix[i-1, i+1] < 1)
+                            
+            valid_backward = (i+2 < n_interfaces and  # Make sure i+2 is valid
+                             not np.isnan(q_matrix[i+2, i]) and 
+                             (q_weights is None or q_weights[i+2, i] >= min_samples) and
+                             q_matrix[i+2, i] > 0 and q_matrix[i+2, i] < 1)
+            
+            if valid_forward and valid_backward:
+                # For a diffusive system, the ratio of these probabilities relates to 
+                # the free energy difference between i and i+1
+                
+                # Convert q values to free energy using the Arrhenius relationship
+                # q/(1-q) = exp(-ΔG) -> ΔG = -ln(q/(1-q))
+                dG_forward = -np.log(q_matrix[i-1, i+1] / (1 - q_matrix[i-1, i+1]))
+                dG_backward = -np.log(q_matrix[i+2, i] / (1 - q_matrix[i+2, i]))
+                
+                # Average the forward and backward estimates
+                dG_avg = (dG_forward - dG_backward) / 2
+                
+                # Assign to delta_G matrix
+                delta_G[i, i+1] = dG_avg
+                delta_G[i+1, i] = -dG_avg
+            elif valid_forward:
+                # Only forward data available
+                dG = -np.log(q_matrix[i-1, i+1] / (1 - q_matrix[i-1, i+1]))
+                delta_G[i, i+1] = dG
+                delta_G[i+1, i] = -dG
+            elif valid_backward:
+                # Only backward data available
+                dG = np.log(q_matrix[i+2, i] / (1 - q_matrix[i+2, i]))
+                delta_G[i, i+1] = dG
+                delta_G[i+1, i] = -dG
+    
+    # Second edge case: between interfaces n_interfaces-2 and n_interfaces-1 (last pair)
+    if n_interfaces > 2:
+        # Forward: Use q[n_interfaces-3, n_interfaces-1]
+        valid_forward_last = (n_interfaces-3 >= 0 and
+                             not np.isnan(q_matrix[n_interfaces-3, n_interfaces-1]) and
+                             (q_weights is None or q_weights[n_interfaces-3, n_interfaces-1] >= min_samples) and
+                             q_matrix[n_interfaces-3, n_interfaces-1] > 0 and 
+                             q_matrix[n_interfaces-3, n_interfaces-1] < 1)
         
-        if valid_forward and valid_backward:
-            # For a diffusive system, the ratio of these probabilities gives information
-            # about the free energy difference between i and i+1
-            ratio = q_matrix[i, i+2] / q_matrix[i+2, i]
-            
-            # Total free energy difference between i and i+2
-            dG_total = -np.log(ratio)
-            
-            if has_physical_distances:
-                # Distribute free energy proportionally to physical distances
-                dist_i_to_i1 = spacings[i]
-                dist_i1_to_i2 = spacings[i+1]
-                total_dist = dist_i_to_i1 + dist_i1_to_i2
-                
-                if total_dist > 0:
-                    # Distribute the free energy change proportionally to distances
-                    dG_i_to_i1 = dG_total * (dist_i_to_i1 / total_dist)
-                    dG_i1_to_i2 = dG_total * (dist_i1_to_i2 / total_dist)
-                else:
-                    # Equal distribution if distances are invalid
-                    dG_i_to_i1 = dG_total / 2
-                    dG_i1_to_i2 = dG_total / 2
-            else:
-                # Without physical distance, assume equal distribution
-                dG_i_to_i1 = dG_total / 2
-                dG_i1_to_i2 = dG_total / 2
-                
-            # Assign these values
-            delta_G[i, i+1] = dG_i_to_i1
-            delta_G[i+1, i] = -dG_i_to_i1
-            delta_G[i+1, i+2] = dG_i1_to_i2
-            delta_G[i+2, i+1] = -dG_i1_to_i2
+        if valid_forward_last:
+            dG_last = -np.log(q_matrix[n_interfaces-3, n_interfaces-1] / 
+                            (1 - q_matrix[n_interfaces-3, n_interfaces-1]))
+            delta_G[n_interfaces-2, n_interfaces-1] = dG_last
+            delta_G[n_interfaces-1, n_interfaces-2] = -dG_last
     
-    # Next, try to estimate from adjacent probabilities in diffusive reference
-    # This is more similar to calculate_diffusive_reference_spacing approach
-    if has_physical_distances:
-        # Similar to diffusive_reference_spacing logic
-        for i in range(n_interfaces-1):
-            if np.isnan(delta_G[i, i+1]):
-                # For adjacent interfaces with missing free energy estimates
-                # Use ratio of adjacent interface distances
-                
-                # Forward direction logic - similar to diffusive_reference_spacing
-                if i > 0 and i+1 < n_interfaces-1:  # Have previous and next interfaces
-                    # Distance from i-1 to i
-                    d_prev = interfaces[i] - interfaces[i-1]
-                    # Distance from i to i+1
-                    d_next = interfaces[i+1] - interfaces[i]
-                    
-                    if d_prev > 0 and d_next > 0:
-                        # Calculate forward probability based on distance ratios
-                        p_forward = d_prev / (d_prev + d_next)
-                        # Convert probability to free energy
-                        delta_G[i, i+1] = -np.log(p_forward / (1 - p_forward))
-                        delta_G[i+1, i] = -delta_G[i, i+1]
-                        continue
-                
-                # Backward direction logic - similar to diffusive_reference_spacing
-                if i > 0 and i+2 < n_interfaces:  # Can use backward reference
-                    # Distance from i to i+1
-                    d_curr = interfaces[i+1] - interfaces[i]
-                    # Distance from i+1 to i+2
-                    d_next = interfaces[i+2] - interfaces[i+1]
-                    
-                    if d_curr > 0 and d_next > 0:
-                        # Calculate backward probability based on distance ratios
-                        p_backward = d_next / (d_next + d_curr)
-                        # Convert probability to free energy
-                        delta_G[i+1, i] = -np.log(p_backward / (1 - p_backward))
-                        delta_G[i, i+1] = -delta_G[i+1, i]
-                        continue
-    
-    # Fill in any remaining gaps with estimates from physical distance
-    default_barrier = 0.01  # Small non-zero default barrier (in kT units)
-    
-    for i in range(n_interfaces-1):
-        if np.isnan(delta_G[i, i+1]):
-            if has_physical_distances:
-                # Scale default barrier by relative interface spacing
-                scale = relative_spacings[i]
-                delta_G[i, i+1] = default_barrier * scale
-                delta_G[i+1, i] = -delta_G[i, i+1]
-            else:
-                # No physical information, use default barrier
-                delta_G[i, i+1] = default_barrier
-                delta_G[i+1, i] = -default_barrier
+    # No longer attempting to fill in NaN values with defaults
+    # This ensures that NaN values remain NaN and won't be plotted
     
     return delta_G
 
