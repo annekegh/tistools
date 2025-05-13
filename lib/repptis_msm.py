@@ -511,8 +511,6 @@ def mfpt_to_absorbing_states(M, tau1, taum, tau2, absor, kept, doprint=False, re
 
     Notes
     -----
-    - `h1[0]` gives the conditional mean first passage time from a transient state 
-      to an absorbing state, given that the process leaves the starting state.
     - The function avoids explicit matrix inversion for numerical stability.
     - If `remove="m"`, the middle part of the first passage time is subtracted.
     """
