@@ -2974,6 +2974,368 @@ def calculate_diffusive_reference_spacing(interfaces):
     
     return diff_ref
 
+def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_samples=5, momentum_threshold=0.3):
+    """
+    Distinguish between free energy effects and momentum effects in turn-based path networks
+    by comparing observed transition probabilities with diffusive predictions based on estimated free energies.
+    
+    Parameters
+    ----------
+    interfaces : list or array
+        The positions of the interfaces along the reaction coordinate
+    q_matrix : numpy.ndarray
+        Matrix of conditional crossing probabilities
+    q_weights : numpy.ndarray, optional
+        Matrix of sample counts for each q_matrix value
+    min_samples : int, optional
+        Minimum number of samples required to consider a q value valid
+    momentum_threshold : float, optional
+        Threshold for determining significant momentum effects (relative deviation)
+    
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - 'free_energy_differences': Free energy differences between interfaces
+        - 'diffusive_probabilities': Predicted probabilities based on free energy model
+        - 'momentum_effects': Deviations between observed and diffusive probabilities
+        - 'momentum_significance': Whether the deviations are significant
+        - 'classification': Classification of each interface as free-energy-dominated or momentum-dominated
+        - 'overall_classification': Overall assessment of the system
+    """
+    import numpy as np
+    n_interfaces = len(interfaces)
+    
+    # Step 1: Estimate free energy differences between interfaces
+    delta_G = estimate_free_energy_differences(interfaces, q_matrix, q_weights, min_samples)
+    
+    # Step 2: Calculate diffusive reference probabilities based on free energy
+    diffusive_q = np.zeros_like(q_matrix)
+    diffusive_q.fill(np.nan)
+    
+    # For diagonal elements (self-transitions), probability is 0
+    for i in range(n_interfaces):
+        diffusive_q[i, i] = 0.0
+    
+    # Create reference probabilities for forward transitions (i<k)
+    for k in range(1, n_interfaces):
+        ref_prob = 0.5  # Default value
+        
+        # Use Boltzmann factor for the free energy difference between k-1 and k
+        if not np.isnan(delta_G[k-1, k]):
+            ref_prob = 1.0 / (1.0 + np.exp(delta_G[k-1, k]))
+        
+        # Apply this reference to all starting interfaces i < k
+        # For adjacent interfaces, probability is 1.0 by definition
+        for i in range(k):
+            if i == k-1:
+                diffusive_q[i, k] = 1.0  # Adjacent interfaces
+            else:
+                diffusive_q[i, k] = ref_prob  # Non-adjacent interfaces
+    
+    # Create reference probabilities for backward transitions (i>k)
+    for k in range(n_interfaces-1):
+        ref_prob = 0.5  # Default value
+        
+        # Use Boltzmann factor for the free energy difference between k and k+1
+        if not np.isnan(delta_G[k+1, k]):
+            ref_prob = 1.0 / (1.0 + np.exp(delta_G[k+1, k]))
+        
+        # Apply this reference to all starting interfaces i > k
+        # For adjacent interfaces, probability is 1.0 by definition
+        for i in range(k+1, n_interfaces):
+            if i == k+1:
+                diffusive_q[i, k] = 1.0  # Adjacent interfaces
+            else:
+                diffusive_q[i, k] = ref_prob  # Non-adjacent interfaces
+    
+    # Step 3: Calculate momentum effects as deviations from diffusive predictions
+    momentum_effects = np.zeros_like(q_matrix)
+    momentum_effects.fill(np.nan)
+    
+    # Calculate relative deviations
+    for i in range(n_interfaces):
+        for k in range(n_interfaces):
+            if i != k and not np.isnan(q_matrix[i, k]) and not np.isnan(diffusive_q[i, k]):
+                # Only consider values with enough samples
+                if q_weights is None or q_weights[i, k] >= min_samples:
+                    # Calculate relative deviation as a percentage
+                    momentum_effects[i, k] = (q_matrix[i, k] - diffusive_q[i, k]) / diffusive_q[i, k]
+    
+    # Step 4: Determine which deviations are significant
+    momentum_significance = np.zeros_like(q_matrix, dtype=bool)
+    
+    for i in range(n_interfaces):
+        for k in range(n_interfaces):
+            if not np.isnan(momentum_effects[i, k]):
+                momentum_significance[i, k] = abs(momentum_effects[i, k]) > momentum_threshold
+    
+    # Step 5: Classify each interface pair
+    pair_classification = []
+    
+    for i in range(n_interfaces-1):
+        # Look at transitions between interfaces i and i+1
+        forward_effect = momentum_effects[i-1, i+1] if i > 0 and not np.isnan(momentum_effects[i-1, i+1]) else 0
+        backward_effect = momentum_effects[i+2, i] if i+2 < n_interfaces and not np.isnan(momentum_effects[i+2, i]) else 0
+        
+        # Check if effects are significant
+        forward_significant = momentum_significance[i-1, i+1] if i > 0 else False
+        backward_significant = momentum_significance[i+2, i] if i+2 < n_interfaces else False
+        
+        # Assess the average strength of momentum effects for this interface pair
+        avg_effect = (abs(forward_effect) + abs(backward_effect)) / 2 if (i > 0 and i+2 < n_interfaces) else \
+                     (abs(forward_effect) if i > 0 else abs(backward_effect))
+        
+        # Check for directional bias in momentum effects
+        if forward_significant or backward_significant:
+            if abs(forward_effect + backward_effect) < 0.2 * (abs(forward_effect) + abs(backward_effect)):
+                # Momentum effects in both directions that nearly cancel out
+                pair_classification.append("symmetric_momentum")
+            elif avg_effect > momentum_threshold * 2:
+                # Strong momentum effects
+                pair_classification.append("strong_momentum")
+            else:
+                # Moderate momentum effects
+                pair_classification.append("momentum_dominated")
+        else:
+            # No significant momentum effects
+            pair_classification.append("free_energy_dominated")
+    
+    # Step 6: Calculate overall system-wide metrics
+    avg_abs_momentum = np.nanmean(np.abs(momentum_effects))
+    sum_momentum = np.nansum(momentum_effects)
+    
+    # Calculate how strong and balanced the momentum effects are
+    if np.isnan(avg_abs_momentum):
+        overall_classification = "insufficient_data"
+    elif avg_abs_momentum < momentum_threshold:
+        overall_classification = "free_energy_dominated"
+    elif abs(sum_momentum) < 0.2 * np.nansum(np.abs(momentum_effects)):
+        overall_classification = "symmetric_momentum_dominated"
+    else:
+        overall_classification = "directional_momentum_dominated"
+    
+    # Analyze flat energy surface with high momenta (special case)
+    avg_abs_free_energy = np.nanmean(np.abs(delta_G))
+    avg_probabilities = np.nanmean([np.nanmean(q_matrix[i, :]) for i in range(n_interfaces)])
+    
+    if avg_abs_free_energy < 0.2 and avg_probabilities > 0.7:
+        # Special case: flat energy with high transition probabilities
+        # This indicates strong momentum effects on a flat landscape
+        if overall_classification == "free_energy_dominated":
+            overall_classification = "flat_high_momentum"
+    
+    return {
+        'free_energy_differences': delta_G,
+        'diffusive_probabilities': diffusive_q,
+        'momentum_effects': momentum_effects,
+        'momentum_significance': momentum_significance,
+        'classification': pair_classification,
+        'overall_classification': overall_classification,
+        'avg_momentum_effect': avg_abs_momentum,
+        'avg_free_energy': avg_abs_free_energy,
+        'avg_probabilities': avg_probabilities
+    }
+
+def visualize_momentum_vs_free_energy(interfaces, analysis_results, q_weights=None, min_samples=5):
+    """
+    Create visualizations for the updated momentum vs free energy analysis.
+    
+    Parameters
+    ----------
+    interfaces : list or array
+        The positions of the interfaces along the reaction coordinate
+    analysis_results : dict
+        Results from the analyze_momentum_vs_free_energy function
+    
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        Figure containing the visualization
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from matplotlib.colors import LinearSegmentedColormap
+    
+    # Create a figure with multiple subplots
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    
+    # Extract components
+    delta_G = analysis_results['free_energy_differences']
+    diffusive_q = analysis_results['diffusive_probabilities']
+    momentum_effects = analysis_results['momentum_effects']
+    momentum_significance = analysis_results['momentum_significance']
+    classification = analysis_results['classification']
+    overall = analysis_results['overall_classification']
+    
+    # Define colors for classifications
+    class_colors = {
+        "free_energy_dominated": 'blue',
+        "momentum_dominated": 'red',
+        "symmetric_momentum": 'purple',
+        "strong_momentum": 'darkred',
+        "flat_high_momentum": 'orange'
+    }
+    
+    colors = [class_colors.get(cls, 'gray') for cls in classification]
+    
+    # Plot 1: Free Energy Profile (top-left)
+    ax1 = axes[0, 0]
+    
+    # Calculate cumulative free energy profile
+    cumulative_G = np.zeros(len(interfaces))
+    for i in range(1, len(interfaces)):
+        # Add up all the delta_G values from the first interface
+        valid_path = True
+        for j in range(i):
+            if np.isnan(delta_G[j, j+1]):
+                valid_path = False
+                break
+            cumulative_G[i] += delta_G[j, j+1]
+        
+        if not valid_path:
+            cumulative_G[i] = np.nan
+    
+    # Plot the free energy profile
+    ax1.plot(interfaces, cumulative_G, 'o-', linewidth=2, color='blue')
+    
+    # Add marker points with annotations
+    for i, (pos, g) in enumerate(zip(interfaces, cumulative_G)):
+        if not np.isnan(g):
+            ax1.plot(pos, g, 'o', markersize=8, color='blue')
+            ax1.text(pos, g + 0.1, f"{g:.2f}", ha='center', va='bottom', fontsize=9)
+    
+    ax1.set_xlabel('Interface Position (λ)')
+    ax1.set_ylabel('Free Energy G(λ) (kT)')
+    ax1.set_title('Free Energy Profile', fontsize=12)
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot 2: Momentum Effect Heatmap (top-right)
+    ax2 = axes[0, 1]
+    
+    # Create a diverging colormap for momentum effects
+    cmap_effect = LinearSegmentedColormap.from_list('momentum_effect', 
+                                                  [(0, 'blue'), (0.5, 'white'), (1, 'red')], N=256)
+    
+    # Create a masked array for NaN values
+    masked_effects = np.ma.masked_invalid(momentum_effects)
+    
+    # Determine color range symmetrically around zero
+    max_effect = np.nanmax(np.abs(momentum_effects))
+    
+    # Plot the heatmap
+    im = ax2.imshow(masked_effects, cmap=cmap_effect, vmin=-max_effect, vmax=max_effect, 
+                   interpolation='none', aspect='auto')
+    
+    # Add colorbar
+    cbar = fig.colorbar(im, ax=ax2, label='Momentum Effect: (observed - diffusive) / diffusive')
+    
+    # Add annotations showing effect values and significance
+    for i in range(len(interfaces)):
+        for j in range(len(interfaces)):
+            if not np.isnan(momentum_effects[i, j]):
+                sig_mark = '*' if momentum_significance[i, j] else ''
+                text = f"{momentum_effects[i, j]:.2f}{sig_mark}"
+                color = 'black' if abs(momentum_effects[i, j]) < 0.5 else 'white'
+                ax2.text(j, i, text, ha='center', va='center', color=color, fontsize=9)
+    
+    ax2.set_xticks(range(len(interfaces)))
+    ax2.set_yticks(range(len(interfaces)))
+    ax2.set_xticklabels([f"{i}" for i in range(len(interfaces))])
+    ax2.set_yticklabels([f"{i}" for i in range(len(interfaces))])
+    ax2.set_xlabel('Target Interface k')
+    ax2.set_ylabel('Starting Interface i')
+    ax2.set_title('Momentum Effects', fontsize=12)
+    
+    # Plot 3: Observed vs Diffusive Probabilities Comparison (bottom-left)
+    ax3 = axes[1, 0]
+    
+    # Collect valid data points
+    valid_points = []
+    for i in range(len(interfaces)):
+        for j in range(len(interfaces)):
+            if i != j and not np.isnan(diffusive_q[i, j]) and not np.isnan(momentum_effects[i, j]):
+                if q_weights is None or q_weights[i, j] >= min_samples:
+                    observed = diffusive_q[i, j] * (1 + momentum_effects[i, j])  # q_matrix value
+                    significant = momentum_significance[i, j]
+                    valid_points.append((diffusive_q[i, j], observed, significant, f"{i}→{j}"))
+    
+    if valid_points:
+        # Unpack the valid points
+        x_vals, y_vals, significance, labels = zip(*valid_points)
+        
+        # Plot the ideal 1:1 line
+        max_val = max(max(x_vals), max(y_vals)) * 1.1
+        min_val = min(min(x_vals), min(y_vals)) * 0.9
+        ax3.plot([min_val, max_val], [min_val, max_val], '--', color='gray', alpha=0.7)
+        
+        # Plot each point, colored by significance
+        for x, y, sig, label in zip(x_vals, y_vals, significance, labels):
+            color = 'red' if sig else 'blue'
+            ax3.scatter(x, y, color=color, s=50, alpha=0.7)
+            ax3.annotate(label, (x, y), xytext=(5, 5), textcoords='offset points', fontsize=8)
+        
+        ax3.set_xlabel('Diffusive Probability (Free Energy Model)')
+        ax3.set_ylabel('Observed Probability')
+        ax3.set_title('Observed vs Diffusive Transition Probabilities', fontsize=12)
+        ax3.set_xlim(min_val, max_val)
+        ax3.set_ylim(min_val, max_val)
+        ax3.grid(True, alpha=0.3)
+        
+        # Add legend
+        ax3.scatter([], [], color='blue', label='Free Energy Dominated')
+        ax3.scatter([], [], color='red', label='Momentum Effects')
+        ax3.legend()
+    else:
+        ax3.text(0.5, 0.5, "Insufficient valid data for comparison",
+                ha='center', va='center', transform=ax3.transAxes)
+    
+    # Plot 4: Interface Pair Classification (bottom-right)
+    ax4 = axes[1, 1]
+    
+    # Plot interface pair classifications as colored bars
+    x = np.arange(len(interfaces) - 1)
+    ax4.bar(x, [1] * len(x), color=colors, alpha=0.7)
+    
+    # Add labels for each interface pair
+    for i, cls in enumerate(classification):
+        ax4.text(i, 0.5, f"{cls.replace('_', '\n')}", 
+               ha='center', va='center', fontsize=8, color='white' if 'momentum' in cls else 'black')
+    
+    ax4.set_xticks(x)
+    ax4.set_xticklabels([f"{i}→{i+1}" for i in range(len(interfaces) - 1)])
+    ax4.set_yticks([])  # No y-ticks needed
+    ax4.set_xlabel('Interface Pair')
+    ax4.set_title('Interface Pair Classification', fontsize=12)
+    
+    # Create custom legend for the classification
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor=class_colors.get('free_energy_dominated', 'blue'), label='Free Energy Dominated'),
+        Patch(facecolor=class_colors.get('momentum_dominated', 'red'), label='Momentum Dominated'),
+        Patch(facecolor=class_colors.get('symmetric_momentum', 'purple'), label='Symmetric Momentum'),
+        Patch(facecolor=class_colors.get('strong_momentum', 'darkred'), label='Strong Momentum Effects'),
+        Patch(facecolor=class_colors.get('flat_high_momentum', 'orange'), label='Flat + High Momentum')
+    ]
+    ax4.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=2)
+    
+    # Add overall classification and metrics as text
+    metrics_text = (
+        f"Overall Classification: {overall.replace('_', ' ').title()}\n"
+        f"Average Momentum Effect: {analysis_results['avg_momentum_effect']:.3f}\n"
+        f"Average Free Energy: {analysis_results['avg_free_energy']:.3f} kT\n"
+        f"Average Probabilities: {analysis_results['avg_probabilities']:.3f}"
+    )
+    fig.text(0.02, 0.02, metrics_text, fontsize=10, wrap=True)
+    
+    # Add overall title
+    plt.suptitle(f"Momentum vs. Free Energy Analysis - {overall.replace('_', ' ').title()}", fontsize=16)
+    
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])  # Adjust for the overall title and metrics text
+    
+    return fig
+
 def analyze_memory_vs_free_energy_effects(interfaces, q_matrix, q_weights=None, min_samples=5, memory_threshold=0.3):
     """
     Analyze whether observed turn-based transition probabilities between interfaces are best explained
@@ -3544,10 +3906,11 @@ def visualize_turn_based_analysis(analysis_results, interfaces, q_matrix, q_weig
     
     return fig
 
-def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_samples=5):
+def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_samples=5, account_for_distances=False):
     """
     Estimate free energy differences between interfaces from conditional crossing probabilities,
-    taking into account physical distances between interfaces.
+    taking into account physical distances between interfaces. When data from immediate neighbors
+    is insufficient, the function progressively tries to use data from more distant interfaces.
     
     Parameters:
     -----------
@@ -3561,6 +3924,9 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
         Matrix of sample counts for each q_matrix value
     min_samples : int, optional
         Minimum number of samples required to consider a q value valid
+    account_for_distances : bool, optional
+        Whether to account for physical distances between interfaces (default: False).
+        If False, interfaces are treated as having uniform spacing regardless of their actual values.
         
     Returns:
     --------
@@ -3571,26 +3937,55 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
     delta_G = np.zeros((n_interfaces, n_interfaces))
     delta_G.fill(np.nan)
     
-    # Check if interfaces have physical values
-    has_physical_distances = isinstance(interfaces[0], (int, float)) and len(interfaces) > 1
+    # Check if interfaces have physical values we can use
+    has_physical_distances = isinstance(interfaces[0], (int, float)) and len(interfaces) > 1 and account_for_distances
     
-    # Calculate interface spacings if available
+    # Calculate interface spacings
     if has_physical_distances:
+        # Calculate distances between each pair of adjacent interfaces
         spacings = np.diff(interfaces)
-        mean_spacing = np.mean(spacings)
-        relative_spacings = spacings / mean_spacing if mean_spacing > 0 else np.ones_like(spacings)
+    else:
+        # Default to unit spacing if no physical values provided or if not accounting for distances
+        spacings = np.ones(n_interfaces - 1)
     
-    # Estimate delta_G from appropriate q-values
+    # Helper function to check if a q value is valid and usable
+    def is_valid_q(i, k):
+        return (not np.isnan(q_matrix[i, k]) and
+                (q_weights is None or q_weights[i, k] >= min_samples) and
+                q_matrix[i, k] > 0 and q_matrix[i, k] < 1)
+    
+    # Helper function to find valid q value by trying progressively more distant interfaces
+    def find_valid_q_forward(start_i, target_k):
+        # Look for valid q values starting from start_i, going backwards
+        i = start_i
+        while i >= 0:
+            if is_valid_q(i, target_k):
+                return i, q_matrix[i, target_k]
+            i -= 1
+        return None, None
+    
+    def find_valid_q_backward(start_i, target_k):
+        # Look for valid q values starting from start_i, going forwards
+        i = start_i
+        while i < n_interfaces:
+            if is_valid_q(i, target_k):
+                return i, q_matrix[i, target_k]
+            i += 1
+        return None, None
     
     # First edge case: between interfaces 0 and 1
     if n_interfaces > 2:
-        # Backward: Use q[2,0] (probability to reach 0 when starting at 2 and having reached 1)
-        valid_backward_01 = (not np.isnan(q_matrix[2, 0]) and
-                           (q_weights is None or q_weights[2, 0] >= min_samples) and
-                           q_matrix[2, 0] > 0 and q_matrix[2, 0] < 1)
-        if valid_backward_01:
-            # Only backward data available
-            dG_01 = np.log(q_matrix[2, 0] / (1 - q_matrix[2, 0]))
+        # Try to find a valid backward q starting from interface 2
+        valid_i, q_to_use = find_valid_q_backward(2, 0)
+        
+        if valid_i is not None:
+            # Adjust for interface spacing: q ~ 1/(1+exp(ΔG * d_ratio))
+            # where d_ratio is the ratio of adjacent interface spacings
+            spacing_ratio = spacings[0] / (spacings[1] + spacings[0]) if has_physical_distances else 0.5
+            
+            # Apply spacing correction: ΔG = ln(q/(1-q)) / spacing_ratio
+            q_corrected = min(0.999, q_to_use * (2 * spacing_ratio))
+            dG_01 = np.log(q_corrected / (1 - q_corrected))
             delta_G[0, 1] = dG_01
             delta_G[1, 0] = -dG_01
     
@@ -3598,27 +3993,31 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
     for i in range(1, n_interfaces-1):  # Skip boundary interfaces (0 and n_interfaces-1)
         # For each interface pair i and i+1
         if i+1 < n_interfaces-1:  # Make sure we're not at the last pair
-            # Forward: Compare q[i-1,i+1] (probability to reach i+1 when starting at i-1 and having reached i)
-            # Backward: Compare q[i+2,i] (probability to reach i when starting at i+2 and having reached i+1)
+            # Forward options: Try progressively more distant interfaces
+            valid_i_forward, q_forward = find_valid_q_forward(i-1, i+1)
             
-            valid_forward = (i-1 >= 0 and  # Make sure i-1 is valid
-                            not np.isnan(q_matrix[i-1, i+1]) and 
-                            (q_weights is None or q_weights[i-1, i+1] >= min_samples) and
-                            q_matrix[i-1, i+1] > 0 and q_matrix[i-1, i+1] < 1)
-                            
-            valid_backward = (i+2 < n_interfaces and  # Make sure i+2 is valid
-                             not np.isnan(q_matrix[i+2, i]) and 
-                             (q_weights is None or q_weights[i+2, i] >= min_samples) and
-                             q_matrix[i+2, i] > 0 and q_matrix[i+2, i] < 1)
+            # Backward options: Try progressively more distant interfaces
+            valid_i_backward, q_backward = find_valid_q_backward(i+2, i)
             
-            if valid_forward and valid_backward:
-                # For a diffusive system, the ratio of these probabilities relates to 
-                # the free energy difference between i and i+1
+            if valid_i_forward is not None and valid_i_backward is not None:
+                # Calculate spacing ratios for forward and backward transitions
+                if has_physical_distances:
+                    # For forward: comparing the distance from i to i+1 with the distance from i-1 to i
+                    forward_spacing_ratio = spacings[i] / (spacings[i-1] + spacings[i])
+                    # For backward: comparing the distance from i to i+1 with the distance from i+1 to i+2
+                    backward_spacing_ratio = spacings[i] / (spacings[i+1] + spacings[i])
+                else:
+                    forward_spacing_ratio = 0.5
+                    backward_spacing_ratio = 0.5
                 
-                # Convert q values to free energy using the Arrhenius relationship
-                # q/(1-q) = exp(-ΔG) -> ΔG = -ln(q/(1-q))
-                dG_forward = -np.log(q_matrix[i-1, i+1] / (1 - q_matrix[i-1, i+1]))
-                dG_backward = -np.log(q_matrix[i+2, i] / (1 - q_matrix[i+2, i]))
+                # Correct q values using spacing ratios
+                # In a diffusive system, q scales with exp(-ΔG * d/d_ref) where d is distance
+                q_forward_corrected = min(0.999, q_forward * (2 * forward_spacing_ratio))
+                q_backward_corrected = min(0.999, q_backward * (2 * backward_spacing_ratio))
+                
+                # Convert corrected q values to free energy
+                dG_forward = -np.log(q_forward_corrected / (1 - q_forward_corrected))
+                dG_backward = -np.log(q_backward_corrected / (1 - q_backward_corrected))
                 
                 # Average the forward and backward estimates
                 dG_avg = (dG_forward - dG_backward) / 2
@@ -3626,34 +4025,45 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
                 # Assign to delta_G matrix
                 delta_G[i, i+1] = dG_avg
                 delta_G[i+1, i] = -dG_avg
-            elif valid_forward:
+            elif valid_i_forward is not None:
                 # Only forward data available
-                dG = -np.log(q_matrix[i-1, i+1] / (1 - q_matrix[i-1, i+1]))
+                if has_physical_distances:
+                    forward_spacing_ratio = spacings[i] / (spacings[i-1] + spacings[i])
+                else:
+                    forward_spacing_ratio = 0.5
+                
+                q_forward_corrected = min(0.999, q_forward * (2 * forward_spacing_ratio))
+                dG = -np.log(q_forward_corrected / (1 - q_forward_corrected))
                 delta_G[i, i+1] = dG
                 delta_G[i+1, i] = -dG
-            elif valid_backward:
+            elif valid_i_backward is not None:
                 # Only backward data available
-                dG = np.log(q_matrix[i+2, i] / (1 - q_matrix[i+2, i]))
+                if has_physical_distances:
+                    backward_spacing_ratio = spacings[i] / (spacings[i+1] + spacings[i])
+                else:
+                    backward_spacing_ratio = 0.5
+                
+                q_backward_corrected = min(0.999, q_backward * (2 * backward_spacing_ratio))
+                dG = np.log(q_backward_corrected / (1 - q_backward_corrected))
                 delta_G[i, i+1] = dG
                 delta_G[i+1, i] = -dG
     
     # Second edge case: between interfaces n_interfaces-2 and n_interfaces-1 (last pair)
     if n_interfaces > 2:
-        # Forward: Use q[n_interfaces-3, n_interfaces-1]
-        valid_forward_last = (n_interfaces-3 >= 0 and
-                             not np.isnan(q_matrix[n_interfaces-3, n_interfaces-1]) and
-                             (q_weights is None or q_weights[n_interfaces-3, n_interfaces-1] >= min_samples) and
-                             q_matrix[n_interfaces-3, n_interfaces-1] > 0 and 
-                             q_matrix[n_interfaces-3, n_interfaces-1] < 1)
+        # Try to find a valid forward q starting from interface n_interfaces-3 and going backwards
+        valid_i, q_last = find_valid_q_forward(n_interfaces-3, n_interfaces-1)
         
-        if valid_forward_last:
-            dG_last = -np.log(q_matrix[n_interfaces-3, n_interfaces-1] / 
-                            (1 - q_matrix[n_interfaces-3, n_interfaces-1]))
+        if valid_i is not None:
+            # Apply spacing correction for last transition
+            if has_physical_distances:
+                forward_spacing_ratio = spacings[-1] / (spacings[-2] + spacings[-1]) 
+            else:
+                forward_spacing_ratio = 0.5
+            
+            q_corrected = min(0.999, q_last * (2 * forward_spacing_ratio))
+            dG_last = -np.log(q_corrected / (1 - q_corrected))
             delta_G[n_interfaces-2, n_interfaces-1] = dG_last
             delta_G[n_interfaces-1, n_interfaces-2] = -dG_last
-    
-    # No longer attempting to fill in NaN values with defaults
-    # This ensures that NaN values remain NaN and won't be plotted
     
     return delta_G
 
