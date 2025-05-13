@@ -410,7 +410,7 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
         tau_m = tau - tau1 - tau2
 
         # Compute Mean First Passage Time (MFPT) and global cross probability
-        _, _, h1, _ = mfpt_to_first_last_state(M, tau1, tau_m, tau2)
+        _, _, h1, _ = mfpt_to_first_last_state(M, np.nan_to_num(tau1), np.nan_to_num(tau_m), np.nan_to_num(tau2))
         _, _, y1, _ = global_pcross_msm(M)
 
         # Print cycle information
