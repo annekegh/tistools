@@ -3906,11 +3906,11 @@ def visualize_turn_based_analysis(analysis_results, interfaces, q_matrix, q_weig
     
     return fig
 
-def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_samples=5, account_for_distances=False):
+def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_samples=5, account_for_distances=True):
     """
     Estimate free energy differences between interfaces from conditional crossing probabilities,
-    taking into account physical distances between interfaces. When data from immediate neighbors
-    is insufficient, the function progressively tries to use data from more distant interfaces.
+    taking into account physical distances between interfaces. Uses only the first valid forward
+    and backward estimates (closest to the transition) to eliminate biases from long-term memory effects.
     
     Parameters:
     -----------
@@ -3918,14 +3918,14 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
         The positions of the interfaces along the reaction coordinate
     q_matrix : numpy.ndarray
         Matrix of conditional crossing probabilities where q[i,k] is the probability
-        that a path starting at interface i and reaching k-1 (for i<k) or k+1 (for i>k)
-        will reach interface k.
+        that a path starting with a turn at interface i and reaching k-1 (for i<k) 
+        or k+1 (for i>k) will make a turn at interface k
     q_weights : numpy.ndarray, optional
         Matrix of sample counts for each q_matrix value
     min_samples : int, optional
         Minimum number of samples required to consider a q value valid
     account_for_distances : bool, optional
-        Whether to account for physical distances between interfaces (default: False).
+        Whether to account for physical distances between interfaces (default: True).
         If False, interfaces are treated as having uniform spacing regardless of their actual values.
         
     Returns:
@@ -3940,130 +3940,88 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
     # Check if interfaces have physical values we can use
     has_physical_distances = isinstance(interfaces[0], (int, float)) and len(interfaces) > 1 and account_for_distances
     
-    # Calculate interface spacings
-    if has_physical_distances:
-        # Calculate distances between each pair of adjacent interfaces
-        spacings = np.diff(interfaces)
-    else:
-        # Default to unit spacing if no physical values provided or if not accounting for distances
-        spacings = np.ones(n_interfaces - 1)
-    
     # Helper function to check if a q value is valid and usable
     def is_valid_q(i, k):
         return (not np.isnan(q_matrix[i, k]) and
                 (q_weights is None or q_weights[i, k] >= min_samples) and
                 q_matrix[i, k] > 0 and q_matrix[i, k] < 1)
     
-    # Helper function to find valid q value by trying progressively more distant interfaces
-    def find_valid_q_forward(start_i, target_k):
-        # Look for valid q values starting from start_i, going backwards
-        i = start_i
-        while i >= 0:
-            if is_valid_q(i, target_k):
-                return i, q_matrix[i, target_k]
-            i -= 1
-        return None, None
-    
-    def find_valid_q_backward(start_i, target_k):
-        # Look for valid q values starting from start_i, going forwards
-        i = start_i
-        while i < n_interfaces:
-            if is_valid_q(i, target_k):
-                return i, q_matrix[i, target_k]
-            i += 1
-        return None, None
-    
-    # First edge case: between interfaces 0 and 1
-    if n_interfaces > 2:
-        # Try to find a valid backward q starting from interface 2
-        valid_i, q_to_use = find_valid_q_backward(2, 0)
+    # For each pair of adjacent interfaces, estimate the free energy difference
+    for i in range(n_interfaces - 1):
+        forward_estimate = None
+        backward_estimate = None
         
-        if valid_i is not None:
-            # Adjust for interface spacing: q ~ 1/(1+exp(ΔG * d_ratio))
-            # where d_ratio is the ratio of adjacent interface spacings
-            spacing_ratio = spacings[0] / (spacings[1] + spacings[0]) if has_physical_distances else 0.5
-            
-            # Apply spacing correction: ΔG = ln(q/(1-q)) / spacing_ratio
-            q_corrected = min(0.999, q_to_use * (2 * spacing_ratio))
-            dG_01 = np.log(q_corrected / (1 - q_corrected))
-            delta_G[0, 1] = dG_01
-            delta_G[1, 0] = -dG_01
-    
-    # Middle interfaces
-    for i in range(1, n_interfaces-1):  # Skip boundary interfaces (0 and n_interfaces-1)
-        # For each interface pair i and i+1
-        if i+1 < n_interfaces-1:  # Make sure we're not at the last pair
-            # Forward options: Try progressively more distant interfaces
-            valid_i_forward, q_forward = find_valid_q_forward(i-1, i+1)
-            
-            # Backward options: Try progressively more distant interfaces
-            valid_i_backward, q_backward = find_valid_q_backward(i+2, i)
-            
-            if valid_i_forward is not None and valid_i_backward is not None:
-                # Calculate spacing ratios for forward and backward transitions
-                if has_physical_distances:
-                    # For forward: comparing the distance from i to i+1 with the distance from i-1 to i
-                    forward_spacing_ratio = spacings[i] / (spacings[i-1] + spacings[i])
-                    # For backward: comparing the distance from i to i+1 with the distance from i+1 to i+2
-                    backward_spacing_ratio = spacings[i] / (spacings[i+1] + spacings[i])
+        # Forward cascade: try q[i-1,i+1], then q[i-2,i+1], etc.
+        # Only take the first valid estimate (closest to the transition)
+        for start in range(i-1, -1, -1):  # Start from i-1 and go backwards to 0
+            if is_valid_q(start, i+1):
+                # First valid forward transition from 'start' to i+1 (going through i)
+                q_fw = q_matrix[start, i+1]
+                weight = q_weights[start, i+1] if q_weights is not None else 1.0
+                
+                # Adjust for physical distances
+                if has_physical_distances and i > 0:
+                    dist_i_to_ip1 = interfaces[i+1] - interfaces[i]
+                    dist_im1_to_i = interfaces[i] - interfaces[i-1]
+                    distance_ratio = dist_i_to_ip1 / dist_im1_to_i if dist_im1_to_i > 0 else 1.0
+                    q_corr = q_fw ** (1/distance_ratio)
+                    dG = -np.log(q_corr / (1 - q_corr))
                 else:
-                    forward_spacing_ratio = 0.5
-                    backward_spacing_ratio = 0.5
+                    dG = -np.log(q_fw / (1 - q_fw))
                 
-                # Correct q values using spacing ratios
-                # In a diffusive system, q scales with exp(-ΔG * d/d_ref) where d is distance
-                q_forward_corrected = min(0.999, q_forward * (2 * forward_spacing_ratio))
-                q_backward_corrected = min(0.999, q_backward * (2 * backward_spacing_ratio))
-                
-                # Convert corrected q values to free energy
-                dG_forward = -np.log(q_forward_corrected / (1 - q_forward_corrected))
-                dG_backward = -np.log(q_backward_corrected / (1 - q_backward_corrected))
-                
-                # Average the forward and backward estimates
-                dG_avg = (dG_forward - dG_backward) / 2
-                
-                # Assign to delta_G matrix
-                delta_G[i, i+1] = dG_avg
-                delta_G[i+1, i] = -dG_avg
-            elif valid_i_forward is not None:
-                # Only forward data available
-                if has_physical_distances:
-                    forward_spacing_ratio = spacings[i] / (spacings[i-1] + spacings[i])
-                else:
-                    forward_spacing_ratio = 0.5
-                
-                q_forward_corrected = min(0.999, q_forward * (2 * forward_spacing_ratio))
-                dG = -np.log(q_forward_corrected / (1 - q_forward_corrected))
-                delta_G[i, i+1] = dG
-                delta_G[i+1, i] = -dG
-            elif valid_i_backward is not None:
-                # Only backward data available
-                if has_physical_distances:
-                    backward_spacing_ratio = spacings[i] / (spacings[i+1] + spacings[i])
-                else:
-                    backward_spacing_ratio = 0.5
-                
-                q_backward_corrected = min(0.999, q_backward * (2 * backward_spacing_ratio))
-                dG = np.log(q_backward_corrected / (1 - q_backward_corrected))
-                delta_G[i, i+1] = dG
-                delta_G[i+1, i] = -dG
-    
-    # Second edge case: between interfaces n_interfaces-2 and n_interfaces-1 (last pair)
-    if n_interfaces > 2:
-        # Try to find a valid forward q starting from interface n_interfaces-3 and going backwards
-        valid_i, q_last = find_valid_q_forward(n_interfaces-3, n_interfaces-1)
+                forward_estimate = dG
+                print(f"Forward ΔG estimate for interfaces {i}-{i+1}: {dG:.4f} using q[{start},{i+1}]={q_fw:.4f}, weight={weight:.1f}")
+                break  # Take only the first valid estimate
         
-        if valid_i is not None:
-            # Apply spacing correction for last transition
-            if has_physical_distances:
-                forward_spacing_ratio = spacings[-1] / (spacings[-2] + spacings[-1]) 
-            else:
-                forward_spacing_ratio = 0.5
+        # Backward cascade: try q[i+2,i], then q[i+3,i], etc.
+        # Only take the first valid estimate (closest to the transition)
+        for start in range(i+2, n_interfaces):
+            if is_valid_q(start, i):
+                # First valid backward transition from 'start' to i (going through i+1)
+                q_bw = q_matrix[start, i]
+                weight = q_weights[start, i] if q_weights is not None else 1.0
+                
+                # Adjust for physical distances
+                if has_physical_distances and i+1 < n_interfaces-1:
+                    dist_ip1_to_i = interfaces[i+1] - interfaces[i]
+                    dist_ip2_to_ip1 = interfaces[i+2] - interfaces[i+1]
+                    distance_ratio = dist_ip1_to_i / dist_ip2_to_ip1 if dist_ip2_to_ip1 > 0 else 1.0
+                    q_corr = q_bw ** (1/distance_ratio)
+                    dG = np.log(q_corr / (1 - q_corr))
+                else:
+                    dG = np.log(q_bw / (1 - q_bw))
+                
+                backward_estimate = dG
+                print(f"Backward ΔG estimate for interfaces {i}-{i+1}: {dG:.4f} using q[{start},{i}]={q_bw:.4f}, weight={weight:.1f}")
+                break  # Take only the first valid estimate
+        
+        # Combine forward and backward estimates if available
+        if forward_estimate is not None and backward_estimate is not None:
+            # Take the average of the forward and backward estimates
+            # This helps eliminate biases from the timestep
+            combined_dG = (forward_estimate + backward_estimate) / 2.0
             
-            q_corrected = min(0.999, q_last * (2 * forward_spacing_ratio))
-            dG_last = -np.log(q_corrected / (1 - q_corrected))
-            delta_G[n_interfaces-2, n_interfaces-1] = dG_last
-            delta_G[n_interfaces-1, n_interfaces-2] = -dG_last
+            # Report the difference to highlight any systematic bias
+            bias = forward_estimate - backward_estimate
+            print(f"Combined ΔG for interfaces {i}-{i+1}: {combined_dG:.4f} (forward-backward bias: {bias:.4f})")
+            
+            delta_G[i, i+1] = combined_dG
+            delta_G[i+1, i] = -combined_dG
+            
+        elif forward_estimate is not None:
+            # Only forward estimate available
+            delta_G[i, i+1] = forward_estimate
+            delta_G[i+1, i] = -forward_estimate
+            print(f"Using only forward estimate for interfaces {i}-{i+1}: {forward_estimate:.4f}")
+            
+        elif backward_estimate is not None:
+            # Only backward estimate available
+            delta_G[i, i+1] = backward_estimate
+            delta_G[i+1, i] = -backward_estimate
+            print(f"Using only backward estimate for interfaces {i}-{i+1}: {backward_estimate:.4f}")
+            
+        else:
+            print(f"No valid estimates found for interfaces {i}-{i+1}")
     
     return delta_G
 
