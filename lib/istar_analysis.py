@@ -3007,7 +3007,7 @@ def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_sa
     n_interfaces = len(interfaces)
     
     # Step 1: Estimate free energy differences between interfaces
-    delta_G = estimate_free_energy_differences(interfaces, q_matrix, q_weights, min_samples)
+    delta_G = estimate_free_energy_differences(interfaces, q_matrix, q_weights, min_samples, account_for_distances=True)
     
     # Step 2: Calculate diffusive reference probabilities based on free energy
     diffusive_q = np.zeros_like(q_matrix)
@@ -3017,37 +3017,64 @@ def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_sa
     for i in range(n_interfaces):
         diffusive_q[i, i] = 0.0
     
+    # Check if interfaces have physical values we can use for geometric corrections
+    has_physical_distances = isinstance(interfaces[0], (int, float)) and len(interfaces) > 1
+    
     # Create reference probabilities for forward transitions (i<k)
     for k in range(1, n_interfaces):
-        ref_prob = 0.5  # Default value
-        
-        # Use Boltzmann factor for the free energy difference between k-1 and k
-        if not np.isnan(delta_G[k-1, k]):
-            ref_prob = 1.0 / (1.0 + np.exp(delta_G[k-1, k]))
-        
-        # Apply this reference to all starting interfaces i < k
-        # For adjacent interfaces, probability is 1.0 by definition
         for i in range(k):
             if i == k-1:
-                diffusive_q[i, k] = 1.0  # Adjacent interfaces
+                # Adjacent interfaces always have probability 1.0
+                diffusive_q[i, k] = 1.0
             else:
-                diffusive_q[i, k] = ref_prob  # Non-adjacent interfaces
+                # Non-adjacent interfaces use the diffusive reference with geometric correction
+                ref_prob = 0.5  # Default value
+                
+                # Use Boltzmann factor for the free energy difference between k-1 and k
+                if not np.isnan(delta_G[k-1, k]):
+                    # Apply geometric correction if we have physical interface positions
+                    if has_physical_distances and k > 1:
+                        # Calculate distance-based geometric expected probability
+                        dist_km1_to_k = interfaces[k] - interfaces[k-1]
+                        dist_km2_to_km1 = interfaces[k-1] - interfaces[k-2] if k > 1 else dist_km1_to_k
+                        geo_q = dist_km2_to_km1 / (dist_km1_to_k + dist_km2_to_km1) if (dist_km1_to_k + dist_km2_to_km1) > 0 else 0.5
+                        
+                        # Combine geometric factor with free energy difference
+                        # For forward transitions: P = 1/(1 + exp(ΔG))
+                        ref_prob = 1.0 / (1.0 + np.exp(delta_G[k-1, k]) * (1-geo_q)/geo_q)
+                    else:
+                        # Without geometry, just use free energy
+                        ref_prob = 1.0 / (1.0 + np.exp(delta_G[k-1, k]))
+                
+                diffusive_q[i, k] = ref_prob
     
     # Create reference probabilities for backward transitions (i>k)
     for k in range(n_interfaces-1):
-        ref_prob = 0.5  # Default value
-        
-        # Use Boltzmann factor for the free energy difference between k and k+1
-        if not np.isnan(delta_G[k+1, k]):
-            ref_prob = 1.0 / (1.0 + np.exp(delta_G[k+1, k]))
-        
-        # Apply this reference to all starting interfaces i > k
-        # For adjacent interfaces, probability is 1.0 by definition
         for i in range(k+1, n_interfaces):
             if i == k+1:
-                diffusive_q[i, k] = 1.0  # Adjacent interfaces
+                # Adjacent interfaces always have probability 1.0
+                diffusive_q[i, k] = 1.0
             else:
-                diffusive_q[i, k] = ref_prob  # Non-adjacent interfaces
+                # Non-adjacent interfaces use the diffusive reference with geometric correction
+                ref_prob = 0.5  # Default value
+                
+                # Use Boltzmann factor for the free energy difference between k and k+1
+                if not np.isnan(delta_G[k, k+1]):
+                    # Apply geometric correction if we have physical interface positions
+                    if has_physical_distances and k+2 < n_interfaces:
+                        # Calculate distance-based geometric expected probability
+                        dist_k_to_kp1 = interfaces[k+1] - interfaces[k]
+                        dist_kp1_to_kp2 = interfaces[k+2] - interfaces[k+1] if k+2 < n_interfaces else dist_k_to_kp1
+                        geo_q = dist_kp1_to_kp2 / (dist_k_to_kp1 + dist_kp1_to_kp2) if (dist_k_to_kp1 + dist_kp1_to_kp2) > 0 else 0.5
+                        
+                        # Combine geometric factor with free energy difference
+                        # For backward transitions: P = 1/(1 + exp(-ΔG))
+                        ref_prob = 1.0 / (1.0 + np.exp(-delta_G[k, k+1]) * (1-geo_q)/geo_q)
+                    else:
+                        # Without geometry, just use free energy
+                        ref_prob = 1.0 / (1.0 + np.exp(-delta_G[k, k+1]))
+                
+                diffusive_q[i, k] = ref_prob
     
     # Step 3: Calculate momentum effects as deviations from diffusive predictions
     momentum_effects = np.zeros_like(q_matrix)
@@ -3963,9 +3990,10 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
                 if has_physical_distances and i > 0:
                     dist_i_to_ip1 = interfaces[i+1] - interfaces[i]
                     dist_im1_to_i = interfaces[i] - interfaces[i-1]
-                    distance_ratio = dist_i_to_ip1 / dist_im1_to_i if dist_im1_to_i > 0 else 1.0
-                    q_corr = q_fw ** (1/distance_ratio)
-                    dG = -np.log(q_corr / (1 - q_corr))
+                    geo_q = dist_im1_to_i / (dist_i_to_ip1 + dist_im1_to_i) if (dist_i_to_ip1 + dist_im1_to_i) > 0 else 1.0
+                    dG_obs = -np.log(q_fw / (1 - q_fw))
+                    dG_geo = -np.log(geo_q / (1 - geo_q))
+                    dG = dG_obs - dG_geo
                 else:
                     dG = -np.log(q_fw / (1 - q_fw))
                 
@@ -3985,9 +4013,10 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
                 if has_physical_distances and i+1 < n_interfaces-1:
                     dist_ip1_to_i = interfaces[i+1] - interfaces[i]
                     dist_ip2_to_ip1 = interfaces[i+2] - interfaces[i+1]
-                    distance_ratio = dist_ip1_to_i / dist_ip2_to_ip1 if dist_ip2_to_ip1 > 0 else 1.0
-                    q_corr = q_bw ** (1/distance_ratio)
-                    dG = np.log(q_corr / (1 - q_corr))
+                    geo_q = dist_ip2_to_ip1 / (dist_ip2_to_ip1 + dist_ip1_to_i) if (dist_ip2_to_ip1 + dist_ip1_to_i) > 0 else 1.0
+                    dG_obs = np.log(q_bw / (1 - q_bw))
+                    dG_geo = np.log(geo_q / (1 - geo_q))
+                    dG = dG_obs - dG_geo
                 else:
                     dG = np.log(q_bw / (1 - q_bw))
                 
