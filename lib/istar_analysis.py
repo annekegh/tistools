@@ -2042,7 +2042,6 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
         - fig2: Forward/backward probability plots with memory retention bar charts
         - fig3: Memory decay profiles and additional visualizations
     """
-    import numpy as np
     import matplotlib.pyplot as plt
     from matplotlib.colors import LinearSegmentedColormap
     import matplotlib.gridspec as gridspec
@@ -3003,7 +3002,6 @@ def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_sa
         - 'classification': Classification of each interface as free-energy-dominated or momentum-dominated
         - 'overall_classification': Overall assessment of the system
     """
-    import numpy as np
     n_interfaces = len(interfaces)
     
     # Step 1: Estimate free energy differences between interfaces
@@ -3180,7 +3178,6 @@ def visualize_momentum_vs_free_energy(interfaces, analysis_results, q_weights=No
     fig : matplotlib.figure.Figure
         Figure containing the visualization
     """
-    import numpy as np
     import matplotlib.pyplot as plt
     import seaborn as sns
     from matplotlib.colors import LinearSegmentedColormap
@@ -3410,10 +3407,7 @@ def analyze_memory_vs_free_energy_effects(interfaces, q_matrix, q_weights=None, 
     
     Memory effects in turn-based dynamics often indicate the presence of hidden slow variables
     or complex kinetics that aren't captured by the chosen reaction coordinate.
-    """
-    import numpy as np
-    import matplotlib.pyplot as plt
-    
+    """    
     n_interfaces = len(interfaces)
     
     # Step 1: Estimate free energy differences between adjacent interfaces
@@ -3578,9 +3572,7 @@ def analyze_turn_persistence(q_matrix, q_weights=None, min_samples=5):
     -------
     dict
         Dictionary containing turn persistence metrics
-    """
-    import numpy as np
-    
+    """    
     n_interfaces = q_matrix.shape[0]
     
     # Calculate average turn skipping - how many interfaces we typically jump over when making turns
@@ -3695,8 +3687,6 @@ def visualize_turn_based_analysis(analysis_results, interfaces, q_matrix, q_weig
     fig : matplotlib.figure.Figure
         Figure containing the visualization
     """
-    import numpy as np
-    import matplotlib.pyplot as plt
     import seaborn as sns
     from matplotlib.colors import LinearSegmentedColormap
     
@@ -4189,8 +4179,6 @@ def plot_destination_bias(p, interfaces=None, ax_forward=None, ax_backward=None,
     tuple
         (ax_forward, ax_backward): The axes containing the forward and backward plots
     """
-    import numpy as np
-    import matplotlib.pyplot as plt
     import seaborn as sns
     
     n_interfaces = p.shape[0]
@@ -4311,9 +4299,7 @@ def plot_destination_bias(p, interfaces=None, ax_forward=None, ax_backward=None,
 
 def plot_directional_bias(ax, x_values, avg_destinations, expected_destinations, bias, valid_mask,
                        title, direction, interfaces, is_equidistant, state_labels=None):
-    """Helper function to create a directional bias plot on the given axes"""
-    import numpy as np
-    
+    """Helper function to create a directional bias plot on the given axes"""    
     n_interfaces = len(x_values)
     
     if state_labels is None:
@@ -4424,12 +4410,10 @@ def analyze_network_connectivity(M, source_state=0, sink_state=-1, max_paths=10)
     dict
         Dictionary containing connectivity analysis results
     """
-    import numpy as np
     from scipy import sparse
     from scipy.sparse.csgraph import connected_components, shortest_path
     import networkx as nx
-    import matplotlib.pyplot as plt
-    
+
     n_states = M.shape[0]
     sink_idx = n_states - 1 if sink_state == -1 else sink_state
     
@@ -4609,9 +4593,7 @@ def find_network_bottlenecks(M, source_state=0, sink_state=-1):
     dict
         Dictionary containing bottleneck analysis results
     """
-    import numpy as np
     import networkx as nx
-    import matplotlib.pyplot as plt
     
     n_states = M.shape[0]
     sink_idx = n_states - 1 if sink_state == -1 else sink_state
@@ -4702,10 +4684,7 @@ def calculate_effective_transitions(M, source_state=0, sink_state=-1, max_steps=
     -------
     dict
         Dictionary containing effective transition probabilities and paths
-    """
-    import numpy as np
-    import matplotlib.pyplot as plt
-    
+    """    
     n_states = M.shape[0]
     sink_idx = n_states - 1 if sink_state == -1 else sink_state
     
