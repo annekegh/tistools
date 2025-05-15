@@ -1,4 +1,15 @@
-# functions to construct and analyse an MSM based on the ensembles
+"""
+Functions to construct and analyse an MSM based on the ensembles.
+
+In the paper, N+1 represents the number of interfaces, while in this code N directly 
+represents the number of interfaces. This leads to formula differences:
+- In the code: NS = 4*N - 5 (where N is the number of interfaces)
+- In the paper: NS = 4*(N-1) - 1 = 4*N - 5 (where N+1 is the number of interfaces)
+
+Both formulations ultimately yield the same result, but with different parameter interpretations.
+
+Elias W, May 2025
+"""
 import numpy as np
 
 #======================================
@@ -341,13 +352,13 @@ def global_pcross_msm(M, doprint=False):
 # Mean first passage times
 #======================================
 
-def mfpt_to_absorbing_states(M, tau1, taum, tau2, absor, kept, doprint=False, remove="m"):
+def mfpt_to_absorbing_states(M, tau1, taum, tau2, absor, kept, doprint=False, remove_initial_m=True):
     """
     Compute the mean first passage time (MFPT) to absorbing states.
 
     This function calculates the MFPT to reach any of the specified absorbing states 
     in a Markov process, both unconditionally (G) and conditionally on leaving the 
-    current state (H). Time is measured in discrete steps.
+    current state (H).
 
     Parameters
     ----------
@@ -362,34 +373,38 @@ def mfpt_to_absorbing_states(M, tau1, taum, tau2, absor, kept, doprint=False, re
     absor : list or np.ndarray
         Indices of absorbing states.
     kept : list or np.ndarray
-        Indices of transient (non-absorbing) states.
+        Indices of nonboundary (non-absorbing) states.
     doprint : bool, optional
         If True, prints intermediate computation details. Default is False.
-    remove : str, optional
-        Determines whether to remove a specific part of the MFPT:
-        - "m" (default): Remove the middle part (taum) from the first passage time.
+    remove_initial_m : bool or str, optional
+        If True or "m", the middle part (taum) is removed from the initial state's MFPT.
+        Default is True.
 
     Raises
     ------
     ValueError
         If the transition matrix has fewer than three states.
-        If the absorbing and transient states do not partition the state space.
+        If the absorbing and nonboundary states do not partition the state space.
 
     Returns
     -------
     g1 : np.ndarray
         An array of size (n_absorb, 1) containing unconditional MFPTs for absorbing states.
     g2 : np.ndarray
-        An array of size (n_kept, 1) containing unconditional MFPTs for transient states.
+        An array of size (n_kept, 1) containing unconditional MFPTs for nonboundary states.
     h1 : np.ndarray
         An array of size (n_absorb, 1) containing conditional MFPTs for absorbing states.
     h2 : np.ndarray
-        An array of size (n_kept, 1) containing conditional MFPTs for transient states.
+        An array of size (n_kept, 1) containing conditional MFPTs for nonboundary states.
 
     Notes
     -----
     - The function avoids explicit matrix inversion for numerical stability.
-    - If `remove="m"`, the middle part of the first passage time is subtracted.
+    - For absorbing states, g1 is initialized to zero (boundary condition).
+    - For nonboundary states, g2 is found by solving the system (I - Mp) g2 = D g1 + tp,
+      where tp is the average time from nonboundary states.
+    - If remove_initial_m is enabled, the middle time component (taum) is subtracted
+      from the conditional MFPT calculations.
     """
     taum2 = taum + tau2  # Total time excluding the initial phase
 
@@ -400,35 +415,35 @@ def mfpt_to_absorbing_states(M, tau1, taum, tau2, absor, kept, doprint=False, re
     check_valid_indices(M, absor, kept)
 
     if len(M) != len(absor) + len(kept):
-        raise ValueError("The number of states must be the sum of absorbing and transient states.")
+        raise ValueError("The number of states must be the sum of absorbing and nonboundary states.")
 
-    # Extract the submatrix for transient states
+    # Extract the submatrix for nonboundary states
     Mp = np.take(np.take(M, kept, axis=0), kept, axis=1)
 
-    # Extract transition probabilities between transient and absorbing states
-    D = np.take(np.take(M, kept, axis=0), absor, axis=1)  # Transitions from transient to absorbing states
-    E = np.take(np.take(M, absor, axis=0), kept, axis=1)  # Transitions from absorbing to transient states
+    # Extract transition probabilities between nonboundary and absorbing states
+    D = np.take(np.take(M, kept, axis=0), absor, axis=1)  # Transitions from nonboundary to absorbing states
+    E = np.take(np.take(M, absor, axis=0), kept, axis=1)  # Transitions from absorbing to nonboundary states
     M11 = np.take(np.take(M, absor, axis=0), absor, axis=1)  # Transitions within absorbing states
 
     a = np.identity(len(Mp)) - Mp  # Compute (I - Mp) for solving equations
 
     # Construct time vectors
-    t1 = taum2[absor].reshape(len(absor), 1)  # Time to absorption from absorbing states
-    tp = taum2[kept].reshape(len(kept), 1)  # Time to absorption from transient states
-    st1 = taum[absor].reshape(len(absor), 1)  # Middle part of the first passage time
-    stp = taum[kept].reshape(len(kept), 1)  # Middle part for transient states
+    # (m2) is the sum of the middle part (m) and the end part (2)
+    t1 = taum2[absor].reshape(len(absor), 1)  # Average time (m2) from absorbing states
+    tp = taum2[kept].reshape(len(kept), 1)  # Average time (m2) from nonboundary states
+    st1 = taum[absor].reshape(len(absor), 1)  # Average time of middle part (m) of the absorbing state
+    stp = taum[kept].reshape(len(kept), 1)  # Average time of middle part (m) for nonboundary states
 
     # Compute G vector (unconditional MFPT)
     g1 = np.zeros((len(absor), 1))  # Boundary condition: g1 is initialized to zero
     g2 = np.linalg.solve(a, np.dot(D, g1) + tp)  # Solve (I - Mp) g2 = D g1 + tp
 
     # Compute H vector (conditional MFPT)
-    h1 = np.dot(M11, g1) + np.dot(E, g2) + t1
-    h2 = np.dot(D, g1) + np.dot(Mp, g2) + tp
+    h1 = np.dot(M11, g1) + np.dot(E, g2) + t1  # Conditional MFPT for absorbing states
+    h2 = np.dot(D, g1) + np.dot(Mp, g2) + tp  # Conditional MFPT for nonboundary states
 
-    # Remove the middle passage time part if specified
-    # TODO: more documentation?
-    if remove == "m":
+    # Remove the average time of middle part (m) of the initial state if specified
+    if remove_initial_m:
         h1 -= st1
         h2 -= stp
 
@@ -485,11 +500,11 @@ def mfpt_to_first_last_state(M, tau1, taum, tau2, doprint=False):
     g1 : np.ndarray
         MFPT for the absorbing states (0 and NS-1).
     g2 : np.ndarray
-        MFPT for transient states.
+        MFPT for nonboundary states.
     h1 : np.ndarray
         Conditional MFPT for the absorbing states.
     h2 : np.ndarray
-        Conditional MFPT for transient states.
+        Conditional MFPT for nonboundary states.
 
     Notes
     -----
@@ -505,7 +520,7 @@ def mfpt_to_first_last_state(M, tau1, taum, tau2, doprint=False):
     absor = np.array([0, NS - 1])
     kept = np.array([i for i in range(NS) if i not in absor])
 
-    return mfpt_to_absorbing_states(M, tau1, taum, tau2, absor, kept, doprint=doprint, remove="m")
+    return mfpt_to_absorbing_states(M, tau1, taum, tau2, absor, kept, doprint=doprint, remove_initial_m="m")
 
 
 #======================================
@@ -526,7 +541,7 @@ def check_valid_indices(M, absor, kept):
     absor : array-like
         Indices of absorbing states.
     kept : array-like
-        Indices of non-absorbing (transient) states.
+        Indices of non-absorbing (nonboundary) states.
 
     Raises
     ------
@@ -564,12 +579,12 @@ def check_valid_indices(M, absor, kept):
 
 def get_pieces_matrix(M, absor, kept):
     """
-    Extract submatrices from a transition matrix corresponding to absorbing and transient states.
+    Extract submatrices from a transition matrix corresponding to absorbing and nonboundary states.
 
     This function partitions a given transition matrix `M` into four submatrices:
-    - `Mp`: The transition matrix for transient (non-absorbing) states.
-    - `D`: The transitions from transient states to absorbing states.
-    - `E`: The transitions from absorbing states to transient states.
+    - `Mp`: The transition matrix for nonboundary (non-absorbing) states.
+    - `D`: The transitions from nonboundary states to absorbing states.
+    - `E`: The transitions from absorbing states to nonboundary states.
     - `M11`: The transition matrix for absorbing states.
 
     Parameters
@@ -579,7 +594,7 @@ def get_pieces_matrix(M, absor, kept):
     absor : array-like
         Indices of absorbing states.
     kept : array-like
-        Indices of non-absorbing (transient) states.
+        Indices of non-absorbing (nonboundary) states.
 
     Raises
     ------
@@ -591,11 +606,11 @@ def get_pieces_matrix(M, absor, kept):
     Returns
     -------
     Mp : np.ndarray
-        Submatrix corresponding to transient-to-transient state transitions.
+        Submatrix corresponding to nonboundary-to-nonboundary state transitions.
     D : np.ndarray
-        Submatrix representing transitions from transient to absorbing states.
+        Submatrix representing transitions from nonboundary to absorbing states.
     E : np.ndarray
-        Submatrix representing transitions from absorbing to transient states.
+        Submatrix representing transitions from absorbing to nonboundary states.
     M11 : np.ndarray
         Submatrix corresponding to transitions between absorbing states.
     """
@@ -618,11 +633,11 @@ def get_pieces_matrix(M, absor, kept):
 
 def get_pieces_vector(vec, absor, kept):
     """
-    Extract sub-vectors from a given vector corresponding to absorbing and transient states.
+    Extract sub-vectors from a given vector corresponding to absorbing and nonboundary states.
 
     This function partitions a given vector `vec` into two sub-vectors:
     - `v1`: Elements corresponding to absorbing states.
-    - `v2`: Elements corresponding to transient (non-absorbing) states.
+    - `v2`: Elements corresponding to nonboundary (non-absorbing) states.
 
     Parameters
     ----------
@@ -631,7 +646,7 @@ def get_pieces_vector(vec, absor, kept):
     absor : array-like
         Indices of absorbing states.
     kept : array-like
-        Indices of non-absorbing (transient) states.
+        Indices of non-absorbing (nonboundary) states.
 
     Raises
     ------
