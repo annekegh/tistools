@@ -2021,10 +2021,12 @@ def ploc_memory(pathensembles, interfaces, trr=True):
 def plot_memory_analysis(pes, q_tot, p, interfaces=None):
     """
     Generate comprehensive visualizations for memory effect analysis in TIS simulations
-    with support for non-equidistant interfaces.
+    with support for non-equidistant interfaces and momentum effects.
     
     Parameters:
     -----------
+    pes : list of PathEnsemble
+        The path ensembles analyzed
     q_tot : numpy.ndarray
         A matrix with shape [2, n_interfaces, n_interfaces] where:
         - q_tot[0][i][k]: conditional crossing probabilities
@@ -2040,15 +2042,13 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
         A tuple containing three matplotlib.figure.Figure objects:
         - fig1: Matrix heatmaps (memory effect matrix, ratio, asymmetry)
         - fig2: Forward/backward probability plots with memory retention bar charts
-        - fig3: Memory decay profiles and additional visualizations
+        - fig3: Free energy landscape, momentum effects, and flux network analysis
     """
     import matplotlib.pyplot as plt
     from matplotlib.colors import LinearSegmentedColormap
     import matplotlib.gridspec as gridspec
     import matplotlib.colors as colors
     import seaborn as sns
-    from scipy.optimize import curve_fit
-    from matplotlib.widgets import Button
     # Add legend
     from matplotlib.lines import Line2D
     
@@ -2074,19 +2074,8 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
     M = construct_M_istar(p, 2*n_interfaces, n_interfaces)
     
     # Calculate diffusive reference probabilities based on interface spacing
-    diff_ref = calculate_diffusive_reference_spacing(interfaces)
-    # diff_ref = calculate_q_ik_reference_from_stationary_improved(M, n_interfaces)
+    diff_ref = calculate_diffusive_reference(interfaces, q_tot[0], q_tot[1])
     plocs_repptis, plocs_istar = ploc_repptis_from_staples(pes, interfaces, n_int=n_interfaces)
-    # diff_ref = np.zeros_like(q_probs)
-    # for i in range(n_interfaces):
-    #     for k in range(n_interfaces):
-    #         if i < k:
-    #                 diff_ref[i][k] = plocs_repptis[k]["LMR"][0]
-    #         elif k < i and k < n_interfaces-2:
-    #             diff_ref[i][k] = plocs_repptis[k+2]["RML"][0]
-    #         else:
-    #             if i == 0:
-    #                 diff_ref[i][k] = plocs_repptis[i+1]["LML"][0]
     
     # Function to generate high-contrast colors for plots
     def generate_high_contrast_colors(n):
@@ -2115,7 +2104,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
                 colors_list.append(colors.to_hex(cmap1(pos)))
                 
             return colors_list
-    
+
     # ================ Figure 1: Matrix Heatmaps ================
     fig1 = plt.figure(figsize=(18, 7))
     gs1 = gridspec.GridSpec(1, 3, width_ratios=[1.2, 1, 1])
@@ -2170,7 +2159,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
     ax1.set_yticklabels([f"{i}" for i in range(n_interfaces)])
     ax1.set_xlabel('Target Turn at k')
     ax1.set_ylabel('Starting Turn at i')
-    ax1.set_title('Memory Effect Matrix: q(i,k) - q_diff(i,k)', fontsize=12)
+    ax1.set_title('Memory Effect Matrix: q(i,k) - q_diffuse(i,k)', fontsize=12)
     
     # Plot 1.2: Memory Effect Ratio
     ax2 = fig1.add_subplot(gs1[1])
@@ -2189,7 +2178,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
     im2 = ax2.imshow(memory_ratio, cmap='RdBu_r', norm=colors.LogNorm(vmin=0.1, vmax=10))
     
     # Add colorbar
-    cbar2 = fig1.colorbar(im2, ax=ax2, label='Probability Ratio q/q_diff [log scale]')
+    cbar2 = fig1.colorbar(im2, ax=ax2, label='Probability Ratio q/q_diffuse [log scale]')
     
     # Add annotations for ratio values - more compact
     for i in range(n_interfaces):
@@ -2249,16 +2238,15 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
     # Add explanatory text that includes info about non-equidistant interfaces
     if is_equidistant:
         desc_text = """
-        Memory Effect Matrix: Shows deviations from diffusive behavior (q - 0.5).
+        Memory Effect Matrix: Shows deviations from diffusive behavior.
         In a purely diffusive process, all values would be 0.
         Values > 0 (red) indicate bias toward crossing, < 0 (blue) indicate bias toward returning.
         """
     else:
         desc_text = """
-        Memory Effect Matrix: Shows deviations from diffusive behavior (q - q_diff).
+        Memory Effect Matrix: Shows deviations from diffusive behavior.
         Due to non-equidistant interfaces, the diffusive reference varies for each transition.
         Values > 0 (red) indicate bias toward crossing, < 0 (blue) indicate bias toward returning.
-        Format: actual/diffusive (sample count when >10)
         """
     fig1.text(0.02, 0.02, desc_text, fontsize=10, wrap=True)
     
@@ -2306,8 +2294,8 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
             # Plot diffusive reference as dashed lines
             ax4.plot(starting_positions, ref_probs, '--',
                     color=forward_colors[idx], alpha=0.5)
-            ax4.plot(starting_positions, repptisp, ':',
-                    color=forward_colors[idx], alpha=0.5)
+            # ax4.plot(starting_positions, repptisp, ':',
+            #         color=forward_colors[idx], alpha=0.5)
     
     # Configure the forward plot
     ax4.set_xlabel('Starting interface Position (λ$\\subset$)')
@@ -2396,6 +2384,8 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
     valid_positions = [interfaces[k] for k in valid_k]
     valid_colors = [forward_colors[k-1] for k in valid_k]
     valid_counts = [memory_index['forward_sample_sizes'][k] for k in valid_k]
+    # Use state_labels for valid_k
+    valid_state_labels = [(f'{k}$\\subset$' if k < n_interfaces-1 else f'{k}') for k in valid_k]
 
     # Calculate mean difference with diffusive reference for each target interface
     forward_mean_diff = np.zeros(n_interfaces)
@@ -2419,6 +2409,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
     if valid_k:
         # Create a twin axis for the memory retention plot
         ax6_twin = ax6.twinx()
+        ax6_twin.set_ylim(0, 100)
         
         # Create bar plot for variation
         bars = ax6.bar(valid_positions, valid_variation, color=valid_colors, alpha=0.7, 
@@ -2510,7 +2501,8 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
     if valid_k:
         # Create a twin axis for the memory retention plot
         ax7_twin = ax7.twinx()
-        
+        ax7_twin.set_ylim(0, 100)
+
         # Create bar plot using interface physical positions
         bars = ax7.bar(valid_positions, valid_variation, color=valid_colors, alpha=0.7,
                             width=np.mean(np.diff(interfaces))*0.7)  # Use average interface spacing for width
@@ -2564,83 +2556,215 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
         ax7.set_xticklabels([f'{k}←{k+1}' for k in range(n_interfaces)])
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     fig2.suptitle('TIS Memory Effect Analysis - Transition Probabilities and Memory Retention', fontsize=14)
-                                                       
-    # ================ Figure 3: Memory Decay Profiles and Additional Visualizations ================
-    fig3 = plt.figure(figsize=(18, 14))
-    gs3 = gridspec.GridSpec(2, 2)
-    
-    # Plot 3.1: Memory Decay with Distance (Forward transitions)
-    ax8 = fig3.add_subplot(gs3[0, 0])
-    
-    # Calculate memory effect as deviation from diffusive reference
-    memory_data = np.zeros((n_interfaces-1, n_interfaces-1))
-    memory_data.fill(np.nan)
-    
-    for start_i in range(n_interfaces-1):
-        for target_k in range(start_i+1, n_interfaces):
-            # Calculate distance between interfaces (in index space)
-            distance = target_k - start_i
-            # Memory effect is deviation from diffusive reference
-            if not np.isnan(q_probs[start_i, target_k]) and q_weights[start_i, target_k] > 5:
-                memory_data[start_i, distance-1] = abs(q_probs[start_i, target_k] - diff_ref[start_i, target_k])
-    
-    # Plot heatmap
-    sns.heatmap(memory_data, cmap='viridis', ax=ax8, 
-                cbar_kws={'label': '|Probability - Diffusive Reference|'})
-    
-    # Generate labels for rows and columns based on state_labels
-    row_labels = [(f'{i}$\\subset$' if i > 0 else f'{i}') for i in range(n_interfaces-1)]
-    col_labels = [f"Dist: {i+1}" for i in range(n_interfaces-1)]
-    
-    ax8.set_xlabel('Interface Distance (k - i)')
-    ax8.set_ylabel('Starting Interface i')
-    ax8.set_title('Memory Effect Decay with Distance (Forward L→R)', fontsize=12)
-    ax8.set_xticks(np.arange(n_interfaces-1) + 0.5)
-    ax8.set_xticklabels(col_labels)
-    ax8.set_yticks(np.arange(n_interfaces-1) + 0.5)
-    ax8.set_yticklabels(row_labels)
-    
-    # Plot 3.2: Memory Decay with Physical Distance
-    ax9 = fig3.add_subplot(gs3[0, 1])
-    
-    # Plot 3.3: Memory Decay with Distance (Backward transitions)
-    ax10 = fig3.add_subplot(gs3[1, 0])
-    
-    # Calculate memory effect as deviation from diffusive reference
-    backward_memory_data = np.zeros((n_interfaces-1, n_interfaces-1))
-    backward_memory_data.fill(np.nan)
-    
-    for start_i in range(1, n_interfaces):
-        for target_k in range(start_i):
-            # Calculate distance between interfaces
-            distance = start_i - target_k
-            # Memory effect is deviation from diffusive reference
-            if not np.isnan(q_probs[start_i, target_k]) and q_weights[start_i, target_k] > 5:
-                backward_memory_data[start_i-1, distance-1] = abs(q_probs[start_i, target_k] - diff_ref[start_i, target_k])
-    
-    # Plot heatmap
-    sns.heatmap(backward_memory_data, cmap='viridis', ax=ax10, 
-                cbar_kws={'label': '|Probability - Diffusive Reference|'})
-    
-    # Generate labels for rows and columns
-    row_labels = [(f'{i}$\\supset$' if i > 0 else f'{i}') for i in range(n_interfaces-1)]
-    col_labels = [f"Dist: {i+1}" for i in range(n_interfaces-1)]
-    
-    ax10.set_xlabel('Interface Distance (i - k)')
-    ax10.set_ylabel('Starting Interface i')
-    ax10.set_title('Memory Effect Decay with Distance (Backward R→L)', fontsize=12)
-    ax10.set_xticks(np.arange(n_interfaces-1) + 0.5)
-    ax10.set_xticklabels(col_labels)
-    ax10.set_yticks(np.arange(n_interfaces-1) + 0.5)
-    ax10.set_yticklabels(row_labels)
-    
-    # Plot 3.4: Deviations from Diffusive Behavior in Transitions
-    ax11 = fig3.add_subplot(gs3[1, 1])
 
-    plot_destination_bias(p, interfaces, ax_forward=ax9, ax_backward=ax11, state_labels=state_labels)
+    # ================ Figure 3: Free Energy Landscape and Momentum Effects ================
+    fig3 = plt.figure(figsize=(18, 14))
+    gs3 = gridspec.GridSpec(2, 2, height_ratios=[1, 1])
     
+    # Run momentum vs free energy analysis
+    momentum_results = analyze_momentum_vs_free_energy(interfaces, q_tot[0], q_tot[1])
+    
+    # Plot 3.1: Enhanced Free Energy Profile - spans the entire top row
+    ax8 = fig3.add_subplot(gs3[0, :])
+    
+    # Extract data from momentum analysis
+    delta_G = momentum_results['free_energy_differences']
+    
+    # Calculate cumulative free energy profile
+    cumulative_G = np.zeros(len(interfaces))
+    for i in range(1, len(interfaces)):
+        # Add up all the delta_G values from the first interface
+        valid_path = True
+        for j in range(i):
+            if np.isnan(delta_G[j, j+1]):
+                valid_path = False
+                break
+            cumulative_G[i] += delta_G[j, j+1]
+        
+        if not valid_path:
+            cumulative_G[i] = np.nan
+    
+    # Plot free energy profile with improved styling
+    ax8.plot(interfaces, cumulative_G, 'o-', linewidth=2.5, color='royalblue', 
+             label='Free Energy Profile')
+    
+    # Add marker points with annotations
+    for i, (pos, g) in enumerate(zip(interfaces, cumulative_G)):
+        if not np.isnan(g):
+            ax8.plot(pos, g, 'o', markersize=8, color='royalblue')
+            ax8.text(pos, g + 0.15, f"{g:.2f}", ha='center', va='bottom', fontsize=10, 
+                    bbox=dict(facecolor='white', alpha=0.7, boxstyle='round,pad=0.2'))
+    
+    # Enhance the appearance
+    ax8.set_xlabel('Interface Position (λ)', fontsize=12)
+    ax8.set_ylabel('Free Energy G(λ) (kT)', fontsize=12)
+    ax8.set_title('Free Energy Profile Along Interface Coordinate', fontsize=14)
+    ax8.grid(True, alpha=0.3, linestyle='--')
+    
+    # Add shaded area under the curve for visual appeal
+    ax8.fill_between(interfaces, 0, cumulative_G, alpha=0.2, color='royalblue')
+    
+    ax8.legend(loc='best', fontsize=10)
+    
+    # Plot 3.2: Observed vs Diffusive Probabilities Comparison (bottom-left)
+    ax9 = fig3.add_subplot(gs3[1, 0])
+    
+    # Plot data from momentum results
+    diffusive_q = momentum_results['diffusive_probabilities']
+    momentum_effects = momentum_results['momentum_effects']
+    momentum_significance = momentum_results['momentum_significance']
+    
+    # Collect valid data points, excluding transitions to/from boundary interfaces
+    valid_points = []
+    for i in range(len(interfaces)):
+        for j in range(len(interfaces)):
+            # Skip diagonal and transitions involving boundary interfaces (0 or n-1)
+            if (abs(i-j) >= 2 and i > 0 and i < len(interfaces)-1 and 
+                j > 0 and j < len(interfaces)-1 and 
+                not np.isnan(diffusive_q[i, j]) and 
+                not np.isnan(momentum_effects[i, j])):
+                
+                if q_weights is None or q_weights[i, j] >= 5:  # Min samples
+                    observed = diffusive_q[i, j] * (1 + momentum_effects[i, j])  # q_matrix value
+                    significant = momentum_significance[i, j]
+                    valid_points.append((diffusive_q[i, j], observed, significant, f"{i}→{j}"))
+    
+    if valid_points:
+        # Unpack the valid points
+        x_vals, y_vals, significance, labels = zip(*valid_points)
+        
+        # Calculate plot limits
+        max_val = max(max(x_vals), max(y_vals)) * 1.1
+        min_val = min(min(x_vals), min(y_vals)) * 0.9
+        
+        # Plot the ideal 1:1 line
+        ax9.plot([min_val, max_val], [min_val, max_val], '--', color='gray', alpha=0.7)
+        
+        # Plot each point, colored by significance
+        for x, y, sig, label in zip(x_vals, y_vals, significance, labels):
+            color = 'red' if sig else 'blue'
+            ax9.scatter(x, y, color=color, s=50, alpha=0.7)
+        
+        # Add labels with improved readability
+        for i, (x, y, sig, label) in enumerate(zip(x_vals, y_vals, significance, labels)):
+            # Calculate offset direction based on point position to avoid overlaps
+            dx = 10 if x < 0.5 * (min_val + max_val) else -30
+            dy = 10 if y < 0.5 * (min_val + max_val) else -15
+            
+            # Create a small white background for the text to improve readability
+            text = ax9.annotate(
+                label, 
+                (x, y), 
+                xytext=(dx, dy),
+                textcoords='offset points', 
+                fontsize=9,
+                fontweight='bold',
+                bbox=dict(
+                    boxstyle="round,pad=0.3",
+                    fc="white",
+                    ec="gray",
+                    alpha=0.8
+                )
+            )
+        
+        ax9.set_xlabel('Diffusive Probability (Free Energy Model)', fontsize=12)
+        ax9.set_ylabel('Observed Probability', fontsize=12)
+        ax9.set_title('Observed vs Diffusive Transition Probabilities\n(excluding boundary interfaces)', fontsize=14)
+        ax9.set_xlim(min_val, max_val)
+        ax9.set_ylim(min_val, max_val)
+        ax9.grid(True, alpha=0.3)
+        
+        # Add legend using the same color scheme as momentum_vs_fe
+        ax9.scatter([], [], color='blue', label='Free Energy Dominated')
+        ax9.scatter([], [], color='red', label='Momentum Effects')
+        ax9.legend(fontsize=10)
+    else:
+        ax9.text(0.5, 0.5, "Insufficient valid data for comparison\n(non-boundary transitions)",
+                ha='center', va='center', transform=ax9.transAxes)
+    # Plot 3.3: Interface Pair Classification (bottom-right)
+    ax10 = fig3.add_subplot(gs3[1, 1])
+    
+    # Extract classification from momentum results
+    classification = momentum_results['classification']
+    overall = momentum_results['overall_classification']
+    
+    # Define colors for classifications - matching those in analyze_momentum_vs_free_energy
+    class_colors = {
+        "free_energy_dominated": 'blue',
+        "momentum_dominated": 'red',
+        "strong_momentum": 'darkred',
+    }
+    
+    # Create a modified list of colors, excluding first and last interfaces
+    n_intervals = len(interfaces) - 1
+    modified_colors = []
+    for i in range(n_intervals):
+        if i == 0 or i == n_intervals - 1:
+            # Skip classification coloring for first and last intervals
+            modified_colors.append('lightgray')
+        else:
+            modified_colors.append(class_colors.get(classification[i], 'gray'))
+    
+    # Plot interface pair classifications as colored bars
+    x = np.arange(n_intervals)
+    bars = ax10.bar(x, [1] * n_intervals, color=modified_colors, alpha=0.7, width=0.7)
+    
+    # Add labels for each interface pair, but skip first and last
+    for i in range(n_intervals):
+        if i > 0 and i < n_intervals - 1:
+            # Determine text color based on background color brightness for better readability
+            bg_color = modified_colors[i]
+            
+            # Function to determine if background color is dark (needs white text)
+            def is_dark_color(color_name):
+                dark_colors = ['darkred', 'red', 'darkblue', 'navy', 'black']
+                return color_name.lower() in dark_colors
+            
+            # Choose text color based on background brightness
+            text_color = 'white' if is_dark_color(bg_color) else 'black'
+            
+            # Add text with a small outline for better readability
+            text = classification[i].replace('_', '\n')
+            # First add text with outline
+            for offset_x, offset_y in [(-1, -1), (-1, 1), (1, -1), (1, 1)]:
+                ax10.text(i + offset_x*0.01, 0.5 + offset_y*0.01, text,
+                       ha='center', va='center', fontsize=10,
+                       color='black' if text_color == 'white' else 'white',
+                       alpha=0.5)
+            # Then add main text
+            ax10.text(i, 0.5, text, 
+                   ha='center', va='center', fontsize=10, 
+                   color=text_color, fontweight='bold')
+    
+    ax10.set_xticks(x)
+    ax10.set_xticklabels([f"{i}→{i+1}" for i in range(n_intervals)])
+    ax10.set_yticks([])  # No y-ticks needed
+    ax10.set_xlabel('Interface Pair', fontsize=12)
+    ax10.set_title('Interface Pair Classification (excluding boundary interfaces)', fontsize=14)
+    
+    # Create custom legend for the classification - matching analyze_momentum_vs_free_energy
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor=class_colors.get('free_energy_dominated', 'blue'), label='Free Energy Dominated'),
+        Patch(facecolor=class_colors.get('momentum_dominated', 'red'), label='Momentum Dominated'),
+        Patch(facecolor=class_colors.get('strong_momentum', 'darkred'), label='Strong Momentum Effects'),
+        Patch(facecolor='lightgray', label='Boundary (not classified)')
+    ]
+    ax10.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, -0.15), 
+               ncol=2, fontsize=10)
+    
+    # Add overall title and additional information
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    fig3.suptitle('TIS Memory Effect Analysis - Decay Profiles and Additional Metrics', fontsize=14)
+    overall_class = momentum_results['overall_classification'].replace("_", " ").title()
+    fig3.suptitle(f'TIS Memory Analysis - Free Energy and Momentum Effects ({overall_class})', fontsize=16)
+    # Add metrics as text in the bottom of figure 3
+    metrics_text = (
+        f"Overall Classification: {overall_class}\n"
+        f"Average Momentum Effect: {momentum_results['avg_momentum_effect']:.3f}\n"
+        f"Average Free Energy: {momentum_results['avg_free_energy']:.3f} kT\n"
+        f"Average Probabilities: {momentum_results['avg_probabilities']:.3f}"
+    )
+    fig3.text(0.02, 0.01, metrics_text, fontsize=10, wrap=True)
     
     return fig1, fig2, fig3
 
@@ -2767,14 +2891,10 @@ def calculate_memory_effect_index(q_probs, q_weights, min_samples=5):
     
     return memory_index
 
-def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, min_samples=5):
+def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, min_samples=5, account_for_distances=True):
     """
-    Calculate diffusive reference probabilities for non-equidistant interfaces.
-    
-    Accounts for the fact that in TIS, conditional crossing probabilities for
-    directly adjacent interfaces (q(i,i+1) and q(i,i-1)) are always 1.0 due to
-    the nature of path sampling. Instead uses transition probabilities or non-adjacent
-    conditional probabilities to estimate free energy differences.
+    Calculate diffusive reference probabilities for non-equidistant interfaces,
+    using the same approach as analyze_momentum_vs_free_energy.
     
     Parameters:
     -----------
@@ -2786,101 +2906,99 @@ def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, min_samp
         Matrix of sample counts for each q_matrix value
     min_samples : int, optional
         Minimum number of samples required to consider a q value valid
+    account_for_distances : bool, optional
+        Whether to account for physical distances between interfaces (default: True)
         
     Returns:
     --------
-    diff_ref : numpy.ndarray
+    diffusive_q : numpy.ndarray
         A matrix of diffusive reference probabilities for each i,k pair
     """
     n_interfaces = len(interfaces)
-    diff_ref = np.zeros((n_interfaces, n_interfaces))
-    diff_ref.fill(np.nan)
+    diffusive_q = np.zeros((n_interfaces, n_interfaces))
+    diffusive_q.fill(np.nan)
     
-    # Estimate free energy differences between adjacent interfaces
-    # We can't use q(i,i+1) directly because it's always 1.0 in TIS
-    delta_G = estimate_free_energy_differences(interfaces, q_matrix, q_weights, min_samples)
+    # Step 1: Estimate free energy differences between interfaces
+    delta_G = estimate_free_energy_differences(interfaces, q_matrix, q_weights, min_samples, account_for_distances)
+    
+    # Check if interfaces have physical values we can use for geometric corrections
+    has_physical_distances = isinstance(interfaces[0], (int, float)) and len(interfaces) > 1 and account_for_distances
     
     # For diagonal elements (self-transitions), probability is 0
     for i in range(n_interfaces):
-        diff_ref[i, i] = 0.0
+        diffusive_q[i, i] = 0.0
     
-    # Fill in reference probabilities for adjacent interfaces
-    for i in range(n_interfaces-1):
-        if not np.isnan(delta_G[i, i+1]):
-            # Forward probability i→i+1
-            diff_ref[i, i+1] = 1.0 / (1.0 + np.exp(delta_G[i, i+1]))
-            # Backward probability i+1→i
-            diff_ref[i+1, i] = 1.0 / (1.0 + np.exp(delta_G[i+1, i]))
-        else:
-            # Fallback to 0.5 if we can't estimate from data
-            diff_ref[i, i+1] = 0.5
-            diff_ref[i+1, i] = 0.5
+    # Create reference probabilities for forward transitions (i<k)
+    for k in range(1, n_interfaces):
+        for i in range(k):
+            if i == k-1:
+                # Adjacent interfaces always have probability 1.0
+                diffusive_q[i, k] = 1.0
+            else:
+                # Non-adjacent interfaces use the diffusive reference with geometric correction
+                ref_prob = 0.5  # Default value
+                
+                # Use Boltzmann factor for the free energy difference between k-1 and k
+                if not np.isnan(delta_G[k-1, k]):
+                    # Apply geometric correction if we have physical interface positions
+                    if has_physical_distances and k > 1:
+                        # Calculate distance-based geometric expected probability
+                        dist_km1_to_k = interfaces[k] - interfaces[k-1]
+                        dist_km2_to_km1 = interfaces[k-1] - interfaces[k-2] if k > 1 else dist_km1_to_k
+                        geo_q = dist_km2_to_km1 / (dist_km1_to_k + dist_km2_to_km1) if (dist_km1_to_k + dist_km2_to_km1) > 0 else 0.5
+                        
+                        # Combine geometric factor with free energy difference
+                        # For forward transitions: P = 1/(1 + exp(ΔG))
+                        ref_prob = 1.0 / (1.0 + np.exp(delta_G[k-1, k]) * (1-geo_q)/geo_q)
+                    else:
+                        # Without geometry, just use free energy
+                        ref_prob = 1.0 / (1.0 + np.exp(delta_G[k-1, k]))
+                
+                diffusive_q[i, k] = ref_prob
     
-    # Calculate non-adjacent transition reference probabilities
+    # Create reference probabilities for backward transitions (i>k)
+    for k in range(n_interfaces-1):
+        for i in range(k+1, n_interfaces):
+            if i == k+1:
+                # Adjacent interfaces always have probability 1.0
+                diffusive_q[i, k] = 1.0
+            else:
+                # Non-adjacent interfaces use the diffusive reference with geometric correction
+                ref_prob = 0.5  # Default value
+                
+                # Use Boltzmann factor for the free energy difference between k and k+1
+                if not np.isnan(delta_G[k, k+1]):
+                    # Apply geometric correction if we have physical interface positions
+                    if has_physical_distances and k+2 < n_interfaces:
+                        # Calculate distance-based geometric expected probability
+                        dist_k_to_kp1 = interfaces[k+1] - interfaces[k]
+                        dist_kp1_to_kp2 = interfaces[k+2] - interfaces[k+1] if k+2 < n_interfaces else dist_k_to_kp1
+                        geo_q = dist_kp1_to_kp2 / (dist_k_to_kp1 + dist_kp1_to_kp2) if (dist_k_to_kp1 + dist_kp1_to_kp2) > 0 else 0.5
+                        
+                        # Combine geometric factor with free energy difference
+                        # For backward transitions: P = 1/(1 + exp(-ΔG))
+                        ref_prob = 1.0 / (1.0 + np.exp(-delta_G[k, k+1]) * (1-geo_q)/geo_q)
+                    else:
+                        # Without geometry, just use free energy
+                        ref_prob = 1.0 / (1.0 + np.exp(-delta_G[k, k+1]))
+                
+                diffusive_q[i, k] = ref_prob
+    
+    # Handle edge cases and verify
     for i in range(n_interfaces):
         for k in range(n_interfaces):
-            if abs(i - k) >= 2:  # Non-adjacent interfaces
-                if i < k:  # Forward transitions (i → k)
-                    # Calculate cumulative free energy difference from i to k
-                    cum_delta_G = 0.0
-                    valid_path = True
-                    
-                    for j in range(i, k):
-                        if np.isnan(delta_G[j, j+1]):
-                            valid_path = False
-                            break
-                        cum_delta_G += delta_G[j, j+1]
-                    
-                    if valid_path:
-                        # Diffusive reference probability based on cumulative free energy difference
-                        diff_ref[i, k] = 1.0 / (1.0 + np.exp(cum_delta_G))
-                    else:
-                        # Check if we have direct measurement
-                        valid_q = (not np.isnan(q_matrix[i, k]) and 
-                                  (q_weights is None or q_weights[i, k] >= min_samples))
-                        if valid_q:
-                            # Compare direct measurement to product of intermediate steps
-                            product_ref = 1.0
-                            for j in range(i, k):
-                                if np.isnan(diff_ref[j, j+1]):
-                                    product_ref = 0.5 ** (k-i)  # Fallback
-                                    break
-                                product_ref *= diff_ref[j, j+1]
-                            diff_ref[i, k] = product_ref
-                        else:
-                            diff_ref[i, k] = 0.5 ** (k-i)  # Fallback to 0.5^distance
-                        
-                elif i > k:  # Backward transitions (i → k)
-                    # Calculate cumulative free energy difference from i to k
-                    cum_delta_G = 0.0
-                    valid_path = True
-                    
-                    for j in range(i, k, -1):
-                        if np.isnan(delta_G[j, j-1]):
-                            valid_path = False
-                            break
-                        cum_delta_G += delta_G[j, j-1]
-                    
-                    if valid_path:
-                        # Diffusive reference probability based on cumulative free energy difference
-                        diff_ref[i, k] = 1.0 / (1.0 + np.exp(cum_delta_G))
-                    else:
-                        # Check if we have direct measurement
-                        valid_q = (not np.isnan(q_matrix[i, k]) and 
-                                  (q_weights is None or q_weights[i, k] >= min_samples))
-                        if valid_q:
-                            # Compare direct measurement to product of intermediate steps
-                            product_ref = 1.0
-                            for j in range(i, k, -1):
-                                if np.isnan(diff_ref[j, j-1]):
-                                    product_ref = 0.5 ** (i-k)  # Fallback
-                                    break
-                                product_ref *= diff_ref[j, j-1]
-                            diff_ref[i, k] = product_ref
-                        else:
-                            diff_ref[i, k] = 0.5 ** (i-k)  # Fallback to 0.5^distance
+            # Ensure probabilities are in valid range
+            if not np.isnan(diffusive_q[i, k]):
+                # Constrain to [0,1]
+                diffusive_q[i, k] = max(0.0, min(1.0, diffusive_q[i, k]))
     
-    return diff_ref
+    # Print some statistics about the calculated reference probabilities
+    print("\nDiffusive reference probability summary:")
+    print(f"Mean forward reference probability: {np.nanmean([diffusive_q[i,j] for i in range(n_interfaces) for j in range(i+1,n_interfaces)]):.4f}")
+    print(f"Mean backward reference probability: {np.nanmean([diffusive_q[i,j] for i in range(n_interfaces) for j in range(i)]):.4f}")
+    print(f"Accounted for physical distances: {has_physical_distances}")
+    
+    return diffusive_q
 
 def calculate_diffusive_reference_spacing(interfaces):
     """
@@ -3162,203 +3280,522 @@ def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_sa
         'avg_probabilities': avg_probabilities
     }
 
-def visualize_momentum_vs_free_energy(interfaces, analysis_results, q_weights=None, min_samples=5):
+def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_samples=5, account_for_distances=True):
     """
-    Create visualizations for the updated momentum vs free energy analysis.
+    Estimate free energy differences between interfaces from conditional crossing probabilities,
+    taking into account physical distances between interfaces. Uses only the first valid forward
+    and backward estimates (closest to the transition) to eliminate biases from long-term memory effects.
+    
+    Parameters:
+    -----------
+    interfaces : list or array
+        The positions of the interfaces along the reaction coordinate
+    q_matrix : numpy.ndarray
+        Matrix of conditional crossing probabilities where q[i,k] is the probability
+        that a path starting with a turn at interface i and reaching k-1 (for i<k) 
+        or k+1 (for i>k) will make a turn at interface k
+    q_weights : numpy.ndarray, optional
+        Matrix of sample counts for each q_matrix value
+    min_samples : int, optional
+        Minimum number of samples required to consider a q value valid
+    account_for_distances : bool, optional
+        Whether to account for physical distances between interfaces (default: True).
+        If False, interfaces are treated as having uniform spacing regardless of their actual values.
+        
+    Returns:
+    --------
+    delta_G : numpy.ndarray
+        Matrix of free energy differences between interfaces
+    """
+    n_interfaces = len(interfaces)
+    delta_G = np.zeros((n_interfaces, n_interfaces))
+    delta_G.fill(np.nan)
+    
+    # Check if interfaces have physical values we can use
+    has_physical_distances = isinstance(interfaces[0], (int, float)) and len(interfaces) > 1 and account_for_distances
+    
+    # Helper function to check if a q value is valid and usable
+    def is_valid_q(i, k):
+        return (not np.isnan(q_matrix[i, k]) and
+                (q_weights is None or q_weights[i, k] >= min_samples) and
+                abs(i-k) >= 2)
+    
+    # For each pair of adjacent interfaces, estimate the free energy difference
+    for i in range(n_interfaces - 1):
+        forward_estimate = None
+        backward_estimate = None
+        
+        # Forward cascade: try q[i-1,i+1], then q[i-2,i+1], etc.
+        # Only take the first valid estimate (closest to the transition)
+        for start in range(i-1, -1, -1):  # Start from i-1 and go backwards to 0
+            if is_valid_q(start, i+1):
+                # First valid forward transition from 'start' to i+1 (going through i)
+                q_fw = q_matrix[start, i+1]
+                weight = q_weights[start, i+1] if q_weights is not None else 1.0
+                
+                # Adjust for physical distances
+                if has_physical_distances and i > 0:
+                    dist_i_to_ip1 = interfaces[i+1] - interfaces[i]
+                    dist_im1_to_i = interfaces[i] - interfaces[i-1]
+                    geo_q = dist_im1_to_i / (dist_i_to_ip1 + dist_im1_to_i) if (dist_i_to_ip1 + dist_im1_to_i) > 0 else 1.0
+                    dG_obs = -np.log(q_fw / (1 - q_fw))
+                    dG_geo = -np.log(geo_q / (1 - geo_q))
+                    dG = dG_obs - dG_geo
+                else:
+                    dG = -np.log(q_fw / (1 - q_fw))
+                
+                forward_estimate = np.nan_to_num(dG, posinf=6.0, neginf=-6.0)
+                print(f"Forward ΔG estimate for interfaces {i}-{i+1}: {dG:.4f} using q[{start},{i+1}]={q_fw:.4f}, weight={weight:.1f}")
+                break  # Take only the first valid estimate
+        
+        # Backward cascade: try q[i+2,i], then q[i+3,i], etc.
+        # Only take the first valid estimate (closest to the transition)
+        for start in range(i+2, n_interfaces):
+            if is_valid_q(start, i):
+                # First valid backward transition from 'start' to i (going through i+1)
+                q_bw = q_matrix[start, i]
+                weight = q_weights[start, i] if q_weights is not None else 1.0
+                
+                # Adjust for physical distances
+                if has_physical_distances and i+1 < n_interfaces-1:
+                    dist_ip1_to_i = interfaces[i+1] - interfaces[i]
+                    dist_ip2_to_ip1 = interfaces[i+2] - interfaces[i+1]
+                    geo_q = dist_ip2_to_ip1 / (dist_ip2_to_ip1 + dist_ip1_to_i) if (dist_ip2_to_ip1 + dist_ip1_to_i) > 0 else 1.0
+                    dG_obs = np.log(q_bw / (1 - q_bw))
+                    dG_geo = np.log(geo_q / (1 - geo_q))
+                    dG = dG_obs - dG_geo
+                else:
+                    dG = np.log(q_bw / (1 - q_bw))
+                
+                backward_estimate = np.nan_to_num(dG, posinf=6.0, neginf=-6.0)
+                print(f"Backward ΔG estimate for interfaces {i}-{i+1}: {dG:.4f} using q[{start},{i}]={q_bw:.4f}, weight={weight:.1f}")
+                break  # Take only the first valid estimate
+        
+        # Combine forward and backward estimates if available
+        if forward_estimate is not None and backward_estimate is not None:
+            # Take the average of the forward and backward estimates
+            # This helps eliminate biases from the timestep
+            combined_dG = (forward_estimate + backward_estimate) / 2.0
+            
+            # Report the difference to highlight any systematic bias
+            bias = forward_estimate - backward_estimate
+            print(f"Combined ΔG for interfaces {i}-{i+1}: {combined_dG:.4f} (forward-backward bias: {bias:.4f})")
+            
+            delta_G[i, i+1] = combined_dG
+            delta_G[i+1, i] = -combined_dG
+            
+        elif forward_estimate is not None:
+            # Only forward estimate available
+            delta_G[i, i+1] = forward_estimate
+            delta_G[i+1, i] = -forward_estimate
+            print(f"Using only forward estimate for interfaces {i}-{i+1}: {forward_estimate:.4f}")
+            
+        elif backward_estimate is not None:
+            # Only backward estimate available
+            delta_G[i, i+1] = backward_estimate
+            delta_G[i+1, i] = -backward_estimate
+            print(f"Using only backward estimate for interfaces {i}-{i+1}: {backward_estimate:.4f}")
+            
+        else:
+            print(f"No valid estimates found for interfaces {i}-{i+1}")
+    
+    return delta_G
+
+##################################
+# Network Analysis Tools
+##################################
+
+def analyze_network_connectivity(M, source_state=0, sink_state=-1, max_paths=10):
+    """
+    Analyze the connectivity of a transition network efficiently without enumerating all paths.
     
     Parameters
     ----------
-    interfaces : list or array
-        The positions of the interfaces along the reaction coordinate
-    analysis_results : dict
-        Results from the analyze_momentum_vs_free_energy function
-    
+    M : np.ndarray
+        Transition matrix representing the Markov state model
+    source_state : int, optional
+        Index of the source state (default: 0)
+    sink_state : int, optional
+        Index of the sink state (default: -1)
+    max_paths : int, optional
+        Maximum number of paths to sample for visualization (default: 10)
+        
     Returns
     -------
-    fig : matplotlib.figure.Figure
-        Figure containing the visualization
+    dict
+        Dictionary containing connectivity analysis results
     """
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    from matplotlib.colors import LinearSegmentedColormap
+    from scipy import sparse
+    from scipy.sparse.csgraph import connected_components, shortest_path
+    import networkx as nx
+
+    n_states = M.shape[0]
+    sink_idx = n_states - 1 if sink_state == -1 else sink_state
     
-    # Create a figure with multiple subplots
-    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    # Generate state labels for the plot
+    state_labels = generate_state_labels(n_states//2)
     
-    # Extract components
-    delta_G = analysis_results['free_energy_differences']
-    diffusive_q = analysis_results['diffusive_probabilities']
-    momentum_effects = analysis_results['momentum_effects']
-    momentum_significance = analysis_results['momentum_significance']
-    classification = analysis_results['classification']
-    overall = analysis_results['overall_classification']
+    # Create a graph representation where edges exist if M[i,j] > 0
+    graph = (M > 0).astype(int)
     
-    # Define colors for classifications
-    class_colors = {
-        "free_energy_dominated": 'blue',
-        "momentum_dominated": 'red',
-        "symmetric_momentum": 'purple',
-        "strong_momentum": 'darkred',
-        "flat_high_momentum": 'orange'
-    }
-    
-    colors = [class_colors.get(cls, 'gray') for cls in classification]
-    
-    # Plot 1: Free Energy Profile (top-left)
-    ax1 = axes[0, 0]
-    
-    # Calculate cumulative free energy profile
-    cumulative_G = np.zeros(len(interfaces))
-    for i in range(1, len(interfaces)):
-        # Add up all the delta_G values from the first interface
-        valid_path = True
-        for j in range(i):
-            if np.isnan(delta_G[j, j+1]):
-                valid_path = False
-                break
-            cumulative_G[i] += delta_G[j, j+1]
-        
-        if not valid_path:
-            cumulative_G[i] = np.nan
-    
-    # Plot the free energy profile
-    ax1.plot(interfaces, cumulative_G, 'o-', linewidth=2, color='blue')
-    
-    # Add marker points with annotations
-    for i, (pos, g) in enumerate(zip(interfaces, cumulative_G)):
-        if not np.isnan(g):
-            ax1.plot(pos, g, 'o', markersize=8, color='blue')
-            ax1.text(pos, g + 0.1, f"{g:.2f}", ha='center', va='bottom', fontsize=9)
-    
-    ax1.set_xlabel('Interface Position (λ)')
-    ax1.set_ylabel('Free Energy G(λ) (kT)')
-    ax1.set_title('Free Energy Profile', fontsize=12)
-    ax1.grid(True, alpha=0.3)
-    
-    # Plot 2: Momentum Effect Heatmap (top-right)
-    ax2 = axes[0, 1]
-    
-    # Create a diverging colormap for momentum effects
-    cmap_effect = LinearSegmentedColormap.from_list('momentum_effect', 
-                                                  [(0, 'blue'), (0.5, 'white'), (1, 'red')], N=256)
-    
-    # Create a masked array for NaN values
-    masked_effects = np.ma.masked_invalid(momentum_effects)
-    
-    # Determine color range symmetrically around zero
-    max_effect = np.nanmax(np.abs(momentum_effects))
-    
-    # Plot the heatmap
-    im = ax2.imshow(masked_effects, cmap=cmap_effect, vmin=-max_effect, vmax=max_effect, 
-                   interpolation='none', aspect='auto')
-    
-    # Add colorbar
-    cbar = fig.colorbar(im, ax=ax2, label='Momentum Effect: (observed - diffusive) / diffusive')
-    
-    # Add annotations showing effect values and significance
-    for i in range(len(interfaces)):
-        for j in range(len(interfaces)):
-            if not np.isnan(momentum_effects[i, j]):
-                sig_mark = '*' if momentum_significance[i, j] else ''
-                text = f"{momentum_effects[i, j]:.2f}{sig_mark}"
-                color = 'black' if abs(momentum_effects[i, j]) < 0.5 else 'white'
-                ax2.text(j, i, text, ha='center', va='center', color=color, fontsize=9)
-    
-    ax2.set_xticks(range(len(interfaces)))
-    ax2.set_yticks(range(len(interfaces)))
-    ax2.set_xticklabels([f"{i}" for i in range(len(interfaces))])
-    ax2.set_yticklabels([f"{i}" for i in range(len(interfaces))])
-    ax2.set_xlabel('Target Interface k')
-    ax2.set_ylabel('Starting Interface i')
-    ax2.set_title('Momentum Effects', fontsize=12)
-    
-    # Plot 3: Observed vs Diffusive Probabilities Comparison (bottom-left)
-    ax3 = axes[1, 0]
-    
-    # Collect valid data points
-    valid_points = []
-    for i in range(len(interfaces)):
-        for j in range(len(interfaces)):
-            if i != j and not np.isnan(diffusive_q[i, j]) and not np.isnan(momentum_effects[i, j]):
-                if q_weights is None or q_weights[i, j] >= min_samples:
-                    observed = diffusive_q[i, j] * (1 + momentum_effects[i, j])  # q_matrix value
-                    significant = momentum_significance[i, j]
-                    valid_points.append((diffusive_q[i, j], observed, significant, f"{i}→{j}"))
-    
-    if valid_points:
-        # Unpack the valid points
-        x_vals, y_vals, significance, labels = zip(*valid_points)
-        
-        # Plot the ideal 1:1 line
-        max_val = max(max(x_vals), max(y_vals)) * 1.1
-        min_val = min(min(x_vals), min(y_vals)) * 0.9
-        ax3.plot([min_val, max_val], [min_val, max_val], '--', color='gray', alpha=0.7)
-        
-        # Plot each point, colored by significance
-        for x, y, sig, label in zip(x_vals, y_vals, significance, labels):
-            color = 'red' if sig else 'blue'
-            ax3.scatter(x, y, color=color, s=50, alpha=0.7)
-            ax3.annotate(label, (x, y), xytext=(5, 5), textcoords='offset points', fontsize=8)
-        
-        ax3.set_xlabel('Diffusive Probability (Free Energy Model)')
-        ax3.set_ylabel('Observed Probability')
-        ax3.set_title('Observed vs Diffusive Transition Probabilities', fontsize=12)
-        ax3.set_xlim(min_val, max_val)
-        ax3.set_ylim(min_val, max_val)
-        ax3.grid(True, alpha=0.3)
-        
-        # Add legend
-        ax3.scatter([], [], color='blue', label='Free Energy Dominated')
-        ax3.scatter([], [], color='red', label='Momentum Effects')
-        ax3.legend()
-    else:
-        ax3.text(0.5, 0.5, "Insufficient valid data for comparison",
-                ha='center', va='center', transform=ax3.transAxes)
-    
-    # Plot 4: Interface Pair Classification (bottom-right)
-    ax4 = axes[1, 1]
-    
-    # Plot interface pair classifications as colored bars
-    x = np.arange(len(interfaces) - 1)
-    ax4.bar(x, [1] * len(x), color=colors, alpha=0.7)
-    
-    # Add labels for each interface pair
-    for i, cls in enumerate(classification):
-        ax4.text(i, 0.5, f"{cls.replace('_', '\n')}", 
-               ha='center', va='center', fontsize=8, color='white' if 'momentum' in cls else 'black')
-    
-    ax4.set_xticks(x)
-    ax4.set_xticklabels([f"{i}→{i+1}" for i in range(len(interfaces) - 1)])
-    ax4.set_yticks([])  # No y-ticks needed
-    ax4.set_xlabel('Interface Pair')
-    ax4.set_title('Interface Pair Classification', fontsize=12)
-    
-    # Create custom legend for the classification
-    from matplotlib.patches import Patch
-    legend_elements = [
-        Patch(facecolor=class_colors.get('free_energy_dominated', 'blue'), label='Free Energy Dominated'),
-        Patch(facecolor=class_colors.get('momentum_dominated', 'red'), label='Momentum Dominated'),
-        Patch(facecolor=class_colors.get('symmetric_momentum', 'purple'), label='Symmetric Momentum'),
-        Patch(facecolor=class_colors.get('strong_momentum', 'darkred'), label='Strong Momentum Effects'),
-        Patch(facecolor=class_colors.get('flat_high_momentum', 'orange'), label='Flat + High Momentum')
-    ]
-    ax4.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, -0.15), ncol=2)
-    
-    # Add overall classification and metrics as text
-    metrics_text = (
-        f"Overall Classification: {overall.replace('_', ' ').title()}\n"
-        f"Average Momentum Effect: {analysis_results['avg_momentum_effect']:.3f}\n"
-        f"Average Free Energy: {analysis_results['avg_free_energy']:.3f} kT\n"
-        f"Average Probabilities: {analysis_results['avg_probabilities']:.3f}"
+    # Find strongly connected components (nodes with paths in both directions)
+    n_strong, strong_labels = connected_components(
+        sparse.csr_matrix(graph), directed=True, connection='strong'
     )
-    fig.text(0.02, 0.02, metrics_text, fontsize=10, wrap=True)
     
-    # Add overall title
-    plt.suptitle(f"Momentum vs. Free Energy Analysis - {overall.replace('_', ' ').title()}", fontsize=16)
+    # Find weakly connected components (nodes connected ignoring direction)
+    n_weak, weak_labels = connected_components(
+        sparse.csr_matrix(graph), directed=True, connection='weak'
+    )
     
-    plt.tight_layout(rect=[0, 0.05, 1, 0.95])  # Adjust for the overall title and metrics text
+    # Check path existence and get predecessor information
+    try:
+        path_lengths, predecessors = shortest_path(
+            sparse.csr_matrix(graph), directed=True, 
+            indices=source_state, return_predecessors=True
+        )
+        direct_path_exists = np.isfinite(path_lengths[sink_idx])
+    except:
+        direct_path_exists = False
+        predecessors = None
+        path_lengths = None
     
-    return fig
+    # Create NetworkX graph for visualization
+    G = nx.DiGraph()
+    
+    # Add edges with transition probabilities as weights
+    for i in range(n_states):
+        for j in range(n_states):
+            if M[i, j] > 0:
+                G.add_edge(i, j, weight=M[i, j])
+    
+    # Find critical nodes using edge betweenness centrality
+    # This identifies bottleneck edges without enumerating all paths
+    if direct_path_exists:
+        # Calculate edge betweenness centrality only for edges on paths between source and sink
+        # This is much more efficient than calculating for the entire graph
+        subgraph_nodes = set()
+        
+        # Use a different algorithm to find a sample of paths for visualization
+        # First use Yen's algorithm to find k-shortest paths
+        try:
+            sample_paths = []
+            for i, path in enumerate(nx.shortest_simple_paths(G, source_state, sink_idx, weight='weight')):
+                if i >= max_paths:
+                    break
+                sample_paths.append(path)
+                subgraph_nodes.update(path)
+        except nx.NetworkXNoPath:
+            sample_paths = []
+        
+        # If we couldn't get paths with the above method, reconstruct at least one path using predecessors
+        if not sample_paths and predecessors is not None:
+            path = [sink_idx]
+            current = sink_idx
+            while current != source_state:
+                if current < 0 or predecessors[current] < 0:
+                    # No path found
+                    path = []
+                    break
+                current = predecessors[current]
+                path.append(current)
+            path.reverse()
+            if path:
+                sample_paths.append(path)
+                subgraph_nodes.update(path)
+        
+        # Find critical nodes using a different approach
+        if len(subgraph_nodes) > 2:  # If we have nodes besides source and sink
+            # Create a subgraph containing only the nodes on the sampled paths
+            subgraph = G.subgraph(subgraph_nodes).copy()
+            
+            # See if source and sink are still connected if we remove each node
+            critical_nodes = set()
+            for node in subgraph_nodes:
+                # Skip source and sink
+                if node == source_state or node == sink_idx:
+                    continue
+                    
+                # Remove node and check connectivity
+                temp_graph = subgraph.copy()
+                temp_graph.remove_node(node)
+                if not nx.has_path(temp_graph, source_state, sink_idx):
+                    critical_nodes.add(node)
+        else:
+            critical_nodes = set()
+    else:
+        sample_paths = []
+        critical_nodes = set()
+    
+    # Create visualization
+    plt.figure(figsize=(10, 8))
+    
+    # Use a more deterministic layout if possible
+    try:
+        pos = nx.kamada_kawai_layout(G)
+    except:
+        pos = nx.spring_layout(G, seed=42)  # Use seed for reproducibility
+    
+    # Node colors based on strongly connected component
+    node_colors = [strong_labels[i] for i in range(len(pos.values()))]
+    
+    # Draw the basic graph with node labels using state_labels
+    nx.draw(G, pos, with_labels=True, node_color=node_colors, 
+           labels={int(i): state_labels[i] for i in pos.keys()},
+           cmap=plt.cm.tab10, node_size=500, alpha=0.8)
+    
+    # Highlight source and sink
+    nx.draw_networkx_nodes(G, pos, nodelist=[source_state], 
+                          node_color='green', node_size=700)
+    nx.draw_networkx_nodes(G, pos, nodelist=[sink_idx], 
+                          node_color='red', node_size=700)
+    
+    # Highlight critical nodes
+    if critical_nodes:
+        nx.draw_networkx_nodes(G, pos, nodelist=list(critical_nodes), 
+                              node_color='yellow', node_size=600)
+    
+    # If a direct path exists, highlight one of the paths
+    if sample_paths:
+        shortest = sample_paths[0]  # Just use the first path
+        path_edges = list(zip(shortest[:-1], shortest[1:]))
+        nx.draw_networkx_edges(G, pos, edgelist=path_edges, 
+                              edge_color='red', width=2)
+    
+    plt.title(f"Network Analysis: {n_strong} Strong Components, {n_weak} Weak Components")
+    
+    # Create legend patches with state_labels for source and sink
+    legend_patches = [
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='green', 
+                 markersize=10, label=f'Source State: {state_labels[source_state]}'),
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='red', 
+                 markersize=10, label=f'Sink State: {state_labels[sink_idx]}')
+    ]
+    if critical_nodes:
+        legend_patches.append(
+            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='yellow', 
+                     markersize=10, label='Critical Bridge States')
+        )
+    plt.legend(handles=legend_patches, loc='upper right')
+    
+    return {
+        'n_strong_components': n_strong,
+        'strong_component_labels': strong_labels,
+        'n_weak_components': n_weak,
+        'weak_component_labels': weak_labels,
+        'direct_path_exists': direct_path_exists,
+        'critical_nodes': critical_nodes,
+        'sample_paths': sample_paths,
+        'network_graph': G
+    }
+
+def find_network_bottlenecks(M, source_state=0, sink_state=-1):
+    """
+    Identify bottlenecks in the transition network where removing
+    a small number of edges would disconnect source from sink.
+    
+    Parameters
+    ----------
+    M : np.ndarray
+        Transition matrix representing the Markov state model
+    source_state : int, optional
+        Index of the source state (default: 0)
+    sink_state : int, optional
+        Index of the sink state (default: -1)
+        
+    Returns
+    -------
+    dict
+        Dictionary containing bottleneck analysis results
+    """
+    import networkx as nx
+    
+    n_states = M.shape[0]
+    sink_idx = n_states - 1 if sink_state == -1 else sink_state
+    
+    # Generate state labels for the plot
+    state_labels = generate_state_labels(n_states//2)
+    
+    # Create weighted directed graph
+    G = nx.DiGraph()
+    
+    # Add edges with transition probabilities as weights
+    for i in range(n_states):
+        for j in range(n_states):
+            if M[i,j] > 0:
+                G.add_edge(i, j, capacity=M[i,j])
+    
+    # Calculate minimum cut
+    try:
+        cut_value, partition = nx.minimum_cut(G, source_state, sink_idx)
+        reachable, non_reachable = partition
+        
+        # Find the edges in the cut
+        cut_edges = []
+        for u in reachable:
+            for v in non_reachable:
+                if G.has_edge(u, v):
+                    cut_edges.append((u, v))
+        
+        # Visualize the network with cut highlighted
+        plt.figure(figsize=(10, 8))
+        pos = nx.spring_layout(G)
+        
+        # Draw the basic graph with updated node labels
+        nx.draw(G, pos, with_labels=True, node_color='lightblue', 
+               labels={int(i): state_labels[int(i)] for i in pos.keys()},
+               node_size=500, alpha=0.8)
+        
+        # Highlight source and sink
+        nx.draw_networkx_nodes(G, pos, nodelist=[source_state], 
+                              node_color='green', node_size=700)
+        nx.draw_networkx_nodes(G, pos, nodelist=[sink_idx], 
+                              node_color='red', node_size=700)
+        
+        # Highlight cut edges
+        nx.draw_networkx_edges(G, pos, edgelist=cut_edges, 
+                              edge_color='red', width=2, style='dashed')
+        
+        plt.title(f"Network Min-Cut Analysis: Cut Value = {cut_value:.4f}")
+        
+        # Create legend with state labels for source and sink
+        legend_patches = [
+            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='green', 
+                     markersize=10, label=f'Source State: {state_labels[source_state]}'),
+            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='red', 
+                     markersize=10, label=f'Sink State: {state_labels[sink_idx]}'),
+            plt.Line2D([0], [0], color='red', linestyle='dashed', 
+                     label='Min-Cut Edges')
+        ]
+        plt.legend(handles=legend_patches, loc='upper right')
+        
+        return {
+            'cut_value': cut_value,
+            'reachable_from_source': reachable,
+            'non_reachable_from_source': non_reachable,
+            'cut_edges': cut_edges
+        }
+    except nx.NetworkXError:
+        print("No path exists from source to sink.")
+        return None
+    
+def calculate_effective_transitions(M, source_state=0, sink_state=-1, max_steps=100):
+    """
+    Calculate effective transition probabilities from source to sink,
+    factoring in the possibility of multi-step transitions.
+    
+    Parameters
+    ----------
+    M : np.ndarray
+        Transition matrix representing the Markov state model
+    source_state : int, optional
+        Index of the source state (default: 0)
+    sink_state : int, optional
+        Index of the sink state (default: -1)
+    max_steps : int, optional
+        Maximum number of steps to consider (default: 100)
+        
+    Returns
+    -------
+    dict
+        Dictionary containing effective transition probabilities and paths
+    """    
+    n_states = M.shape[0]
+    sink_idx = n_states - 1 if sink_state == -1 else sink_state
+    
+    # Generate state labels for the plot
+    state_labels = generate_state_labels(n_states)
+    
+    # Initialize probability matrix for different number of steps
+    P = np.zeros((max_steps+1, n_states, n_states))
+    P[0] = np.eye(n_states)  # Identity matrix for 0 steps
+    P[1] = M  # 1-step transition is just M
+    
+    # Calculate multi-step transition matrices
+    for i in range(2, max_steps+1):
+        P[i] = np.dot(P[i-1], M)
+    
+    # Extract source-to-sink probabilities for each number of steps
+    source_sink_probs = np.zeros(max_steps+1)
+    for i in range(max_steps+1):
+        source_sink_probs[i] = P[i][source_state, sink_idx]
+    
+    # Calculate cumulative probability (probability of reaching within n steps)
+    # This accounts for the absorbing nature of the sink state
+    cumulative_probs = np.zeros(max_steps+1)
+    curr_prob = 0
+    
+    for i in range(1, max_steps+1):
+        # Probability of reaching in exactly i steps without having reached earlier
+        new_arrival_prob = source_sink_probs[i] - curr_prob
+        if new_arrival_prob < 0:  # Numerical issues
+            new_arrival_prob = 0
+        curr_prob += new_arrival_prob
+        cumulative_probs[i] = curr_prob
+    
+    # Plot the results
+    plt.figure(figsize=(10, 6))
+    
+    plt.plot(range(max_steps+1), source_sink_probs, 'b.-', label='N-step probability')
+    plt.plot(range(max_steps+1), cumulative_probs, 'r.-', label='Cumulative probability')
+    
+    plt.xlabel('Number of Steps')
+    plt.ylabel('Probability')
+    plt.title(f'Effective Transition Probability from {state_labels[source_state]} to {state_labels[sink_idx]}')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    return {
+        'n_step_probabilities': source_sink_probs,
+        'cumulative_probabilities': cumulative_probs,
+        'effective_probability': cumulative_probs[-1]
+    }
+
+def pcca_analysis(M, n_clusters):
+    """
+    Perform PCCA+ analysis on the Markov State Model transition matrix.
+
+    Parameters
+    ----------
+    M : np.ndarray
+        Transition matrix representing the Markov state model.
+    n_clusters : int
+        Number of metastable states (clusters) to identify.
+
+    Returns
+    -------
+    pcca : dpt.markov.PCCA
+        PCCA+ object containing the clustering results.
+    """
+    # Generate state labels for printing
+    n_states = M.shape[0]
+    state_labels = generate_state_labels(n_states)
+    
+    # Ensure the transition matrix is a valid stochastic matrix
+    assert np.allclose(M.sum(axis=1), 1), "Rows of the transition matrix must sum to 1."
+
+    # Create a MarkovStateModel object
+    msm = dpt.markov.msm.MarkovStateModel(M)
+
+    # Perform PCCA+ analysis
+    pcca = dpt.markov.pcca(M, n_clusters)
+
+    # Print the membership matrix
+    print("PCCA+ Membership Matrix:")
+    print(pcca.memberships)
+
+    # Print the metastable states with state labels
+    print("Metastable States:")
+    for i, state_set in enumerate(pcca.sets):
+        # Convert state indices to state labels
+        labeled_states = [state_labels[idx] for idx in state_set]
+        print(f"State {i+1}: {labeled_states} (indices: {state_set})")
+
+    return pcca
+
+###################################
+# Older Memory Analysis Functions
+###################################
 
 def analyze_memory_vs_free_energy_effects(interfaces, q_matrix, q_weights=None, min_samples=5, memory_threshold=0.3):
     """
@@ -3923,237 +4360,6 @@ def visualize_turn_based_analysis(analysis_results, interfaces, q_matrix, q_weig
     
     return fig
 
-def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_samples=5, account_for_distances=True):
-    """
-    Estimate free energy differences between interfaces from conditional crossing probabilities,
-    taking into account physical distances between interfaces. Uses only the first valid forward
-    and backward estimates (closest to the transition) to eliminate biases from long-term memory effects.
-    
-    Parameters:
-    -----------
-    interfaces : list or array
-        The positions of the interfaces along the reaction coordinate
-    q_matrix : numpy.ndarray
-        Matrix of conditional crossing probabilities where q[i,k] is the probability
-        that a path starting with a turn at interface i and reaching k-1 (for i<k) 
-        or k+1 (for i>k) will make a turn at interface k
-    q_weights : numpy.ndarray, optional
-        Matrix of sample counts for each q_matrix value
-    min_samples : int, optional
-        Minimum number of samples required to consider a q value valid
-    account_for_distances : bool, optional
-        Whether to account for physical distances between interfaces (default: True).
-        If False, interfaces are treated as having uniform spacing regardless of their actual values.
-        
-    Returns:
-    --------
-    delta_G : numpy.ndarray
-        Matrix of free energy differences between interfaces
-    """
-    n_interfaces = len(interfaces)
-    delta_G = np.zeros((n_interfaces, n_interfaces))
-    delta_G.fill(np.nan)
-    
-    # Check if interfaces have physical values we can use
-    has_physical_distances = isinstance(interfaces[0], (int, float)) and len(interfaces) > 1 and account_for_distances
-    
-    # Helper function to check if a q value is valid and usable
-    def is_valid_q(i, k):
-        return (not np.isnan(q_matrix[i, k]) and
-                (q_weights is None or q_weights[i, k] >= min_samples) and
-                q_matrix[i, k] > 0 and q_matrix[i, k] < 1)
-    
-    # For each pair of adjacent interfaces, estimate the free energy difference
-    for i in range(n_interfaces - 1):
-        forward_estimate = None
-        backward_estimate = None
-        
-        # Forward cascade: try q[i-1,i+1], then q[i-2,i+1], etc.
-        # Only take the first valid estimate (closest to the transition)
-        for start in range(i-1, -1, -1):  # Start from i-1 and go backwards to 0
-            if is_valid_q(start, i+1):
-                # First valid forward transition from 'start' to i+1 (going through i)
-                q_fw = q_matrix[start, i+1]
-                weight = q_weights[start, i+1] if q_weights is not None else 1.0
-                
-                # Adjust for physical distances
-                if has_physical_distances and i > 0:
-                    dist_i_to_ip1 = interfaces[i+1] - interfaces[i]
-                    dist_im1_to_i = interfaces[i] - interfaces[i-1]
-                    geo_q = dist_im1_to_i / (dist_i_to_ip1 + dist_im1_to_i) if (dist_i_to_ip1 + dist_im1_to_i) > 0 else 1.0
-                    dG_obs = -np.log(q_fw / (1 - q_fw))
-                    dG_geo = -np.log(geo_q / (1 - geo_q))
-                    dG = dG_obs - dG_geo
-                else:
-                    dG = -np.log(q_fw / (1 - q_fw))
-                
-                forward_estimate = dG
-                print(f"Forward ΔG estimate for interfaces {i}-{i+1}: {dG:.4f} using q[{start},{i+1}]={q_fw:.4f}, weight={weight:.1f}")
-                break  # Take only the first valid estimate
-        
-        # Backward cascade: try q[i+2,i], then q[i+3,i], etc.
-        # Only take the first valid estimate (closest to the transition)
-        for start in range(i+2, n_interfaces):
-            if is_valid_q(start, i):
-                # First valid backward transition from 'start' to i (going through i+1)
-                q_bw = q_matrix[start, i]
-                weight = q_weights[start, i] if q_weights is not None else 1.0
-                
-                # Adjust for physical distances
-                if has_physical_distances and i+1 < n_interfaces-1:
-                    dist_ip1_to_i = interfaces[i+1] - interfaces[i]
-                    dist_ip2_to_ip1 = interfaces[i+2] - interfaces[i+1]
-                    geo_q = dist_ip2_to_ip1 / (dist_ip2_to_ip1 + dist_ip1_to_i) if (dist_ip2_to_ip1 + dist_ip1_to_i) > 0 else 1.0
-                    dG_obs = np.log(q_bw / (1 - q_bw))
-                    dG_geo = np.log(geo_q / (1 - geo_q))
-                    dG = dG_obs - dG_geo
-                else:
-                    dG = np.log(q_bw / (1 - q_bw))
-                
-                backward_estimate = dG
-                print(f"Backward ΔG estimate for interfaces {i}-{i+1}: {dG:.4f} using q[{start},{i}]={q_bw:.4f}, weight={weight:.1f}")
-                break  # Take only the first valid estimate
-        
-        # Combine forward and backward estimates if available
-        if forward_estimate is not None and backward_estimate is not None:
-            # Take the average of the forward and backward estimates
-            # This helps eliminate biases from the timestep
-            combined_dG = (forward_estimate + backward_estimate) / 2.0
-            
-            # Report the difference to highlight any systematic bias
-            bias = forward_estimate - backward_estimate
-            print(f"Combined ΔG for interfaces {i}-{i+1}: {combined_dG:.4f} (forward-backward bias: {bias:.4f})")
-            
-            delta_G[i, i+1] = combined_dG
-            delta_G[i+1, i] = -combined_dG
-            
-        elif forward_estimate is not None:
-            # Only forward estimate available
-            delta_G[i, i+1] = forward_estimate
-            delta_G[i+1, i] = -forward_estimate
-            print(f"Using only forward estimate for interfaces {i}-{i+1}: {forward_estimate:.4f}")
-            
-        elif backward_estimate is not None:
-            # Only backward estimate available
-            delta_G[i, i+1] = backward_estimate
-            delta_G[i+1, i] = -backward_estimate
-            print(f"Using only backward estimate for interfaces {i}-{i+1}: {backward_estimate:.4f}")
-            
-        else:
-            print(f"No valid estimates found for interfaces {i}-{i+1}")
-    
-    return delta_G
-
-def plot_free_energy_landscape(interfaces, q_matrix, q_weights=None, min_samples=5):
-    """
-    Plot the free energy differences between interfaces.
-    
-    This function visualizes the free energy landscape used in the diffusive reference
-    calculation, showing both the free energy differences between adjacent interfaces
-    and the cumulative free energy profile.
-    
-    Parameters:
-    -----------
-    interfaces : list or array
-        The positions of the interfaces along the reaction coordinate
-    q_matrix : numpy.ndarray
-        Matrix of conditional crossing probabilities
-    q_weights : numpy.ndarray, optional
-        Matrix of sample counts for each q_matrix value
-    min_samples : int, optional
-        Minimum number of samples required to consider a q value valid
-        
-    Returns:
-    --------
-    fig : matplotlib.figure.Figure
-        Figure containing the free energy landscape plots
-    """
-    from matplotlib.patches import Patch
-    # Estimate free energy differences
-    delta_G = estimate_free_energy_differences(interfaces, q_matrix, q_weights, min_samples)
-    
-    # Calculate cumulative free energy profile (setting first interface as reference point)
-    cumulative_G = np.zeros(len(interfaces))
-    for i in range(1, len(interfaces)):
-        # Add up all the delta_G values from the first interface
-        valid_path = True
-        for j in range(i):
-            if np.isnan(delta_G[j, j+1]):
-                valid_path = False
-                break
-            cumulative_G[i] += delta_G[j, j+1]
-        
-        if not valid_path:
-            cumulative_G[i] = np.nan
-    
-    # Create figure with two subplots
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-    
-    # Plot 1: Free energy differences between adjacent interfaces
-    adjacent_dG = np.array([delta_G[i, i+1] for i in range(len(interfaces)-1)])
-    bar_positions = np.arange(len(interfaces)-1)
-    bar_width = 0.7
-    
-    # Create bars with color indicating uphill/downhill
-    colors = ['red' if dg > 0 else 'green' if dg < 0 else 'gray' for dg in adjacent_dG]
-    bars = ax1.bar(bar_positions, adjacent_dG, width=bar_width, color=colors, alpha=0.7)
-    
-    # Add value annotations on bars
-    for i, bar in enumerate(bars):
-        height = bar.get_height()
-        if not np.isnan(height):
-            y_pos = 0.3 if height < 0 else height + 0.1
-            va = 'bottom' if height >= 0 else 'top'
-            ax1.text(bar.get_x() + bar.get_width()/2, y_pos, f"{height:.2f}", 
-                    ha='center', va=va, fontsize=9)
-    
-    # Configure the first subplot
-    ax1.set_xlabel('Interface Pair Index')
-    ax1.set_ylabel('Free Energy Difference ΔG (kT)')
-    ax1.set_title('Free Energy Differences Between Adjacent Interfaces', fontsize=12)
-    ax1.set_xticks(bar_positions)
-    ax1.set_xticklabels([f"{i}→{i+1}" for i in range(len(interfaces)-1)])
-    ax1.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
-    ax1.grid(axis='y', alpha=0.3)
-    
-    legend_elements = [
-        Patch(facecolor='red', alpha=0.7, label='Uphill (Barrier)'),
-        Patch(facecolor='green', alpha=0.7, label='Downhill (Favorable)')
-    ]
-    ax1.legend(handles=legend_elements, loc='best')
-    
-    # Plot 2: Cumulative free energy profile
-    ax2.plot(interfaces, cumulative_G, 'o-', linewidth=2, color='blue')
-    
-    # Add marker points with annotations
-    for i, (pos, g) in enumerate(zip(interfaces, cumulative_G)):
-        if not np.isnan(g):
-            ax2.plot(pos, g, 'o', markersize=8, color='blue')
-            ax2.text(pos, g + 0.1, f"{g:.2f}", ha='center', va='bottom', fontsize=9)
-    
-    # Configure the second subplot
-    ax2.set_xlabel('Interface Position λ')
-    ax2.set_ylabel('Cumulative Free Energy G(λ) - G(λ₀) (kT)')
-    ax2.set_title('Free Energy Profile Along Interface Coordinate', fontsize=12)
-    ax2.grid(True, alpha=0.3)
-    
-    # Add informational text
-    info_text = """
-    Free energy differences estimated from TIS data:
-    • Used to calculate diffusive reference probabilities
-    • Red bars indicate barriers (ΔG > 0)
-    • Green bars indicate favorable transitions (ΔG < 0)
-    
-    The cumulative profile shows the estimated free energy
-    landscape along the reaction coordinate.
-    """
-    fig.text(0.02, 0.02, info_text, fontsize=10, wrap=True)
-    
-    plt.tight_layout(rect=[0, 0.07, 1, 0.95])
-    fig.suptitle('Estimated Free Energy Landscape for Diffusive Reference', fontsize=14)
-    
-    return fig
-
 def plot_destination_bias(p, interfaces=None, ax_forward=None, ax_backward=None, state_labels=None):
     """
     Create separate visualizations showing the average destination interface for forward 
@@ -4389,391 +4595,3 @@ def plot_directional_bias(ax, x_values, avg_destinations, expected_destinations,
     
     # ax.text(0.02, 0.02, info_text, transform=ax.transAxes, fontsize=9,
     #       bbox=dict(facecolor='white', alpha=0.9, boxstyle='round'), va='bottom')
-
-def analyze_network_connectivity(M, source_state=0, sink_state=-1, max_paths=10):
-    """
-    Analyze the connectivity of a transition network efficiently without enumerating all paths.
-    
-    Parameters
-    ----------
-    M : np.ndarray
-        Transition matrix representing the Markov state model
-    source_state : int, optional
-        Index of the source state (default: 0)
-    sink_state : int, optional
-        Index of the sink state (default: -1)
-    max_paths : int, optional
-        Maximum number of paths to sample for visualization (default: 10)
-        
-    Returns
-    -------
-    dict
-        Dictionary containing connectivity analysis results
-    """
-    from scipy import sparse
-    from scipy.sparse.csgraph import connected_components, shortest_path
-    import networkx as nx
-
-    n_states = M.shape[0]
-    sink_idx = n_states - 1 if sink_state == -1 else sink_state
-    
-    # Generate state labels for the plot
-    state_labels = generate_state_labels(n_states//2)
-    
-    # Create a graph representation where edges exist if M[i,j] > 0
-    graph = (M > 0).astype(int)
-    
-    # Find strongly connected components (nodes with paths in both directions)
-    n_strong, strong_labels = connected_components(
-        sparse.csr_matrix(graph), directed=True, connection='strong'
-    )
-    
-    # Find weakly connected components (nodes connected ignoring direction)
-    n_weak, weak_labels = connected_components(
-        sparse.csr_matrix(graph), directed=True, connection='weak'
-    )
-    
-    # Check path existence and get predecessor information
-    try:
-        path_lengths, predecessors = shortest_path(
-            sparse.csr_matrix(graph), directed=True, 
-            indices=source_state, return_predecessors=True
-        )
-        direct_path_exists = np.isfinite(path_lengths[sink_idx])
-    except:
-        direct_path_exists = False
-        predecessors = None
-        path_lengths = None
-    
-    # Create NetworkX graph for visualization
-    G = nx.DiGraph()
-    
-    # Add edges with transition probabilities as weights
-    for i in range(n_states):
-        for j in range(n_states):
-            if M[i, j] > 0:
-                G.add_edge(i, j, weight=M[i, j])
-    
-    # Find critical nodes using edge betweenness centrality
-    # This identifies bottleneck edges without enumerating all paths
-    if direct_path_exists:
-        # Calculate edge betweenness centrality only for edges on paths between source and sink
-        # This is much more efficient than calculating for the entire graph
-        subgraph_nodes = set()
-        
-        # Use a different algorithm to find a sample of paths for visualization
-        # First use Yen's algorithm to find k-shortest paths
-        try:
-            sample_paths = []
-            for i, path in enumerate(nx.shortest_simple_paths(G, source_state, sink_idx, weight='weight')):
-                if i >= max_paths:
-                    break
-                sample_paths.append(path)
-                subgraph_nodes.update(path)
-        except nx.NetworkXNoPath:
-            sample_paths = []
-        
-        # If we couldn't get paths with the above method, reconstruct at least one path using predecessors
-        if not sample_paths and predecessors is not None:
-            path = [sink_idx]
-            current = sink_idx
-            while current != source_state:
-                if current < 0 or predecessors[current] < 0:
-                    # No path found
-                    path = []
-                    break
-                current = predecessors[current]
-                path.append(current)
-            path.reverse()
-            if path:
-                sample_paths.append(path)
-                subgraph_nodes.update(path)
-        
-        # Find critical nodes using a different approach
-        if len(subgraph_nodes) > 2:  # If we have nodes besides source and sink
-            # Create a subgraph containing only the nodes on the sampled paths
-            subgraph = G.subgraph(subgraph_nodes).copy()
-            
-            # See if source and sink are still connected if we remove each node
-            critical_nodes = set()
-            for node in subgraph_nodes:
-                # Skip source and sink
-                if node == source_state or node == sink_idx:
-                    continue
-                    
-                # Remove node and check connectivity
-                temp_graph = subgraph.copy()
-                temp_graph.remove_node(node)
-                if not nx.has_path(temp_graph, source_state, sink_idx):
-                    critical_nodes.add(node)
-        else:
-            critical_nodes = set()
-    else:
-        sample_paths = []
-        critical_nodes = set()
-    
-    # Create visualization
-    plt.figure(figsize=(10, 8))
-    
-    # Use a more deterministic layout if possible
-    try:
-        pos = nx.kamada_kawai_layout(G)
-    except:
-        pos = nx.spring_layout(G, seed=42)  # Use seed for reproducibility
-    
-    # Node colors based on strongly connected component
-    node_colors = [strong_labels[i] for i in range(len(pos.values()))]
-    
-    # Draw the basic graph with node labels using state_labels
-    nx.draw(G, pos, with_labels=True, node_color=node_colors, 
-           labels={int(i): state_labels[i] for i in pos.keys()},
-           cmap=plt.cm.tab10, node_size=500, alpha=0.8)
-    
-    # Highlight source and sink
-    nx.draw_networkx_nodes(G, pos, nodelist=[source_state], 
-                          node_color='green', node_size=700)
-    nx.draw_networkx_nodes(G, pos, nodelist=[sink_idx], 
-                          node_color='red', node_size=700)
-    
-    # Highlight critical nodes
-    if critical_nodes:
-        nx.draw_networkx_nodes(G, pos, nodelist=list(critical_nodes), 
-                              node_color='yellow', node_size=600)
-    
-    # If a direct path exists, highlight one of the paths
-    if sample_paths:
-        shortest = sample_paths[0]  # Just use the first path
-        path_edges = list(zip(shortest[:-1], shortest[1:]))
-        nx.draw_networkx_edges(G, pos, edgelist=path_edges, 
-                              edge_color='red', width=2)
-    
-    plt.title(f"Network Analysis: {n_strong} Strong Components, {n_weak} Weak Components")
-    
-    # Create legend patches with state_labels for source and sink
-    legend_patches = [
-        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='green', 
-                 markersize=10, label=f'Source State: {state_labels[source_state]}'),
-        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='red', 
-                 markersize=10, label=f'Sink State: {state_labels[sink_idx]}')
-    ]
-    if critical_nodes:
-        legend_patches.append(
-            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='yellow', 
-                     markersize=10, label='Critical Bridge States')
-        )
-    plt.legend(handles=legend_patches, loc='upper right')
-    
-    return {
-        'n_strong_components': n_strong,
-        'strong_component_labels': strong_labels,
-        'n_weak_components': n_weak,
-        'weak_component_labels': weak_labels,
-        'direct_path_exists': direct_path_exists,
-        'critical_nodes': critical_nodes,
-        'sample_paths': sample_paths,
-        'network_graph': G
-    }
-
-def find_network_bottlenecks(M, source_state=0, sink_state=-1):
-    """
-    Identify bottlenecks in the transition network where removing
-    a small number of edges would disconnect source from sink.
-    
-    Parameters
-    ----------
-    M : np.ndarray
-        Transition matrix representing the Markov state model
-    source_state : int, optional
-        Index of the source state (default: 0)
-    sink_state : int, optional
-        Index of the sink state (default: -1)
-        
-    Returns
-    -------
-    dict
-        Dictionary containing bottleneck analysis results
-    """
-    import networkx as nx
-    
-    n_states = M.shape[0]
-    sink_idx = n_states - 1 if sink_state == -1 else sink_state
-    
-    # Generate state labels for the plot
-    state_labels = generate_state_labels(n_states//2)
-    
-    # Create weighted directed graph
-    G = nx.DiGraph()
-    
-    # Add edges with transition probabilities as weights
-    for i in range(n_states):
-        for j in range(n_states):
-            if M[i,j] > 0:
-                G.add_edge(i, j, capacity=M[i,j])
-    
-    # Calculate minimum cut
-    try:
-        cut_value, partition = nx.minimum_cut(G, source_state, sink_idx)
-        reachable, non_reachable = partition
-        
-        # Find the edges in the cut
-        cut_edges = []
-        for u in reachable:
-            for v in non_reachable:
-                if G.has_edge(u, v):
-                    cut_edges.append((u, v))
-        
-        # Visualize the network with cut highlighted
-        plt.figure(figsize=(10, 8))
-        pos = nx.spring_layout(G)
-        
-        # Draw the basic graph with updated node labels
-        nx.draw(G, pos, with_labels=True, node_color='lightblue', 
-               labels={int(i): state_labels[int(i)] for i in pos.keys()},
-               node_size=500, alpha=0.8)
-        
-        # Highlight source and sink
-        nx.draw_networkx_nodes(G, pos, nodelist=[source_state], 
-                              node_color='green', node_size=700)
-        nx.draw_networkx_nodes(G, pos, nodelist=[sink_idx], 
-                              node_color='red', node_size=700)
-        
-        # Highlight cut edges
-        nx.draw_networkx_edges(G, pos, edgelist=cut_edges, 
-                              edge_color='red', width=2, style='dashed')
-        
-        plt.title(f"Network Min-Cut Analysis: Cut Value = {cut_value:.4f}")
-        
-        # Create legend with state labels for source and sink
-        legend_patches = [
-            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='green', 
-                     markersize=10, label=f'Source State: {state_labels[source_state]}'),
-            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='red', 
-                     markersize=10, label=f'Sink State: {state_labels[sink_idx]}'),
-            plt.Line2D([0], [0], color='red', linestyle='dashed', 
-                     label='Min-Cut Edges')
-        ]
-        plt.legend(handles=legend_patches, loc='upper right')
-        
-        return {
-            'cut_value': cut_value,
-            'reachable_from_source': reachable,
-            'non_reachable_from_source': non_reachable,
-            'cut_edges': cut_edges
-        }
-    except nx.NetworkXError:
-        print("No path exists from source to sink.")
-        return None
-    
-def calculate_effective_transitions(M, source_state=0, sink_state=-1, max_steps=100):
-    """
-    Calculate effective transition probabilities from source to sink,
-    factoring in the possibility of multi-step transitions.
-    
-    Parameters
-    ----------
-    M : np.ndarray
-        Transition matrix representing the Markov state model
-    source_state : int, optional
-        Index of the source state (default: 0)
-    sink_state : int, optional
-        Index of the sink state (default: -1)
-    max_steps : int, optional
-        Maximum number of steps to consider (default: 100)
-        
-    Returns
-    -------
-    dict
-        Dictionary containing effective transition probabilities and paths
-    """    
-    n_states = M.shape[0]
-    sink_idx = n_states - 1 if sink_state == -1 else sink_state
-    
-    # Generate state labels for the plot
-    state_labels = generate_state_labels(n_states)
-    
-    # Initialize probability matrix for different number of steps
-    P = np.zeros((max_steps+1, n_states, n_states))
-    P[0] = np.eye(n_states)  # Identity matrix for 0 steps
-    P[1] = M  # 1-step transition is just M
-    
-    # Calculate multi-step transition matrices
-    for i in range(2, max_steps+1):
-        P[i] = np.dot(P[i-1], M)
-    
-    # Extract source-to-sink probabilities for each number of steps
-    source_sink_probs = np.zeros(max_steps+1)
-    for i in range(max_steps+1):
-        source_sink_probs[i] = P[i][source_state, sink_idx]
-    
-    # Calculate cumulative probability (probability of reaching within n steps)
-    # This accounts for the absorbing nature of the sink state
-    cumulative_probs = np.zeros(max_steps+1)
-    curr_prob = 0
-    
-    for i in range(1, max_steps+1):
-        # Probability of reaching in exactly i steps without having reached earlier
-        new_arrival_prob = source_sink_probs[i] - curr_prob
-        if new_arrival_prob < 0:  # Numerical issues
-            new_arrival_prob = 0
-        curr_prob += new_arrival_prob
-        cumulative_probs[i] = curr_prob
-    
-    # Plot the results
-    plt.figure(figsize=(10, 6))
-    
-    plt.plot(range(max_steps+1), source_sink_probs, 'b.-', label='N-step probability')
-    plt.plot(range(max_steps+1), cumulative_probs, 'r.-', label='Cumulative probability')
-    
-    plt.xlabel('Number of Steps')
-    plt.ylabel('Probability')
-    plt.title(f'Effective Transition Probability from {state_labels[source_state]} to {state_labels[sink_idx]}')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    
-    return {
-        'n_step_probabilities': source_sink_probs,
-        'cumulative_probabilities': cumulative_probs,
-        'effective_probability': cumulative_probs[-1]
-    }
-
-def pcca_analysis(M, n_clusters):
-    """
-    Perform PCCA+ analysis on the Markov State Model transition matrix.
-
-    Parameters
-    ----------
-    M : np.ndarray
-        Transition matrix representing the Markov state model.
-    n_clusters : int
-        Number of metastable states (clusters) to identify.
-
-    Returns
-    -------
-    pcca : dpt.markov.PCCA
-        PCCA+ object containing the clustering results.
-    """
-    # Generate state labels for printing
-    n_states = M.shape[0]
-    state_labels = generate_state_labels(n_states)
-    
-    # Ensure the transition matrix is a valid stochastic matrix
-    assert np.allclose(M.sum(axis=1), 1), "Rows of the transition matrix must sum to 1."
-
-    # Create a MarkovStateModel object
-    msm = dpt.markov.msm.MarkovStateModel(M)
-
-    # Perform PCCA+ analysis
-    pcca = dpt.markov.pcca(M, n_clusters)
-
-    # Print the membership matrix
-    print("PCCA+ Membership Matrix:")
-    print(pcca.memberships)
-
-    # Print the metastable states with state labels
-    print("Metastable States:")
-    for i, state_set in enumerate(pcca.sets):
-        # Convert state indices to state labels
-        labeled_states = [state_labels[idx] for idx in state_set]
-        print(f"State {i+1}: {labeled_states} (indices: {state_set})")
-
-    return pcca
