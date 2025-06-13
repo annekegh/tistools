@@ -2019,7 +2019,7 @@ def ploc_memory(pathensembles, interfaces, trr=True):
 
     return plocs
 
-def plot_memory_analysis(pes, q_tot, p, interfaces=None):
+def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     """
     Generate comprehensive visualizations for memory effect analysis in TIS simulations
     with support for non-equidistant interfaces and momentum effects.
@@ -2377,16 +2377,17 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
     ax6 = fig2.add_subplot(gs2[1, 0])
 
     # Calculate memory retention using simplified approach
-    memory_index = calculate_memory_effect_index(q_probs, q_weights)
+    memory_index = calculate_memory_effect_index(q_probs, q_weights, q_errors=q_errors)
 
     # Prepare data for forward plot
-    valid_k = [k for k in range(1, n_interfaces) if not np.isnan(memory_index['forward_variation'][k])]
-    valid_variation = [memory_index['forward_variation'][k] for k in valid_k]
-    valid_positions = [interfaces[k] for k in valid_k]
-    valid_colors = [forward_colors[k-1] for k in valid_k]
-    valid_counts = [memory_index['forward_sample_sizes'][k] for k in valid_k]
-    # Use state_labels for valid_k
-    valid_state_labels = [(f'{k}$\\subset$' if k < n_interfaces-1 else f'{k}') for k in valid_k]
+    valid_k_fwd = [k for k in range(1, n_interfaces) if not np.isnan(memory_index['forward_variation'][k])]
+    valid_variation_fwd = [memory_index['forward_variation'][k] for k in valid_k_fwd]
+    valid_error_fwd = [memory_index['forward_variation_error'][k] if not np.isnan(memory_index['forward_variation_error'][k]) else 0 for k in valid_k_fwd]
+    valid_positions_fwd = [interfaces[k] for k in valid_k_fwd]
+    valid_colors_fwd = [forward_colors[k-1] for k in valid_k_fwd]
+    valid_counts_fwd = [memory_index['forward_sample_sizes'][k] for k in valid_k_fwd]
+    # Use state_labels for valid_k_fwd
+    valid_state_labels_fwd = [(f'{k}$\\subset$' if k < n_interfaces-1 else f'{k}') for k in valid_k_fwd]
 
     # Calculate mean difference with diffusive reference for each target interface
     forward_mean_diff = np.zeros(n_interfaces)
@@ -2403,25 +2404,23 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
                 forward_mean_diff[k] = np.mean(diffs) * 100  # Convert to percentage
     
     # Extract valid mean differences to plot
-    valid_mean_diff = [forward_mean_diff[k] if not np.isnan(forward_mean_diff[k]) else 0 for k in valid_k]
-    # Use state_labels for valid_k
-    valid_state_labels = [(f'{k}$\\supset$' if k < n_interfaces-1 else f'{k}') for k in valid_k]
+    valid_mean_diff_fwd = [forward_mean_diff[k] if not np.isnan(forward_mean_diff[k]) else 0 for k in valid_k_fwd]
 
-    if valid_k:
+    if valid_k_fwd:
         # Create a twin axis for the memory retention plot
         ax6_twin = ax6.twinx()
         ax6_twin.set_ylim(0, 100)
         
         # Create bar plot for variation
-        bars = ax6.bar(valid_positions, valid_variation, color=valid_colors, alpha=0.7, 
-                            width=np.mean(np.diff(interfaces))*0.7)  # Use average interface spacing for width
+        bars = ax6.bar(valid_positions_fwd, valid_variation_fwd, yerr=valid_error_fwd, color=valid_colors_fwd, alpha=0.7, 
+                            width=np.mean(np.diff(interfaces))*0.7, capsize=5)  # Use average interface spacing for width
         
         # Add line plot for mean differences
-        line = ax6_twin.plot(valid_positions, valid_mean_diff, 'o--', color='red', 
+        line = ax6_twin.plot(valid_positions_fwd, valid_mean_diff_fwd, 'o--', color='red', 
                                     linewidth=2, markersize=8, label='Mean |Δq|')
         
         # Add annotations showing variation and sample size
-        for pos, var, count, label in zip(valid_positions, valid_variation, valid_counts, valid_state_labels):
+        for pos, var, count, label in zip(valid_positions_fwd, valid_variation_fwd, valid_counts_fwd, valid_state_labels_fwd):
                 ax6.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
         
         # Configure main plot
@@ -2437,16 +2436,16 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
         ax6_twin.tick_params(axis='y', labelcolor='red')
         
         # Set reasonable y-limits
-        max_y = max(10.0, max(valid_variation) * 1.2) if valid_variation else 10.0
-        ax6.set_ylim(0, max_y)
+        max_y_fwd = max(10.0, max(valid_variation_fwd) * 1.2) if valid_variation_fwd else 10.0
+        ax6.set_ylim(0, max_y_fwd)
         
-        max_y_twin = max(10.0, max(valid_mean_diff) * 1.2) if valid_mean_diff else 10.0
-        ax6_twin.set_ylim(0, max_y_twin)
+        max_y_twin_fwd = max(10.0, max(valid_mean_diff_fwd) * 1.2) if valid_mean_diff_fwd else 10.0
+        ax6_twin.set_ylim(0, max_y_twin_fwd)
         
         # Set x limits based on the valid data points rather than all interfaces
-        if len(valid_positions) > 0:
+        if len(valid_positions_fwd) > 0:
                 padding = np.mean(np.diff(interfaces)) if len(interfaces) > 1 else 0.5
-                ax6.set_xlim(min(valid_positions) - padding/2, max(valid_positions) + padding/2)
+                ax6.set_xlim(min(valid_positions_fwd) - padding/2, max(valid_positions_fwd) + padding/2)
         
         # Create a combined legend
         custom_lines = [
@@ -2455,15 +2454,6 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
         ]
         ax6.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left')
         
-        # Add explanatory text
-        # mem_text = """
-        # Memory Metrics:
-        # • Std. Dev.: Variation in transition probabilities from different starting points 
-        # • Mean |Δq|: Average deviation from diffusive reference (excluding adjacent transitions)
-        # • Higher values indicate stronger memory effects
-        # """
-        # ax6.text(0.02, 0.95, mem_text, transform=ax6.transAxes, fontsize=9,
-        #             bbox=dict(facecolor='white', alpha=0.8), va='top')
     else:
         ax6.text(0.5, 0.5, "Insufficient data for forward memory retention analysis", 
                 ha='center', va='center', transform=ax6.transAxes)
@@ -2474,13 +2464,14 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
     ax7 = fig2.add_subplot(gs2[1, 1])
 
     # Prepare data for backward plot
-    valid_k = [k for k in range(n_interfaces-1) if not np.isnan(memory_index['backward_variation'][k])]
-    valid_variation = [memory_index['backward_variation'][k] for k in valid_k]
-    valid_positions = [interfaces[k] for k in valid_k]
-    valid_colors = [backward_colors[k] for k in valid_k]
-    valid_counts = [memory_index['backward_sample_sizes'][k] for k in valid_k]
-    # Use state_labels for valid_k
-    valid_state_labels = [(f'{k}$\\subset$' if k > 0 else f'{k}') for k in valid_k]
+    valid_k_bwd = [k for k in range(n_interfaces-1) if not np.isnan(memory_index['backward_variation'][k])]
+    valid_variation_bwd = [memory_index['backward_variation'][k] for k in valid_k_bwd]
+    valid_error_bwd = [memory_index['backward_variation_error'][k] if not np.isnan(memory_index['backward_variation_error'][k]) else 0 for k in valid_k_bwd]
+    valid_positions_bwd = [interfaces[k] for k in valid_k_bwd]
+    valid_colors_bwd = [backward_colors[k] for k in valid_k_bwd]
+    valid_counts_bwd = [memory_index['backward_sample_sizes'][k] for k in valid_k_bwd]
+    # Use state_labels for valid_k_bwd
+    valid_state_labels_bwd = [(f'{k}$\\subset$' if k > 0 else f'{k}') for k in valid_k_bwd]
     
     # Calculate mean difference with diffusive reference for each target interface
     backward_mean_diff = np.zeros(n_interfaces)
@@ -2497,23 +2488,23 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
                 backward_mean_diff[k] = np.mean(diffs) * 100  # Convert to percentage
     
     # Extract valid mean differences to plot
-    valid_mean_diff = [backward_mean_diff[k] if not np.isnan(backward_mean_diff[k]) else 0 for k in valid_k]
+    valid_mean_diff_bwd = [backward_mean_diff[k] if not np.isnan(backward_mean_diff[k]) else 0 for k in valid_k_bwd]
 
-    if valid_k:
+    if valid_k_bwd:
         # Create a twin axis for the memory retention plot
         ax7_twin = ax7.twinx()
         ax7_twin.set_ylim(0, 100)
 
         # Create bar plot using interface physical positions
-        bars = ax7.bar(valid_positions, valid_variation, color=valid_colors, alpha=0.7,
-                            width=np.mean(np.diff(interfaces))*0.7)  # Use average interface spacing for width
+        bars = ax7.bar(valid_positions_bwd, valid_variation_bwd, yerr=valid_error_bwd, color=valid_colors_bwd, alpha=0.7,
+                            width=np.mean(np.diff(interfaces))*0.7, capsize=5)  # Use average interface spacing for width
         
         # Add line plot for mean differences
-        line = ax7_twin.plot(valid_positions, valid_mean_diff, 'o--', color='red', 
+        line = ax7_twin.plot(valid_positions_bwd, valid_mean_diff_bwd, 'o--', color='red', 
                                     linewidth=2, markersize=8, label='Mean |Δq|')
         
         # Add annotations showing variation and sample size
-        for pos, var, count, label in zip(valid_positions, valid_variation, valid_counts, valid_state_labels):
+        for pos, var, count, label in zip(valid_positions_bwd, valid_variation_bwd, valid_counts_bwd, valid_state_labels_bwd):
                 ax7.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
         
         # Configure plot
@@ -2529,16 +2520,16 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
         ax7_twin.tick_params(axis='y', labelcolor='red')
         
         # Set reasonable y-limits
-        max_y = max(10.0, max(valid_variation) * 1.2) if valid_variation else 10.0
-        ax7.set_ylim(0, max_y)
+        max_y_bwd = max(10.0, max(valid_variation_bwd) * 1.2) if valid_variation_bwd else 10.0
+        ax7.set_ylim(0, max_y_bwd)
         
-        max_y_twin = max(10.0, max(valid_mean_diff) * 1.2) if valid_mean_diff else 10.0
-        ax7_twin.set_ylim(0, max_y_twin)
+        max_y_twin_bwd = max(10.0, max(valid_mean_diff_bwd) * 1.2) if valid_mean_diff_bwd else 10.0
+        ax7_twin.set_ylim(0, max_y_twin_bwd)
         
         # Set x limits based on the valid data points rather than all interfaces
-        if len(valid_positions) > 0:
+        if len(valid_positions_bwd) > 0:
                 padding = np.mean(np.diff(interfaces)) if len(interfaces) > 1 else 0.5
-                ax7.set_xlim(min(valid_positions) - padding/2, max(valid_positions) + padding/2)
+                ax7.set_xlim(min(valid_positions_bwd) - padding/2, max(valid_positions_bwd) + padding/2)
         
         # Create a combined legend
         custom_lines = [
@@ -2547,9 +2538,6 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None):
         ]
         ax7.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left')
         
-        # Add explanatory text - same as for forward plot
-        # ax7.text(0.02, 0.95, mem_text, transform=ax7.transAxes, fontsize=9,
-        #             bbox=dict(facecolor='white', alpha=0.8), va='top')
     else:
         ax7.text(0.5, 0.5, "Insufficient data for backward memory retention analysis", 
                 ha='center', va='center', transform=ax7.transAxes)
@@ -2866,76 +2854,70 @@ def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples
     # Initialize result arrays
     forward_variation = np.zeros(n_interfaces)
     forward_variation.fill(np.nan)
+    forward_variation_error = np.zeros(n_interfaces)
+    forward_variation_error.fill(np.nan)              
     forward_sample_sizes = np.zeros(n_interfaces, dtype=int)
     
     backward_variation = np.zeros(n_interfaces)
     backward_variation.fill(np.nan)
+    backward_variation_error = np.zeros(n_interfaces)  
+    backward_variation_error.fill(np.nan)              
     backward_sample_sizes = np.zeros(n_interfaces, dtype=int)
     
     # Calculate forward memory effect index (for targets k > 0)
     for k in range(1, n_interfaces):
-        # Collect q values for paths reaching target k from different starting interfaces
         q_values = []
         weights = []
-        q_errors_k = [] # For corresponding errors
-        
-        for i in range(k-1):  # Skip adjacent interface (i=k-1)
+        q_errors_k = []
+
+        for i in range(max(1, k-1)):  # Skip adjacent interface (i=k-1), so range is 0 to k-2
             if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples:
                 q_values.append(q_probs[i, k])
                 weights.append(q_weights[i, k])
                 if q_errors is not None and not np.isnan(q_errors[i, k]):
                     q_errors_k.append(q_errors[i, k])
                 else:
-                    q_errors_k.append(np.nan) # Keep lists aligned
+                    # Fallback to binomial error if block error not available
+                    binomial_error = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
+                    q_errors_k.append(binomial_error)
         
-        if len(q_values) >= 2:  # Need at least 2 starting points for meaningful variation
+        if len(q_values) >= 2:
             q_values = np.array(q_values)
             weights = np.array(weights)
             q_errors_arr = np.array(q_errors_k)
             
-            # Calculate total sample size
             total_samples = np.sum(weights)
             forward_sample_sizes[k] = total_samples
             
-            observed_variance = np.var(q_values)
+            # Calculate standard deviation
+            std_dev = np.std(q_values)
+            forward_variation[k] = std_dev * 100  # Convert to percentage
             
-            mean_noise_variance = 0.0
-            use_block_errors_for_this_k = False
-            if q_errors is not None:
-                valid_error_values = q_errors_arr[~np.isnan(q_errors_arr)]
-                if len(valid_error_values) > 0:
-                    use_block_errors_for_this_k = True
+            # Calculate standard error of the standard deviation using error propagation
+            n = len(q_values)
+            mean_q = np.mean(q_values)
             
-            if use_block_errors_for_this_k:
-                logger.debug(f"Using block errors for noise variance (forward k={k}).")
-                noise_variance_contributions = valid_error_values ** 2 # Variance = (StdError)^2
-                mean_noise_variance = np.mean(noise_variance_contributions)
-            else:
-                if q_errors is not None:
-                    logger.warning(f"No valid block errors for forward target k={k}. Falling back to q(1-q)/N.")
-                else:
-                    logger.debug(f"Block errors not provided for forward target k={k}. Using q(1-q)/N.")
+            # For standard deviation σ = sqrt(Σ(q_i - μ)²/(n-1)), 
+            # the error propagation gives: σ_σ ≈ sqrt(Σ((q_i - μ)/σ * σ_q_i)²) / sqrt(2(n-1))
+            if std_dev > 0 and not np.any(np.isnan(q_errors_arr)):
+                # Partial derivatives of std with respect to each q_i
+                # ∂σ/∂q_i = (q_i - μ) / ((n-1) * σ)
+                partial_derivs = (q_values - mean_q) / ((n - 1) * std_dev)
                 
-                # Fallback: noise_variance = q(1-q)/N
-                # weights elements are >= min_samples, so > 0
-                noise_variance_contributions = q_values * (1 - q_values) / weights
-                valid_noise_fallback = ~np.isnan(noise_variance_contributions) & ~np.isinf(noise_variance_contributions)
-                if np.any(valid_noise_fallback):
-                    mean_noise_variance = np.mean(noise_variance_contributions[valid_noise_fallback])
-                else:
-                    logger.warning(f"Could not compute fallback noise variance for forward k={k}.")
-                    mean_noise_variance = 0.0 # Or np.nan to propagate uncertainty
-
-            memory_variance = observed_variance - mean_noise_variance
-            true_memory_std_dev = np.sqrt(max(0, memory_variance))
-            forward_variation[k] = true_memory_std_dev * 100
+                # Error propagation: σ_σ² = Σ(∂σ/∂q_i)² * σ_q_i²
+                std_error_squared = np.sum((partial_derivs * q_errors_arr) ** 2)
+                std_error = np.sqrt(std_error_squared)
+                
+                forward_variation_error[k] = std_error * 100  # Convert to percentage
+            else:
+                forward_variation_error[k] = np.nan
         else:
             forward_variation[k] = np.nan
+            forward_variation_error[k] = np.nan
             forward_sample_sizes[k] = 0
     
     # Calculate backward memory effect index (for targets k < n_interfaces-1)
     for k in range(n_interfaces - 1):
-        # Collect q values for paths reaching target k from different starting interfaces
         q_values = []
         weights = []
         q_errors_k = []
@@ -2947,55 +2929,44 @@ def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples
                 if q_errors is not None and not np.isnan(q_errors[i, k]):
                     q_errors_k.append(q_errors[i, k])
                 else:
-                    q_errors_k.append(np.nan)
+                    # Fallback to binomial error if block error not available
+                    binomial_error = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
+                    q_errors_k.append(binomial_error)
         
-        if len(q_values) >= 2:  # Need at least 2 starting points for meaningful variation
+        if len(q_values) >= 2:
             q_values = np.array(q_values)
             weights = np.array(weights)
             q_errors_arr = np.array(q_errors_k)
-            
-            # Calculate total sample size
+
             total_samples = np.sum(weights)
             backward_sample_sizes[k] = total_samples
             
-            observed_variance = np.var(q_values)
-
-            mean_noise_variance = 0.0
-            use_block_errors_for_this_k = False
-            if q_errors is not None:
-                valid_error_values = q_errors_arr[~np.isnan(q_errors_arr)]
-                if len(valid_error_values) > 0:
-                    use_block_errors_for_this_k = True
-
-            if use_block_errors_for_this_k:
-                logger.debug(f"Using block errors for noise variance (backward k={k}).")
-                noise_variance_contributions = valid_error_values ** 2
-                mean_noise_variance = np.mean(noise_variance_contributions)
+            # Calculate standard deviation
+            std_dev = np.std(q_values)
+            backward_variation[k] = std_dev * 100  # Convert to percentage
+            
+            # Calculate standard error of the standard deviation
+            n = len(q_values)
+            mean_q = np.mean(q_values)
+            
+            if std_dev > 0 and not np.any(np.isnan(q_errors_arr)):
+                partial_derivs = (q_values - mean_q) / ((n - 1) * std_dev)
+                std_error_squared = np.sum((partial_derivs * q_errors_arr) ** 2)
+                std_error = np.sqrt(std_error_squared)
+                
+                backward_variation_error[k] = std_error * 100  # Convert to percentage
             else:
-                if q_errors is not None:
-                    logger.warning(f"No valid block errors for backward target k={k}. Falling back to q(1-q)/N.")
-                else:
-                    logger.debug(f"Block errors not provided for backward target k={k}. Using q(1-q)/N.")
-
-                noise_variance_contributions = q_values * (1 - q_values) / weights
-                valid_noise_fallback = ~np.isnan(noise_variance_contributions) & ~np.isinf(noise_variance_contributions)
-                if np.any(valid_noise_fallback):
-                    mean_noise_variance = np.mean(noise_variance_contributions[valid_noise_fallback])
-                else:
-                    logger.warning(f"Could not compute fallback noise variance for backward k={k}.")
-                    mean_noise_variance = 0.0
-
-            memory_variance = observed_variance - mean_noise_variance
-            true_memory_std_dev = np.sqrt(max(0, memory_variance))
-            backward_variation[k] = true_memory_std_dev * 100
+                backward_variation_error[k] = np.nan
         else:
             backward_variation[k] = np.nan
+            backward_variation_error[k] = np.nan
             backward_sample_sizes[k] = 0
-
-    # Package results into a dictionary
+            
     memory_index = {
         'forward_variation': forward_variation,
+        'forward_variation_error': forward_variation_error, 
         'backward_variation': backward_variation,
+        'backward_variation_error': backward_variation_error, 
         'forward_sample_sizes': forward_sample_sizes,
         'backward_sample_sizes': backward_sample_sizes
     }

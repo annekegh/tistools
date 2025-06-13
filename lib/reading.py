@@ -1346,7 +1346,7 @@ def read_block_errors(errors_file_path, shape=None):
         headers = header_parts[component_start_index:]
 
         # Process data line
-        error_values_str = lines[data_line_idx].strip().split()[1:] # Skip "# Avg rel error"
+        error_values_str = lines[data_line_idx].strip().split()[4:] # Skip "# Avg rel error"
 
         if len(headers) != len(error_values_str):
             raise ValueError(
