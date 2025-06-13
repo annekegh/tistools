@@ -1277,6 +1277,136 @@ def read_inputfile(filename):
 
     return interfaces,zero_left,timestep
 
+def read_block_errors(errors_file_path, shape=None):
+    """
+    Reads block errors from a file and returns them as a numpy array.
+    It specifically parses the line starting with "# Avg rel error"
+    and uses the "component_i_j" headers to map values to the output array.
+
+    Parameters
+    ----------
+    errors_file_path : str
+        The path to the file containing block errors.
+    shape : tuple, optional
+        The shape of the output array (e.g., (n_components_i, n_components_j)).
+        This is crucial for correctly shaping the output. If None, the function
+        will attempt to infer it, but providing it is safer.
+
+    Returns
+    -------
+    np.ndarray
+        A numpy array containing the block errors from the "# Avg rel error" line.
+
+    Raises
+    ------
+    ValueError
+        If the file cannot be read, required lines are missing,
+        the shape is not specified and cannot be determined, or if there's a
+        mismatch between headers and data.
+    """
+    header_line_start = "# Block-Length"
+    data_line_start = "# Avg rel error"
+    
+    headers = []
+    error_values_str = []
+
+    try:
+        with open(errors_file_path, 'r') as f:
+            lines = f.readlines()
+
+        if not lines:
+            raise ValueError("The file is empty.")
+
+        header_line_idx = -1
+        data_line_idx = -1
+
+        for i, line in enumerate(lines):
+            if line.strip().startswith(header_line_start):
+                header_line_idx = i
+            elif line.strip().startswith(data_line_start):
+                data_line_idx = i
+        
+        if header_line_idx == -1:
+            raise ValueError(f"Header line starting with '{header_line_start}' not found.")
+        if data_line_idx == -1:
+            raise ValueError(f"Data line starting with '{data_line_start}' not found.")
+
+        # Process header line
+        header_parts = lines[header_line_idx].strip().split()
+        # Expecting format like: # Block-Length    component_0_0  component_0_1 ...
+        # Find the start of component headers
+        component_start_index = -1
+        for i, part in enumerate(header_parts):
+            if "component_" in part:
+                component_start_index = i
+                break
+        if component_start_index == -1:
+            raise ValueError("No 'component_i_j' headers found in the header line.")
+        
+        headers = header_parts[component_start_index:]
+
+        # Process data line
+        error_values_str = lines[data_line_idx].strip().split()[1:] # Skip "# Avg rel error"
+
+        if len(headers) != len(error_values_str):
+            raise ValueError(
+                f"Mismatch between number of headers ({len(headers)}) and "
+                f"error values ({len(error_values_str)})."
+            )
+
+        if shape is None:
+            # Attempt to infer shape from the last component_i_j header
+            if not headers:
+                raise ValueError("Cannot infer shape without headers.")
+            last_header = headers[-1]
+            try:
+                parts = last_header.replace("component_", "").split("_")
+                max_i = int(parts[0])
+                max_j = int(parts[1])
+                shape = (max_i + 1, max_j + 1)
+                print(f"Inferred shape: {shape}")
+            except Exception as e:
+                raise ValueError(f"Could not infer shape from headers. Please provide it. Error: {e}")
+        
+        if shape is None:
+             raise ValueError("Shape must be provided or inferable from headers.")
+
+        errors_array = np.full(shape, np.nan, dtype=float)
+
+        for header, val_str in zip(headers, error_values_str):
+            if not header.startswith("component_"):
+                print(f"Warning: Skipping unexpected header format: {header}")
+                continue
+            try:
+                # component_i_j or component_i (if j is implicitly 0 or not present)
+                idx_parts_str = header.replace("component_", "").split("_")
+                i = int(idx_parts_str[0])
+                j = 0
+                if len(idx_parts_str) > 1 : # component_i_j
+                    j = int(idx_parts_str[1])
+                
+                if val_str.lower() == 'nan':
+                    errors_array[i, j] = np.nan
+                else:
+                    errors_array[i, j] = float(val_str)
+            except IndexError:
+                print(f"Warning: Could not parse indices from header '{header}'. Skipping.")
+                continue
+            except ValueError:
+                print(f"Warning: Could not convert value '{val_str}' to float for header '{header}'. Skipping.")
+                continue
+            except Exception as e:
+                print(f"Warning: Error processing header '{header}' with value '{val_str}': {e}. Skipping.")
+                continue
+        
+        return errors_array
+
+    except FileNotFoundError:
+        raise ValueError(f"Error: File not found at {errors_file_path}")
+    except Exception as e:
+        # Catch any other unexpected errors during parsing
+        raise ValueError(f"Error reading block errors from {errors_file_path}: {e}")
+
 def get_LMR_interfaces(interfaces, zero_left):
     """Get the left, middle, right interfaces for each PyRETIS folder-ensemble"""
     LMR_interfaces = []

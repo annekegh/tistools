@@ -1448,6 +1448,7 @@ def display_data(pes, interfaces, n_int=None, weights=None):
         C[i] = np.zeros([len(interfaces), len(interfaces)])
         C_md[i] = np.zeros([len(interfaces), len(interfaces)])
         X_val = compute_weight_matrix(pe, i, interfaces, tr=False, weights=weights)
+        X_val_tr = compute_weight_matrix(pe, i, interfaces, tr=True, weights=weights)
 
         # 1. Displaying raw data, only unweighted X_ijk
         # 2. Displaying weighted data W_ijk
@@ -2801,7 +2802,7 @@ def generate_state_labels(n_interfaces):
     
     return state_labels
 
-def calculate_memory_effect_index(q_probs, q_weights, min_samples=5):
+def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples=5):
     """
     Calculate a simplified memory effect index based solely on the variation in conditional 
     crossing probabilities without normalizing or weighting by sample size.
@@ -2827,6 +2828,40 @@ def calculate_memory_effect_index(q_probs, q_weights, min_samples=5):
         - 'backward_sample_sizes': Number of samples used for backward calculations
     """
     n_interfaces = q_probs.shape[0]
+
+    if q_errors is not None:
+        if isinstance(q_errors, str):
+            # q_errors is a filepath string, try to load it.
+            try:
+                # Assuming q_errors is a path to a text file loadable by np.loadtxt
+                loaded_q_errors = read_block_errors(q_errors, q_probs.shape)
+                if loaded_q_errors.shape != q_probs.shape:
+                    raise RuntimeWarning(
+                        f"Shape of q_errors loaded from file '{q_errors}' ({loaded_q_errors.shape}) "
+                        f"does not match q_probs shape ({q_probs.shape})."
+                    )
+                # Update the local q_errors variable to the loaded numpy array.
+                # Note: The rest of this function does not currently use q_errors.
+                q_errors = loaded_q_errors
+            except FileNotFoundError:
+                q_errors = None  # Reset to None if file not found.
+                raise RuntimeWarning(f"q_errors file not found: {q_errors}")
+            except Exception as e:
+                q_errors = None 
+                raise RuntimeWarning(f"Error loading q_errors from file '{q_errors}': {e}")
+        elif not (isinstance(q_errors, np.ndarray) and q_errors.shape == q_probs.shape):
+            # q_errors is provided, is not a string, but is not a valid ndarray of the correct shape.
+            q_errors = None  # Reset to None to avoid further issues.
+            raise RuntimeWarning(
+                f"If provided, q_errors must be a NumPy array with shape {q_probs.shape} "
+                f"or a path to a loadable text file. "
+                f"Got type {type(q_errors)} with shape {getattr(q_errors, 'shape', 'N/A')}."
+            )
+    # If q_errors was None, it remains None.
+    # If it was a valid np.ndarray, it remains as is.
+    # If it was a string path, it is now a loaded np.ndarray (or an error was raised).
+    # The current function calculate_memory_effect_index does not use q_errors beyond this point.
+
     
     # Initialize result arrays
     forward_variation = np.zeros(n_interfaces)
@@ -2842,45 +2877,121 @@ def calculate_memory_effect_index(q_probs, q_weights, min_samples=5):
         # Collect q values for paths reaching target k from different starting interfaces
         q_values = []
         weights = []
+        q_errors_k = [] # For corresponding errors
         
         for i in range(k-1):  # Skip adjacent interface (i=k-1)
             if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples:
                 q_values.append(q_probs[i, k])
                 weights.append(q_weights[i, k])
+                if q_errors is not None and not np.isnan(q_errors[i, k]):
+                    q_errors_k.append(q_errors[i, k])
+                else:
+                    q_errors_k.append(np.nan) # Keep lists aligned
         
         if len(q_values) >= 2:  # Need at least 2 starting points for meaningful variation
             q_values = np.array(q_values)
             weights = np.array(weights)
+            q_errors_arr = np.array(q_errors_k)
             
             # Calculate total sample size
             total_samples = np.sum(weights)
             forward_sample_sizes[k] = total_samples
             
-            # Simply use standard deviation as the memory effect index (as a percentage)
-            forward_variation[k] = np.std(q_values/np.mean(q_values)) * 100  # Convert to percentage
+            observed_variance = np.var(q_values)
+            
+            mean_noise_variance = 0.0
+            use_block_errors_for_this_k = False
+            if q_errors is not None:
+                valid_error_values = q_errors_arr[~np.isnan(q_errors_arr)]
+                if len(valid_error_values) > 0:
+                    use_block_errors_for_this_k = True
+            
+            if use_block_errors_for_this_k:
+                logger.debug(f"Using block errors for noise variance (forward k={k}).")
+                noise_variance_contributions = valid_error_values ** 2 # Variance = (StdError)^2
+                mean_noise_variance = np.mean(noise_variance_contributions)
+            else:
+                if q_errors is not None:
+                    logger.warning(f"No valid block errors for forward target k={k}. Falling back to q(1-q)/N.")
+                else:
+                    logger.debug(f"Block errors not provided for forward target k={k}. Using q(1-q)/N.")
+                
+                # Fallback: noise_variance = q(1-q)/N
+                # weights elements are >= min_samples, so > 0
+                noise_variance_contributions = q_values * (1 - q_values) / weights
+                valid_noise_fallback = ~np.isnan(noise_variance_contributions) & ~np.isinf(noise_variance_contributions)
+                if np.any(valid_noise_fallback):
+                    mean_noise_variance = np.mean(noise_variance_contributions[valid_noise_fallback])
+                else:
+                    logger.warning(f"Could not compute fallback noise variance for forward k={k}.")
+                    mean_noise_variance = 0.0 # Or np.nan to propagate uncertainty
+
+            memory_variance = observed_variance - mean_noise_variance
+            true_memory_std_dev = np.sqrt(max(0, memory_variance))
+            forward_variation[k] = true_memory_std_dev * 100
+        else:
+            forward_variation[k] = np.nan
+            forward_sample_sizes[k] = 0
     
     # Calculate backward memory effect index (for targets k < n_interfaces-1)
     for k in range(n_interfaces - 1):
         # Collect q values for paths reaching target k from different starting interfaces
         q_values = []
         weights = []
+        q_errors_k = []
         
         for i in range(k+2, n_interfaces):  # Skip adjacent interface (i=k+1)
             if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples:
                 q_values.append(q_probs[i, k])
                 weights.append(q_weights[i, k])
+                if q_errors is not None and not np.isnan(q_errors[i, k]):
+                    q_errors_k.append(q_errors[i, k])
+                else:
+                    q_errors_k.append(np.nan)
         
         if len(q_values) >= 2:  # Need at least 2 starting points for meaningful variation
             q_values = np.array(q_values)
             weights = np.array(weights)
+            q_errors_arr = np.array(q_errors_k)
             
             # Calculate total sample size
             total_samples = np.sum(weights)
             backward_sample_sizes[k] = total_samples
             
-            # Simply use standard deviation as the memory effect index (as a percentage)
-            backward_variation[k] = np.std(q_values/np.mean(q_values)) * 100  # Convert to percentage
-    
+            observed_variance = np.var(q_values)
+
+            mean_noise_variance = 0.0
+            use_block_errors_for_this_k = False
+            if q_errors is not None:
+                valid_error_values = q_errors_arr[~np.isnan(q_errors_arr)]
+                if len(valid_error_values) > 0:
+                    use_block_errors_for_this_k = True
+
+            if use_block_errors_for_this_k:
+                logger.debug(f"Using block errors for noise variance (backward k={k}).")
+                noise_variance_contributions = valid_error_values ** 2
+                mean_noise_variance = np.mean(noise_variance_contributions)
+            else:
+                if q_errors is not None:
+                    logger.warning(f"No valid block errors for backward target k={k}. Falling back to q(1-q)/N.")
+                else:
+                    logger.debug(f"Block errors not provided for backward target k={k}. Using q(1-q)/N.")
+
+                noise_variance_contributions = q_values * (1 - q_values) / weights
+                valid_noise_fallback = ~np.isnan(noise_variance_contributions) & ~np.isinf(noise_variance_contributions)
+                if np.any(valid_noise_fallback):
+                    mean_noise_variance = np.mean(noise_variance_contributions[valid_noise_fallback])
+                else:
+                    logger.warning(f"Could not compute fallback noise variance for backward k={k}.")
+                    mean_noise_variance = 0.0
+
+            memory_variance = observed_variance - mean_noise_variance
+            true_memory_std_dev = np.sqrt(max(0, memory_variance))
+            backward_variation[k] = true_memory_std_dev * 100
+        else:
+            backward_variation[k] = np.nan
+            backward_sample_sizes[k] = 0
+
     # Package results into a dictionary
     memory_index = {
         'forward_variation': forward_variation,
@@ -3091,7 +3202,7 @@ def calculate_diffusive_reference_spacing(interfaces):
     
     return diff_ref
 
-def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_samples=5, momentum_threshold=0.3):
+def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_samples=5, momentum_threshold=0.2):
     """
     Distinguish between free energy effects and momentum effects in turn-based path networks
     by comparing observed transition probabilities with diffusive predictions based on estimated free energies.
@@ -3185,10 +3296,10 @@ def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_sa
                         
                         # Combine geometric factor with free energy difference
                         # For backward transitions: P = 1/(1 + exp(-ΔG))
-                        ref_prob = 1.0 / (1.0 + np.exp(-delta_G[k, k+1]) * (1-geo_q)/geo_q)
+                        ref_prob = 1.0 / (1.0 + np.exp(delta_G[k+1, k]) * (1-geo_q)/geo_q)
                     else:
                         # Without geometry, just use free energy
-                        ref_prob = 1.0 / (1.0 + np.exp(-delta_G[k, k+1]))
+                        ref_prob = 1.0 / (1.0 + np.exp(delta_G[k+1, k]))
                 
                 diffusive_q[i, k] = ref_prob
     
@@ -3203,7 +3314,7 @@ def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_sa
                 # Only consider values with enough samples
                 if q_weights is None or q_weights[i, k] >= min_samples:
                     # Calculate relative deviation as a percentage
-                    momentum_effects[i, k] = (q_matrix[i, k] - diffusive_q[i, k]) / diffusive_q[i, k]
+                    momentum_effects[i, k] = (q_matrix[i, k] - diffusive_q[i, k])
     
     # Step 4: Determine which deviations are significant
     momentum_significance = np.zeros_like(q_matrix, dtype=bool)

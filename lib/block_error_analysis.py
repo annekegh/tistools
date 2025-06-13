@@ -185,7 +185,8 @@ def block_error_analysis_staple(path_ensembles, interfaces, interval, load=False
     block_error_calculation(np.array(Pcrossfulls_repptis)[:,-1], interval, "Pcross_repptis")
     block_error_calculation(pcrepptis_MSM, interval, "Pcross_repp_MSM")
     block_error_calculation(np.array(pcstaple_MSM), interval, "Pcross")
-    block_error_calculation(np.array(p_staple), interval, "pstaple")
+    # block_error_calculation(np.array(p_staple), interval, "pstaple")
+    block_error_calculation(np.array(q_staple), interval, "qstaple")
 
 
 def block_error_calculation(running_estimate, interval, label):
