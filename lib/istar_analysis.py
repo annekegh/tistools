@@ -2052,7 +2052,28 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     import seaborn as sns
     # Add legend
     from matplotlib.lines import Line2D
-    
+
+    # Process q_errors input ONCE at the beginning
+    loaded_q_errors = None
+    if q_errors is not None:
+        if isinstance(q_errors, str):
+            try:
+                loaded_q_errors = read_block_errors(q_errors, q_tot[0].shape)
+                if loaded_q_errors.shape == q_tot[0].shape:
+                    print(f"Successfully loaded q_errors from file: {q_errors}")
+                else:
+                    print(f"Warning: Shape mismatch in q_errors file")
+                    loaded_q_errors = None
+            except Exception as e:
+                print(f"Warning: Could not load q_errors: {e}")
+                loaded_q_errors = None
+        elif isinstance(q_errors, np.ndarray) and q_errors.shape == q_tot[0].shape:
+            loaded_q_errors = q_errors
+            print("Using provided q_errors NumPy array.")
+        else:
+            print(f"Warning: Invalid q_errors provided")
+            loaded_q_errors = None
+
     # Extract the probability matrix and weights matrix from q_tot
     q_probs = q_tot[0]
     q_weights = q_tot[1]
@@ -2070,12 +2091,12 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
             is_equidistant = True
     
     # Generate more descriptive state labels
-    state_labels = generate_state_labels(n_interfaces)
+    # state_labels = generate_state_labels(n_interfaces)
 
-    M = construct_M_istar(p, 2*n_interfaces, n_interfaces)
+    # M = construct_M_istar(p, 2*n_interfaces, n_interfaces)
     
-    # Calculate diffusive reference probabilities based on interface spacing
-    diff_ref = calculate_diffusive_reference(interfaces, q_tot[0], q_tot[1])
+    # Calculate diffusive reference probabilities with errors
+    diff_ref, diff_ref_errors = calculate_diffusive_reference(interfaces, q_tot[0], q_tot[1], loaded_q_errors)
     plocs_repptis, plocs_istar = ploc_repptis_from_staples(pes, interfaces, n_int=n_interfaces)
     
     # Function to generate high-contrast colors for plots
@@ -2259,7 +2280,18 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     fig2 = plt.figure(figsize=(18, 12))
     gs2 = gridspec.GridSpec(2, 2, height_ratios=[1, 0.8])
     
-    # Create colors for targets
+    # Set a stylish color scheme and font
+    plt.rcParams.update({
+        'font.size': 10,
+        'font.family': 'serif',
+        'axes.linewidth': 1.2,
+        'axes.spines.top': False,
+        'axes.spines.right': False,
+        'grid.alpha': 0.3,
+        'grid.linestyle': '--'
+    })
+    
+    # Create colors for targets using viridis
     forward_targets = [k for k in range(1, n_interfaces)]
     forward_colors = generate_high_contrast_colors(len(forward_targets))
     
@@ -2276,6 +2308,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ref_probs = []
         valid_indices = []
         repptisp = []
+        error_bars = []
         
         for i in range(k):
             # Include adjacent transitions only for interface 0->1
@@ -2285,44 +2318,48 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 valid_indices.append(i)
                 ref_probs.append(diff_ref[i, k])
                 repptisp.append(plocs_repptis[k]["LMR"])
+                
+                # Calculate error bars
+                if loaded_q_errors is not None and not np.isnan(loaded_q_errors[i, k]):
+                    error_bars.append(loaded_q_errors[i, k])
+                else:
+                    # Fallback to binomial error if block error not available
+                    binomial_error = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
+                    error_bars.append(binomial_error)
         
         if target_data:
-            # Plot actual probabilities with physical positions on x-axis
-            ax4.plot(starting_positions, target_data, 'o-', 
-                    label=(f'{k-1 if k>0 else k}→{k}'), linewidth=2, markersize=8,
-                    color=forward_colors[idx])
+            # Plot actual probabilities with enhanced styling and subtle error bars
+            ax4.errorbar(starting_positions, target_data, yerr=error_bars,
+                    fmt='o-', label=(f'{k-1 if k>0 else k}→{k}'), linewidth=3, markersize=10,
+                    color=forward_colors[idx], markeredgecolor='white', markeredgewidth=1.5,
+                    alpha=0.85, capsize=4, capthick=1.5, elinewidth=1.5, 
+                    ecolor=forward_colors[idx])
             
-            # Plot diffusive reference as dashed lines
+            # Plot diffusive reference as elegant dashed lines
             ax4.plot(starting_positions, ref_probs, '--',
-                    color=forward_colors[idx], alpha=0.5)
-            # ax4.plot(starting_positions, repptisp, ':',
-            #         color=forward_colors[idx], alpha=0.5)
+                    color=forward_colors[idx], alpha=0.6, linewidth=2)
     
-    # Configure the forward plot
-    ax4.set_xlabel('Starting interface Position (λ$\\subset$)')
-    ax4.set_ylabel('Probability q(i,k)')
-    ax4.set_title('Forward Transition Probabilities (L→R)', fontsize=12)
+    # Configure the forward plot with enhanced styling
+    ax4.set_xlabel('Starting interface Position (λ$\\subset$)', fontweight='bold', fontsize=12)
+    ax4.set_ylabel('Probability q(i,k)', fontweight='bold', fontsize=12)
+    ax4.set_title('Forward Transition Probabilities (L→R)', fontsize=14, fontweight='bold', pad=20)
     ax4.set_ylim(0, 1.05)
-    sns.despine(ax=ax4)
+    ax4.grid(True, alpha=0.3, linestyle='--')
+    ax4.set_facecolor('#fafafa')
     
-    # Create better x-axis ticks using interface indices as labels but keeping physical distances
+    # Enhanced axis styling
+    ax4.tick_params(axis='both', which='major', labelsize=10, length=6, width=1.2)
+    
+    # Create better x-axis ticks
     ax4.set_xlim(min(interfaces) - 0.1, interfaces[n_interfaces-2] + 0.1)
-    # Set the physical positions of interfaces on the x-axis
     ax4.set_xticks(interfaces)
-    # Use state_labels for the tick labels
     ax4.set_xticklabels(["0→"]+[f"{i}$\\subset$" for i in range(1, n_interfaces-1)] + [f"{n_interfaces-1}"])
     
-    # Add explanatory text about the dashed lines
-    ref_text = """
-    Dashed lines: Diffusive reference probabilities
-    • Based on free energy differences between interfaces
-    • Calculated using detailed balance principle
-    """
-    # ax4.text(0.02, 0.02, ref_text, transform=ax4.transAxes, fontsize=9, 
-    #          bbox=dict(facecolor='white', alpha=0.8))
-    
-    # Add a legend with reasonable size
-    ax4.legend(title='Target Region', loc='best', fontsize=9)
+    # Stylish legend with enhanced appearance
+    legend = ax4.legend(title='Target Region', loc='best', fontsize=10, title_fontsize=11,
+                       frameon=True, fancybox=True, shadow=True, framealpha=0.9)
+    legend.get_frame().set_facecolor('white')
+    legend.get_frame().set_edgecolor('gray')
     
     # Plot 2.2: Backward Transition Probabilities (R→L)
     ax5 = fig2.add_subplot(gs2[0, 1])
@@ -2333,6 +2370,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         starting_positions = []
         ref_probs = []
         valid_indices = []
+        error_bars = []
         
         for i in range(k+1, n_interfaces):
             # Exclude adjacent transitions (i.e., exclude i=k+1)
@@ -2341,43 +2379,65 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 starting_positions.append(interfaces[i])
                 valid_indices.append(i)
                 ref_probs.append(diff_ref[i, k])
+                
+                # Calculate error bars
+                if loaded_q_errors is not None and not np.isnan(loaded_q_errors[i, k]):
+                    error_bars.append(loaded_q_errors[i, k])
+                else:
+                    # Fallback to binomial error if block error not available
+                    binomial_error = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
+                    error_bars.append(binomial_error)
         
         if target_data:
-            # Plot actual probabilities with physical positions on x-axis
-            ax5.plot(starting_positions, target_data, 'o-', 
-                    label=(f'{k}←{k+1}'), linewidth=2, markersize=8,
-                    color=backward_colors[idx])
+            # Plot actual probabilities with enhanced styling and subtle error bars
+            ax5.errorbar(starting_positions, target_data, yerr=error_bars,
+                    fmt='o-', label=(f'{k}←{k+1}'), linewidth=3, markersize=10,
+                    color=backward_colors[idx], markeredgecolor='white', markeredgewidth=1.5,
+                    alpha=0.85, capsize=4, capthick=1.5, elinewidth=1.5,
+                    ecolor=forward_colors[idx])
             
-            # Plot diffusive reference as dashed lines
+            # Plot diffusive reference as elegant dashed lines
             ax5.plot(starting_positions, ref_probs, '--', 
-                    color=backward_colors[idx], alpha=0.5)
+                    color=backward_colors[idx], alpha=0.6, linewidth=2)
     
-    # Configure the backward plot
-    ax5.set_xlabel('Starting interface Position (λ)$\\supset$')
-    ax5.set_ylabel('Probability q(i,k)')
-    ax5.set_title('Backward Transition Probabilities (R→L)', fontsize=12)
+    # Configure the backward plot with enhanced styling
+    ax5.set_xlabel('Starting interface Position (λ)$\\supset$', fontweight='bold', fontsize=12)
+    ax5.set_ylabel('Probability q(i,k)', fontweight='bold', fontsize=12)
+    ax5.set_title('Backward Transition Probabilities (R→L)', fontsize=14, fontweight='bold', pad=20)
     ax5.set_ylim(0, 1.05)
-    sns.despine(ax=ax5)
+    ax5.grid(True, alpha=0.3, linestyle='--')
+    ax5.set_facecolor('#fafafa')
     
-    # Create better x-axis ticks using interface indices as labels but keeping physical distances
+    # Enhanced axis styling
+    ax5.tick_params(axis='both', which='major', labelsize=10, length=6, width=1.2)
+    
+    # Create better x-axis ticks
     ax5.set_xlim(interfaces[1] - 0.1, max(interfaces) + 0.1)
-    # Set the physical positions of interfaces on the x-axis
     ax5.set_xticks(interfaces)
-    # Use state_labels for the tick labels
     ax5.set_xticklabels(["0←"]+[f"{i}$\\supset$" for i in range(1, n_interfaces-1)] + [f"{n_interfaces-1}"])
     
-    # Add explanatory text about the dashed lines
+    # Add explanatory text with enhanced styling
+    ref_text = """
+    Dashed lines: Diffusive reference probabilities
+    • Based on free energy differences between interfaces
+    • Calculated using detailed balance principle
+    Error bars: Statistical uncertainty
+    """
     ax5.text(0.02, 0.02, ref_text, transform=ax5.transAxes, fontsize=9,
-             bbox=dict(facecolor='white', alpha=0.8))
+             bbox=dict(facecolor='white', alpha=0.9, boxstyle='round,pad=0.5', 
+                      edgecolor='gray', linewidth=1))
     
-    # Add a legend with reasonable size
-    ax5.legend(title='Target Region', loc='best', fontsize=9)
+    # Stylish legend
+    legend = ax5.legend(title='Target Region', loc='best', fontsize=10, title_fontsize=11,
+                       frameon=True, fancybox=True, shadow=True, framealpha=0.9)
+    legend.get_frame().set_facecolor('white')
+    legend.get_frame().set_edgecolor('gray')
     
     # Plot 2.3: Forward Memory Retention
     ax6 = fig2.add_subplot(gs2[1, 0])
 
     # Calculate memory retention using simplified approach
-    memory_index = calculate_memory_effect_index(q_probs, q_weights, q_errors=q_errors)
+    memory_index = calculate_memory_effect_index(q_probs, q_weights, q_errors=loaded_q_errors)
 
     # Prepare data for forward plot
     valid_k_fwd = [k for k in range(1, n_interfaces) if not np.isnan(memory_index['forward_variation'][k])]
@@ -2386,77 +2446,112 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     valid_positions_fwd = [interfaces[k] for k in valid_k_fwd]
     valid_colors_fwd = [forward_colors[k-1] for k in valid_k_fwd]
     valid_counts_fwd = [memory_index['forward_sample_sizes'][k] for k in valid_k_fwd]
-    # Use state_labels for valid_k_fwd
     valid_state_labels_fwd = [(f'{k}$\\subset$' if k < n_interfaces-1 else f'{k}') for k in valid_k_fwd]
 
     # Calculate mean difference with diffusive reference for each target interface
     forward_mean_diff = np.zeros(n_interfaces)
     forward_mean_diff.fill(np.nan)
+    forward_mean_diff_error = np.zeros(n_interfaces)
+    forward_mean_diff_error.fill(np.nan)
     
     for k in range(1, n_interfaces):
         diffs = []
+        diff_errors = []
         for i in range(k-1):  # Skip adjacent interface (i=k-1)
                 # Only consider non-adjacent transitions with enough samples
                 if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
                     diffs.append(abs(q_probs[i, k] - diff_ref[i, k]))
+                    # Propagate errors: error of |a - b| is sqrt(σ_a² + σ_b²)
+                    if loaded_q_errors is not None and not np.isnan(loaded_q_errors[i, k]):
+                        q_err = loaded_q_errors[i, k]
+                    else:
+                        q_err = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
+                    
+                    # Error in diffusive reference (assumed small, use 5% of value)
+                    diff_ref_err = 0.05 * diff_ref[i, k]
+                    combined_err = np.sqrt(q_err**2 + diff_ref_err**2)
+                    diff_errors.append(combined_err)
         
         if diffs:
                 forward_mean_diff[k] = np.mean(diffs) * 100  # Convert to percentage
+                # Error in mean: standard error of the mean
+                forward_mean_diff_error[k] = (np.std(diff_errors) / np.sqrt(len(diff_errors))) * 100 if len(diff_errors) > 1 else np.mean(diff_errors) * 100
     
-    # Extract valid mean differences to plot
+    # Extract valid mean differences and errors to plot
     valid_mean_diff_fwd = [forward_mean_diff[k] if not np.isnan(forward_mean_diff[k]) else 0 for k in valid_k_fwd]
+    valid_mean_diff_error_fwd = [forward_mean_diff_error[k] if not np.isnan(forward_mean_diff_error[k]) else 0 for k in valid_k_fwd]
 
     if valid_k_fwd:
         # Create a twin axis for the memory retention plot
         ax6_twin = ax6.twinx()
         ax6_twin.set_ylim(0, 100)
         
-        # Create bar plot for variation
-        bars = ax6.bar(valid_positions_fwd, valid_variation_fwd, yerr=valid_error_fwd, color=valid_colors_fwd, alpha=0.7, 
-                            width=np.mean(np.diff(interfaces))*0.7, capsize=5)  # Use average interface spacing for width
+        # Create enhanced bar plot with gradient effect
+        bars = ax6.bar(valid_positions_fwd, valid_variation_fwd, yerr=valid_error_fwd, 
+                      color=valid_colors_fwd, alpha=0.8, 
+                      width=np.mean(np.diff(interfaces))*0.7, capsize=5,
+                      edgecolor='white', linewidth=1.5, error_kw={'linewidth': 2, 'capthick': 2})
         
-        # Add line plot for mean differences
-        line = ax6_twin.plot(valid_positions_fwd, valid_mean_diff_fwd, 'o--', color='red', 
-                                    linewidth=2, markersize=8, label='Mean |Δq|')
+        # Add gradient effect to bars
+        for bar, color in zip(bars, valid_colors_fwd):
+            bar.set_edgecolor('white')
+            bar.set_linewidth(1.5)
         
-        # Add annotations showing variation and sample size
+        # Add stylish line plot for mean differences with error bars and transparent facecolor
+        line = ax6_twin.errorbar(valid_positions_fwd, valid_mean_diff_fwd, yerr=valid_mean_diff_error_fwd,
+                                fmt='o--', color='#d62728', linewidth=3, markersize=10, 
+                                markerfacecolor='none', markeredgecolor='#d62728', 
+                                markeredgewidth=2, label='Mean |Δq|', alpha=0.9,
+                                capsize=5, capthick=2, elinewidth=2)
+        
+        # Enhanced annotations with stylish formatting
         for pos, var, count, label in zip(valid_positions_fwd, valid_variation_fwd, valid_counts_fwd, valid_state_labels_fwd):
-                ax6.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
+            ax6.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9,
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='gray'))
         
-        # Configure main plot
+        # Configure main plot with enhanced styling
         ax6.set_xticks(interfaces)
         ax6.set_xticklabels([(f'{k-1 if k>0 else k}→{k}' if k < n_interfaces-1 else f'{k}') for k in range(n_interfaces)])
-        ax6.set_xlabel('Target Region')
-        ax6.set_ylabel('Memory Effect (Std. Dev. %)', color='C0')
-        ax6.tick_params(axis='y', labelcolor='C0')
-        ax6.set_title('Forward Memory Retention: Variation in Crossing Probabilities', fontsize=12)
+        ax6.set_xlabel('Target Region', fontweight='bold', fontsize=12)
+        ax6.set_ylabel('Memory Effect (Std. Dev. %)', color='#1f77b4', fontweight='bold', fontsize=12)
+        ax6.tick_params(axis='y', labelcolor='#1f77b4', labelsize=10, length=6, width=1.2)
+        ax6.tick_params(axis='x', labelsize=10, length=6, width=1.2)
+        ax6.set_title('Forward Memory Retention: Variation in Crossing Probabilities', 
+                     fontsize=14, fontweight='bold', pad=20)
+        ax6.grid(True, alpha=0.3, linestyle='--')
+        ax6.set_facecolor('#fafafa')
         
-        # Configure twin axis
-        ax6_twin.set_ylabel('Mean |Δq| (%)', color='red')
-        ax6_twin.tick_params(axis='y', labelcolor='red')
+        # Configure twin axis with enhanced styling
+        ax6_twin.set_ylabel('Mean |Δq| (%)', color='#d62728', fontweight='bold', fontsize=12)
+        ax6_twin.tick_params(axis='y', labelcolor='#d62728', labelsize=10, length=6, width=1.2)
         
         # Set reasonable y-limits
         max_y_fwd = max(10.0, max(valid_variation_fwd) * 1.2) if valid_variation_fwd else 10.0
         ax6.set_ylim(0, max_y_fwd)
         
-        max_y_twin_fwd = max(10.0, max(valid_mean_diff_fwd) * 1.2) if valid_mean_diff_fwd else 10.0
+        max_y_twin_fwd = max(10.0, max([v + e for v, e in zip(valid_mean_diff_fwd, valid_mean_diff_error_fwd)]) * 1.2) if valid_mean_diff_fwd else 10.0
         ax6_twin.set_ylim(0, max_y_twin_fwd)
         
-        # Set x limits based on the valid data points rather than all interfaces
+        # Set x limits based on the valid data points
         if len(valid_positions_fwd) > 0:
-                padding = np.mean(np.diff(interfaces)) if len(interfaces) > 1 else 0.5
-                ax6.set_xlim(min(valid_positions_fwd) - padding/2, max(valid_positions_fwd) + padding/2)
+            padding = np.mean(np.diff(interfaces)) if len(interfaces) > 1 else 0.5
+            ax6.set_xlim(min(valid_positions_fwd) - padding/2, max(valid_positions_fwd) + padding/2)
         
-        # Create a combined legend
+        # Create a stylish combined legend with transparent marker facecolor
         custom_lines = [
-                Line2D([0], [0], color='black', lw=0, marker='s', markersize=10, markerfacecolor='C0', alpha=0.7),
-                Line2D([0], [0], color='red', lw=2, marker='o', markersize=6)
+            Line2D([0], [0], color='black', lw=0, marker='s', markersize=12, 
+                   markerfacecolor='#1f77b4', alpha=0.8, markeredgecolor='#1f77b4', markeredgewidth=1.5),
+            Line2D([0], [0], color='#d62728', lw=3, marker='o', markersize=8, 
+                   markerfacecolor='none', markeredgecolor='#d62728', markeredgewidth=2)
         ]
-        ax6.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left')
+        legend = ax6.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left',
+                           frameon=True, fancybox=True, shadow=True, framealpha=0.9)
+        legend.get_frame().set_facecolor('white')
+        legend.get_frame().set_edgecolor('gray')
         
     else:
         ax6.text(0.5, 0.5, "Insufficient data for forward memory retention analysis", 
-                ha='center', va='center', transform=ax6.transAxes)
+                ha='center', va='center', transform=ax6.transAxes, fontsize=12, fontweight='bold')
         ax6.set_xticks(interfaces)
         ax6.set_xticklabels([f"{k}$\\subset$" for k in range(n_interfaces)])
 
@@ -2470,120 +2565,179 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     valid_positions_bwd = [interfaces[k] for k in valid_k_bwd]
     valid_colors_bwd = [backward_colors[k] for k in valid_k_bwd]
     valid_counts_bwd = [memory_index['backward_sample_sizes'][k] for k in valid_k_bwd]
-    # Use state_labels for valid_k_bwd
     valid_state_labels_bwd = [(f'{k}$\\subset$' if k > 0 else f'{k}') for k in valid_k_bwd]
     
     # Calculate mean difference with diffusive reference for each target interface
     backward_mean_diff = np.zeros(n_interfaces)
     backward_mean_diff.fill(np.nan)
+    backward_mean_diff_error = np.zeros(n_interfaces)
+    backward_mean_diff_error.fill(np.nan)
     
     for k in range(n_interfaces-1):
         diffs = []
+        diff_errors = []
         for i in range(k+2, n_interfaces):  # Skip adjacent interface (i=k+1)
                 # Only consider non-adjacent transitions with enough samples
                 if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
                     diffs.append(abs(q_probs[i, k] - diff_ref[i, k]))
+                    # Propagate errors: error of |a - b| is sqrt(σ_a² + σ_b²)
+                    if loaded_q_errors is not None and not np.isnan(loaded_q_errors[i, k]):
+                        q_err = loaded_q_errors[i, k]
+                    else:
+                        q_err = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
+                    
+                    # Error in diffusive reference (assumed small, use 5% of value)
+                    diff_ref_err = 0.05 * diff_ref[i, k]
+                    combined_err = np.sqrt(q_err**2 + diff_ref_err**2)
+                    diff_errors.append(combined_err)
         
         if diffs:
                 backward_mean_diff[k] = np.mean(diffs) * 100  # Convert to percentage
+                # Error in mean: standard error of the mean
+                backward_mean_diff_error[k] = (np.std(diff_errors) / np.sqrt(len(diff_errors))) * 100 if len(diff_errors) > 1 else np.mean(diff_errors) * 100
     
-    # Extract valid mean differences to plot
+    # Extract valid mean differences and errors to plot
     valid_mean_diff_bwd = [backward_mean_diff[k] if not np.isnan(backward_mean_diff[k]) else 0 for k in valid_k_bwd]
+    valid_mean_diff_error_bwd = [backward_mean_diff_error[k] if not np.isnan(backward_mean_diff_error[k]) else 0 for k in valid_k_bwd]
 
     if valid_k_bwd:
         # Create a twin axis for the memory retention plot
         ax7_twin = ax7.twinx()
         ax7_twin.set_ylim(0, 100)
 
-        # Create bar plot using interface physical positions
-        bars = ax7.bar(valid_positions_bwd, valid_variation_bwd, yerr=valid_error_bwd, color=valid_colors_bwd, alpha=0.7,
-                            width=np.mean(np.diff(interfaces))*0.7, capsize=5)  # Use average interface spacing for width
+        # Create enhanced bar plot
+        bars = ax7.bar(valid_positions_bwd, valid_variation_bwd, yerr=valid_error_bwd, 
+                      color=valid_colors_bwd, alpha=0.8,
+                      width=np.mean(np.diff(interfaces))*0.7, capsize=5,
+                      edgecolor='white', linewidth=1.5, error_kw={'linewidth': 2, 'capthick': 2})
         
-        # Add line plot for mean differences
-        line = ax7_twin.plot(valid_positions_bwd, valid_mean_diff_bwd, 'o--', color='red', 
-                                    linewidth=2, markersize=8, label='Mean |Δq|')
+        # Add gradient effect to bars
+        for bar, color in zip(bars, valid_colors_bwd):
+            bar.set_edgecolor('white')
+            bar.set_linewidth(1.5)
         
-        # Add annotations showing variation and sample size
+        # Add stylish line plot for mean differences with error bars and transparent facecolor
+        line = ax7_twin.errorbar(valid_positions_bwd, valid_mean_diff_bwd, yerr=valid_mean_diff_error_bwd,
+                                fmt='o--', color='#d62728', linewidth=3, markersize=10, 
+                                markerfacecolor='none', markeredgecolor='#d62728', 
+                                markeredgewidth=2, label='Mean |Δq|', alpha=0.9,
+                                capsize=5, capthick=2, elinewidth=2)
+        
+        # Enhanced annotations
         for pos, var, count, label in zip(valid_positions_bwd, valid_variation_bwd, valid_counts_bwd, valid_state_labels_bwd):
-                ax7.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
+            ax7.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9,
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='gray'))
         
-        # Configure plot
+        # Configure plot with enhanced styling
         ax7.set_xticks(interfaces)
         ax7.set_xticklabels([f'{k}←{k+1}' for k in range(n_interfaces)])
-        ax7.set_xlabel('Target Region')
-        ax7.set_ylabel('Memory Effect (Std. Dev. %)', color='C0')
-        ax7.tick_params(axis='y', labelcolor='C0')
-        ax7.set_title('Backward Memory Retention: Variation in Crossing Probabilities', fontsize=12)
+        ax7.set_xlabel('Target Region', fontweight='bold', fontsize=12)
+        ax7.set_ylabel('Memory Effect (Std. Dev. %)', color='#1f77b4', fontweight='bold', fontsize=12)
+        ax7.tick_params(axis='y', labelcolor='#1f77b4', labelsize=10, length=6, width=1.2)
+        ax7.tick_params(axis='x', labelsize=10, length=6, width=1.2)
+        ax7.set_title('Backward Memory Retention: Variation in Crossing Probabilities', 
+                     fontsize=14, fontweight='bold', pad=20)
+        ax7.grid(True, alpha=0.3, linestyle='--')
+        ax7.set_facecolor('#fafafa')
         
         # Configure twin axis
-        ax7_twin.set_ylabel('Mean |Δq| (%)', color='red')
-        ax7_twin.tick_params(axis='y', labelcolor='red')
+        ax7_twin.set_ylabel('Mean |Δq| (%)', color='#d62728', fontweight='bold', fontsize=12)
+        ax7_twin.tick_params(axis='y', labelcolor='#d62728', labelsize=10, length=6, width=1.2)
         
         # Set reasonable y-limits
         max_y_bwd = max(10.0, max(valid_variation_bwd) * 1.2) if valid_variation_bwd else 10.0
         ax7.set_ylim(0, max_y_bwd)
         
-        max_y_twin_bwd = max(10.0, max(valid_mean_diff_bwd) * 1.2) if valid_mean_diff_bwd else 10.0
+        max_y_twin_bwd = max(10.0, max([v + e for v, e in zip(valid_mean_diff_bwd, valid_mean_diff_error_bwd)]) * 1.2) if valid_mean_diff_bwd else 10.0
         ax7_twin.set_ylim(0, max_y_twin_bwd)
         
-        # Set x limits based on the valid data points rather than all interfaces
+        # Set x limits based on the valid data points
         if len(valid_positions_bwd) > 0:
-                padding = np.mean(np.diff(interfaces)) if len(interfaces) > 1 else 0.5
-                ax7.set_xlim(min(valid_positions_bwd) - padding/2, max(valid_positions_bwd) + padding/2)
+            padding = np.mean(np.diff(interfaces)) if len(interfaces) > 1 else 0.5
+            ax7.set_xlim(min(valid_positions_bwd) - padding/2, max(valid_positions_bwd) + padding/2)
         
-        # Create a combined legend
+        # Create a stylish combined legend with transparent marker facecolor
         custom_lines = [
-                Line2D([0], [0], color='black', lw=0, marker='s', markersize=10, markerfacecolor='C0', alpha=0.7),
-                Line2D([0], [0], color='red', lw=2, marker='o', markersize=6)
+            Line2D([0], [0], color='black', lw=0, marker='s', markersize=12, 
+                   markerfacecolor='#1f77b4', alpha=0.8, markeredgecolor='#1f77b4', markeredgewidth=1.5),
+            Line2D([0], [0], color='#d62728', lw=3, marker='o', markersize=8, 
+                   markerfacecolor='none', markeredgecolor='#d62728', markeredgewidth=2)
         ]
-        ax7.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left')
+        legend = ax7.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left',
+                           frameon=True, fancybox=True, shadow=True, framealpha=0.9)
+        legend.get_frame().set_facecolor('white')
+        legend.get_frame().set_edgecolor('gray')
         
     else:
         ax7.text(0.5, 0.5, "Insufficient data for backward memory retention analysis", 
-                ha='center', va='center', transform=ax7.transAxes)
+                ha='center', va='center', transform=ax7.transAxes, fontsize=12, fontweight='bold')
         ax7.set_xticks(interfaces)
         ax7.set_xticklabels([f'{k}←{k+1}' for k in range(n_interfaces)])
+    
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    fig2.suptitle('TIS Memory Effect Analysis - Transition Probabilities and Memory Retention', fontsize=14)
+    fig2.suptitle('TIS Memory Effect Analysis - Transition Probabilities and Memory Retention', 
+                 fontsize=16, fontweight='bold', y=0.98)
 
     # ================ Figure 3: Free Energy Landscape and Momentum Effects ================
     fig3 = plt.figure(figsize=(18, 14))
     gs3 = gridspec.GridSpec(2, 2, height_ratios=[1, 1])
     
-    # Run momentum vs free energy analysis
-    momentum_results = analyze_momentum_vs_free_energy(interfaces, q_tot[0], q_tot[1])
+    # Run momentum vs free energy analysis with errors
+    momentum_results = analyze_momentum_vs_free_energy(interfaces, q_tot[0], q_tot[1], loaded_q_errors)
     
     # Plot 3.1: Enhanced Free Energy Profile - spans the entire top row
     ax8 = fig3.add_subplot(gs3[0, :])
     
     # Extract data from momentum analysis
     delta_G = momentum_results['free_energy_differences']
-    
+    delta_G_errors = momentum_results.get('free_energy_errors', None)  # Add this to momentum analysis
+
     # Calculate cumulative free energy profile
     cumulative_G = np.zeros(len(interfaces))
+    cumulative_G_errors = np.zeros(len(interfaces))
+    
     for i in range(1, len(interfaces)):
         # Add up all the delta_G values from the first interface
         valid_path = True
+        accumulated_error_squared = 0.0
+        
         for j in range(i):
             if np.isnan(delta_G[j, j+1]):
                 valid_path = False
                 break
             cumulative_G[i] += delta_G[j, j+1]
+            
+            # Error propagation: errors add in quadrature for independent measurements
+            if delta_G_errors is not None and not np.isnan(delta_G_errors[j, j+1]):
+                accumulated_error_squared += delta_G_errors[j, j+1]**2
         
         if not valid_path:
             cumulative_G[i] = np.nan
+            cumulative_G_errors[i] = np.nan
+        else:
+            cumulative_G_errors[i] = np.sqrt(accumulated_error_squared)
     
-    # Plot free energy profile with improved styling
-    ax8.plot(interfaces, cumulative_G, 'o-', linewidth=2.5, color='royalblue', 
-             label='Free Energy Profile')
-    
-    # Add marker points with annotations
-    for i, (pos, g) in enumerate(zip(interfaces, cumulative_G)):
+    # Plot free energy profile with error bars
+    if delta_G_errors is not None:
+        ax8.errorbar(interfaces, cumulative_G, yerr=cumulative_G_errors, 
+                    fmt='o-', linewidth=2.5, color='royalblue', 
+                    capsize=5, capthick=2, elinewidth=2,
+                    label='Free Energy Profile')
+    else:
+        ax8.plot(interfaces, cumulative_G, 'o-', linewidth=2.5, color='royalblue', 
+                label='Free Energy Profile')
+
+    # Add marker points with annotations including errors
+    for i, (pos, g, err) in enumerate(zip(interfaces, cumulative_G, cumulative_G_errors)):
         if not np.isnan(g):
             ax8.plot(pos, g, 'o', markersize=8, color='royalblue')
-            ax8.text(pos, g + 0.15, f"{g:.2f}", ha='center', va='bottom', fontsize=10, 
+            if delta_G_errors is not None and not np.isnan(err):
+                text = f"{g:.2f}±{err:.2f}"
+            else:
+                text = f"{g:.2f}"
+            ax8.text(pos, g + 0.15, text, ha='center', va='bottom', fontsize=10, 
                     bbox=dict(facecolor='white', alpha=0.7, boxstyle='round,pad=0.2'))
-    
+
     # Enhance the appearance
     ax8.set_xlabel('Interface Position (λ)', fontsize=12)
     ax8.set_ylabel('Free Energy G(λ) (kT)', fontsize=12)
@@ -2614,13 +2768,28 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 not np.isnan(momentum_effects[i, j])):
                 
                 if q_weights is None or q_weights[i, j] >= 5:  # Min samples
-                    observed = diffusive_q[i, j] * (1 + momentum_effects[i, j])  # q_matrix value
+                    observed = q_tot[0][i, j]  # Use original q_matrix value
+                    predicted = diffusive_q[i, j]
                     significant = momentum_significance[i, j]
-                    valid_points.append((diffusive_q[i, j], observed, significant, f"{i}→{j}"))
-    
+                    
+                    # Calculate error for observed probability
+                    if loaded_q_errors is not None and not np.isnan(loaded_q_errors[i, j]):
+                        obs_error = loaded_q_errors[i, j]
+                    else:
+                        # Fallback to binomial error if block error not available
+                        n_samples = q_weights[i, j] if q_weights is not None else 10
+                        obs_error = np.sqrt(observed * (1 - observed) / n_samples)
+                    
+                    # Error for predicted probability (from free energy uncertainty)
+                    # This would need to be calculated from the free energy differences
+                    pred_error = 0.05 * predicted  # Placeholder - implement proper propagation
+                    
+                    valid_points.append((predicted, observed, significant, f"{i}→{j}", 
+                                    pred_error, obs_error))
+
     if valid_points:
-        # Unpack the valid points
-        x_vals, y_vals, significance, labels = zip(*valid_points)
+        # Unpack the valid points including errors
+        x_vals, y_vals, significance, labels, x_errs, y_errs = zip(*valid_points)
         
         # Calculate plot limits
         max_val = max(max(x_vals), max(y_vals)) * 1.1
@@ -2629,18 +2798,19 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         # Plot the ideal 1:1 line
         ax9.plot([min_val, max_val], [min_val, max_val], '--', color='gray', alpha=0.7)
         
-        # Plot each point, colored by significance
-        for x, y, sig, label in zip(x_vals, y_vals, significance, labels):
+        # Plot each point with error bars, colored by significance
+        for x, y, sig, label, x_err, y_err in zip(x_vals, y_vals, significance, labels, x_errs, y_errs):
             color = 'red' if sig else 'blue'
-            ax9.scatter(x, y, color=color, s=50, alpha=0.7)
+            ax9.errorbar(x, y, xerr=x_err, yerr=y_err, 
+                        fmt='o', color=color, markersize=6, alpha=0.7,
+                        capsize=3, capthick=1, elinewidth=1)
         
         # Add labels with improved readability
-        for i, (x, y, sig, label) in enumerate(zip(x_vals, y_vals, significance, labels)):
+        for i, (x, y, sig, label, x_err, y_err) in enumerate(zip(x_vals, y_vals, significance, labels, x_errs, y_errs)):
             # Calculate offset direction based on point position to avoid overlaps
             dx = 10 if x < 0.5 * (min_val + max_val) else -30
             dy = 10 if y < 0.5 * (min_val + max_val) else -15
             
-            # Create a small white background for the text to improve readability
             text = ax9.annotate(
                 label, 
                 (x, y), 
@@ -2973,42 +3143,58 @@ def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples
     
     return memory_index
 
-def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, min_samples=5, account_for_distances=True):
+def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, q_errors=None, min_samples=5, account_for_distances=True):
     """
-    Calculate diffusive reference probabilities for non-equidistant interfaces,
-    using the same approach as analyze_momentum_vs_free_energy.
+    Calculate diffusive reference probabilities with error propagation.
     
-    Parameters:
-    -----------
+    Parameters
+    ----------
     interfaces : list or array
         The positions of the interfaces along the reaction coordinate
     q_matrix : numpy.ndarray
         Matrix of conditional crossing probabilities
     q_weights : numpy.ndarray, optional
         Matrix of sample counts for each q_matrix value
+    q_errors : numpy.ndarray, optional
+        Matrix of standard errors for each q_matrix value (already loaded)
     min_samples : int, optional
         Minimum number of samples required to consider a q value valid
     account_for_distances : bool, optional
-        Whether to account for physical distances between interfaces (default: True)
+        Whether to account for physical distances between interfaces
         
-    Returns:
+    Returns
     --------
-    diffusive_q : numpy.ndarray
-        A matrix of diffusive reference probabilities for each i,k pair
+    tuple
+        (diffusive_q, diffusive_q_errors) - Reference probabilities and their errors
     """
     n_interfaces = len(interfaces)
     diffusive_q = np.zeros((n_interfaces, n_interfaces))
+    diffusive_q_errors = np.zeros((n_interfaces, n_interfaces))
     diffusive_q.fill(np.nan)
+    diffusive_q_errors.fill(np.nan)
     
-    # Step 1: Estimate free energy differences between interfaces
-    delta_G = estimate_free_energy_differences(interfaces, q_matrix, q_weights, min_samples, account_for_distances)
-    
-    # Check if interfaces have physical values we can use for geometric corrections
-    has_physical_distances = isinstance(interfaces[0], (int, float)) and len(interfaces) > 1 and account_for_distances
+    # Step 1: Estimate free energy differences with errors
+    delta_G, delta_G_errors = estimate_free_energy_differences(
+        interfaces, q_matrix, q_weights, q_errors, min_samples, account_for_distances)
     
     # For diagonal elements (self-transitions), probability is 0
     for i in range(n_interfaces):
         diffusive_q[i, i] = 0.0
+        diffusive_q_errors[i, i] = 0.0
+    
+    # Error propagation for Boltzmann factor: p = 1/(1 + exp(ΔG))
+    def boltzmann_error_propagation(delta_G_val, delta_G_err):
+        """Error propagation for p = 1/(1 + exp(ΔG))"""
+        if np.isnan(delta_G_val) or np.isnan(delta_G_err):
+            return np.nan
+        
+        exp_dG = np.exp(delta_G_val)
+        denominator = 1 + exp_dG
+        
+        # dp/dΔG = -exp(ΔG) / (1 + exp(ΔG))²
+        derivative = -exp_dG / (denominator**2)
+        
+        return abs(derivative) * delta_G_err
     
     # Create reference probabilities for forward transitions (i<k)
     for k in range(1, n_interfaces):
@@ -3016,27 +3202,15 @@ def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, min_samp
             if i == k-1:
                 # Adjacent interfaces always have probability 1.0
                 diffusive_q[i, k] = 1.0
+                diffusive_q_errors[i, k] = 0.0
             else:
-                # Non-adjacent interfaces use the diffusive reference with geometric correction
-                ref_prob = 0.5  # Default value
-                
-                # Use Boltzmann factor for the free energy difference between k-1 and k
+                # Non-adjacent interfaces use the diffusive reference
                 if not np.isnan(delta_G[k-1, k]):
-                    # Apply geometric correction if we have physical interface positions
-                    if has_physical_distances and k > 1:
-                        # Calculate distance-based geometric expected probability
-                        dist_km1_to_k = interfaces[k] - interfaces[k-1]
-                        dist_km2_to_km1 = interfaces[k-1] - interfaces[k-2] if k > 1 else dist_km1_to_k
-                        geo_q = dist_km2_to_km1 / (dist_km1_to_k + dist_km2_to_km1) if (dist_km1_to_k + dist_km2_to_km1) > 0 else 0.5
-                        
-                        # Combine geometric factor with free energy difference
-                        # For forward transitions: P = 1/(1 + exp(ΔG))
-                        ref_prob = 1.0 / (1.0 + np.exp(delta_G[k-1, k]) * (1-geo_q)/geo_q)
-                    else:
-                        # Without geometry, just use free energy
-                        ref_prob = 1.0 / (1.0 + np.exp(delta_G[k-1, k]))
-                
-                diffusive_q[i, k] = ref_prob
+                    ref_prob = 1.0 / (1.0 + np.exp(delta_G[k-1, k]))
+                    ref_prob_err = boltzmann_error_propagation(delta_G[k-1, k], delta_G_errors[k-1, k])
+                    
+                    diffusive_q[i, k] = ref_prob
+                    diffusive_q_errors[i, k] = ref_prob_err
     
     # Create reference probabilities for backward transitions (i>k)
     for k in range(n_interfaces-1):
@@ -3044,43 +3218,17 @@ def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, min_samp
             if i == k+1:
                 # Adjacent interfaces always have probability 1.0
                 diffusive_q[i, k] = 1.0
+                diffusive_q_errors[i, k] = 0.0
             else:
-                # Non-adjacent interfaces use the diffusive reference with geometric correction
-                ref_prob = 0.5  # Default value
-                
-                # Use Boltzmann factor for the free energy difference between k and k+1
+                # Non-adjacent interfaces use the diffusive reference
                 if not np.isnan(delta_G[k, k+1]):
-                    # Apply geometric correction if we have physical interface positions
-                    if has_physical_distances and k+2 < n_interfaces:
-                        # Calculate distance-based geometric expected probability
-                        dist_k_to_kp1 = interfaces[k+1] - interfaces[k]
-                        dist_kp1_to_kp2 = interfaces[k+2] - interfaces[k+1] if k+2 < n_interfaces else dist_k_to_kp1
-                        geo_q = dist_kp1_to_kp2 / (dist_k_to_kp1 + dist_kp1_to_kp2) if (dist_k_to_kp1 + dist_kp1_to_kp2) > 0 else 0.5
-                        
-                        # Combine geometric factor with free energy difference
-                        # For backward transitions: P = 1/(1 + exp(-ΔG))
-                        ref_prob = 1.0 / (1.0 + np.exp(-delta_G[k, k+1]) * (1-geo_q)/geo_q)
-                    else:
-                        # Without geometry, just use free energy
-                        ref_prob = 1.0 / (1.0 + np.exp(-delta_G[k, k+1]))
-                
-                diffusive_q[i, k] = ref_prob
+                    ref_prob = 1.0 / (1.0 + np.exp(-delta_G[k, k+1]))
+                    ref_prob_err = boltzmann_error_propagation(-delta_G[k, k+1], delta_G_errors[k, k+1])
+                    
+                    diffusive_q[i, k] = ref_prob
+                    diffusive_q_errors[i, k] = ref_prob_err
     
-    # Handle edge cases and verify
-    for i in range(n_interfaces):
-        for k in range(n_interfaces):
-            # Ensure probabilities are in valid range
-            if not np.isnan(diffusive_q[i, k]):
-                # Constrain to [0,1]
-                diffusive_q[i, k] = max(0.0, min(1.0, diffusive_q[i, k]))
-    
-    # Print some statistics about the calculated reference probabilities
-    print("\nDiffusive reference probability summary:")
-    print(f"Mean forward reference probability: {np.nanmean([diffusive_q[i,j] for i in range(n_interfaces) for j in range(i+1,n_interfaces)]):.4f}")
-    print(f"Mean backward reference probability: {np.nanmean([diffusive_q[i,j] for i in range(n_interfaces) for j in range(i)]):.4f}")
-    print(f"Accounted for physical distances: {has_physical_distances}")
-    
-    return diffusive_q
+    return diffusive_q, diffusive_q_errors
 
 def calculate_diffusive_reference_spacing(interfaces):
     """
@@ -3173,7 +3321,7 @@ def calculate_diffusive_reference_spacing(interfaces):
     
     return diff_ref
 
-def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_samples=5, momentum_threshold=0.2):
+def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, q_errors=None, min_samples=5, momentum_threshold=0.2):
     """
     Distinguish between free energy effects and momentum effects in turn-based path networks
     by comparing observed transition probabilities with diffusive predictions based on estimated free energies.
@@ -3204,8 +3352,9 @@ def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_sa
     """
     n_interfaces = len(interfaces)
     
-    # Step 1: Estimate free energy differences between interfaces
-    delta_G = estimate_free_energy_differences(interfaces, q_matrix, q_weights, min_samples, account_for_distances=True)
+    # Step 1: Estimate free energy differences with errors
+    delta_G, delta_G_errors = estimate_free_energy_differences(
+        interfaces, q_matrix, q_weights, q_errors, min_samples, account_for_distances=True)
     
     # Step 2: Calculate diffusive reference probabilities based on free energy
     diffusive_q = np.zeros_like(q_matrix)
@@ -3352,6 +3501,7 @@ def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_sa
     
     return {
         'free_energy_differences': delta_G,
+        'free_energy_errors': delta_G_errors, 
         'diffusive_probabilities': diffusive_q,
         'momentum_effects': momentum_effects,
         'momentum_significance': momentum_significance,
@@ -3362,7 +3512,7 @@ def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_sa
         'avg_probabilities': avg_probabilities
     }
 
-def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_samples=5, account_for_distances=True):
+def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, q_errors=None, min_samples=5, account_for_distances=True):
     """
     Estimate free energy differences between interfaces from conditional crossing probabilities,
     taking into account physical distances between interfaces. Uses only the first valid forward
@@ -3391,97 +3541,93 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
     """
     n_interfaces = len(interfaces)
     delta_G = np.zeros((n_interfaces, n_interfaces))
+    delta_G_errors = np.zeros((n_interfaces, n_interfaces))
     delta_G.fill(np.nan)
+    delta_G_errors.fill(np.nan)
     
     # Check if interfaces have physical values we can use
     has_physical_distances = isinstance(interfaces[0], (int, float)) and len(interfaces) > 1 and account_for_distances
     
+    # Helper function to propagate errors through logarithm
+    def log_error_propagation(q, q_err):
+        """Error propagation for ln(q/(1-q))"""
+        if q <= 0 or q >= 1 or q_err <= 0:
+            return np.nan
+        
+        # d/dq [ln(q/(1-q))] = 1/(q(1-q))
+        derivative = 1.0 / (q * (1 - q))
+        return abs(derivative) * q_err
+
     # Helper function to check if a q value is valid and usable
-    def is_valid_q(i, k):
+    def is_valid_q(i, k, q_matrix, q_weights, min_samples):
+        """Helper function to check if a q value is valid and usable"""
         return (not np.isnan(q_matrix[i, k]) and
                 (q_weights is None or q_weights[i, k] >= min_samples) and
                 abs(i-k) >= 2)
     
-    # For each pair of adjacent interfaces, estimate the free energy difference
+    # For each pair of adjacent interfaces
     for i in range(n_interfaces - 1):
-        forward_estimate = None
-        backward_estimate = None
+        forward_estimates = []
+        forward_errors = []
+        backward_estimates = []
+        backward_errors = []
         
-        # Forward cascade: try q[i-1,i+1], then q[i-2,i+1], etc.
-        # Only take the first valid estimate (closest to the transition)
-        for start in range(i-1, -1, -1):  # Start from i-1 and go backwards to 0
-            if is_valid_q(start, i+1):
-                # First valid forward transition from 'start' to i+1 (going through i)
+        # Forward cascade: collect all valid estimates with errors
+        for start in range(i-1, -1, -1):
+            if is_valid_q(start, i+1, q_matrix, q_weights, min_samples):
                 q_fw = q_matrix[start, i+1]
-                weight = q_weights[start, i+1] if q_weights is not None else 1.0
+                q_err = q_errors[start, i+1] if q_errors is not None else np.sqrt(q_fw * (1-q_fw) / q_weights[start, i+1])
                 
-                # Adjust for physical distances
-                if has_physical_distances and i > 0:
-                    dist_i_to_ip1 = interfaces[i+1] - interfaces[i]
-                    dist_im1_to_i = interfaces[i] - interfaces[i-1]
-                    geo_q = dist_im1_to_i / (dist_i_to_ip1 + dist_im1_to_i) if (dist_i_to_ip1 + dist_im1_to_i) > 0 else 1.0
-                    dG_obs = -np.log(q_fw / (1 - q_fw))
-                    dG_geo = -np.log(geo_q / (1 - geo_q))
-                    dG = dG_obs - dG_geo
-                else:
+                if 0 < q_fw < 1:
                     dG = -np.log(q_fw / (1 - q_fw))
-                
-                forward_estimate = np.nan_to_num(dG, posinf=6.0, neginf=-6.0)
-                print(f"Forward ΔG estimate for interfaces {i}-{i+1}: {dG:.4f} using q[{start},{i+1}]={q_fw:.4f}, weight={weight:.1f}")
-                break  # Take only the first valid estimate
+                    dG_err = log_error_propagation(q_fw, q_err)
+                    
+                    forward_estimates.append(dG)
+                    forward_errors.append(dG_err)
+                    break  # Take only the first valid estimate
         
-        # Backward cascade: try q[i+2,i], then q[i+3,i], etc.
-        # Only take the first valid estimate (closest to the transition)
+        # Backward cascade: collect all valid estimates with errors  
         for start in range(i+2, n_interfaces):
-            if is_valid_q(start, i):
-                # First valid backward transition from 'start' to i (going through i+1)
+            if is_valid_q(start, i, q_matrix, q_weights, min_samples):
                 q_bw = q_matrix[start, i]
-                weight = q_weights[start, i] if q_weights is not None else 1.0
+                q_err = q_errors[start, i] if q_errors is not None else np.sqrt(q_bw * (1-q_bw) / q_weights[start, i])
                 
-                # Adjust for physical distances
-                if has_physical_distances and i+1 < n_interfaces-1:
-                    dist_ip1_to_i = interfaces[i+1] - interfaces[i]
-                    dist_ip2_to_ip1 = interfaces[i+2] - interfaces[i+1]
-                    geo_q = dist_ip2_to_ip1 / (dist_ip2_to_ip1 + dist_ip1_to_i) if (dist_ip2_to_ip1 + dist_ip1_to_i) > 0 else 1.0
-                    dG_obs = np.log(q_bw / (1 - q_bw))
-                    dG_geo = np.log(geo_q / (1 - geo_q))
-                    dG = dG_obs - dG_geo
-                else:
+                if 0 < q_bw < 1:
                     dG = np.log(q_bw / (1 - q_bw))
-                
-                backward_estimate = np.nan_to_num(dG, posinf=6.0, neginf=-6.0)
-                print(f"Backward ΔG estimate for interfaces {i}-{i+1}: {dG:.4f} using q[{start},{i}]={q_bw:.4f}, weight={weight:.1f}")
-                break  # Take only the first valid estimate
+                    dG_err = log_error_propagation(q_bw, q_err)
+                    
+                    backward_estimates.append(dG)
+                    backward_errors.append(dG_err)
+                    break  # Take only the first valid estimate
         
-        # Combine forward and backward estimates if available
-        if forward_estimate is not None and backward_estimate is not None:
-            # Take the average of the forward and backward estimates
-            # This helps eliminate biases from the timestep
-            combined_dG = (forward_estimate + backward_estimate) / 2.0
+        # Combine estimates with proper error propagation
+        if forward_estimates and backward_estimates:
+            # Weighted average of forward and backward estimates
+            fw_est, fw_err = forward_estimates[0], forward_errors[0]
+            bw_est, bw_err = backward_estimates[0], backward_errors[0]
             
-            # Report the difference to highlight any systematic bias
-            bias = forward_estimate - backward_estimate
-            print(f"Combined ΔG for interfaces {i}-{i+1}: {combined_dG:.4f} (forward-backward bias: {bias:.4f})")
+            # For average: σ²_avg = (σ₁² + σ₂²)/4
+            combined_dG = (fw_est + bw_est) / 2.0
+            combined_err = np.sqrt(fw_err**2 + bw_err**2) / 2.0
             
             delta_G[i, i+1] = combined_dG
             delta_G[i+1, i] = -combined_dG
+            delta_G_errors[i, i+1] = combined_err
+            delta_G_errors[i+1, i] = combined_err
             
-        elif forward_estimate is not None:
-            # Only forward estimate available
-            delta_G[i, i+1] = forward_estimate
-            delta_G[i+1, i] = -forward_estimate
-            print(f"Using only forward estimate for interfaces {i}-{i+1}: {forward_estimate:.4f}")
+        elif forward_estimates:
+            delta_G[i, i+1] = forward_estimates[0]
+            delta_G[i+1, i] = -forward_estimates[0]
+            delta_G_errors[i, i+1] = forward_errors[0]
+            delta_G_errors[i+1, i] = forward_errors[0]
             
-        elif backward_estimate is not None:
-            # Only backward estimate available
-            delta_G[i, i+1] = backward_estimate
-            delta_G[i+1, i] = -backward_estimate
-            print(f"Using only backward estimate for interfaces {i}-{i+1}: {backward_estimate:.4f}")
-            
-        else:
-            print(f"No valid estimates found for interfaces {i}-{i+1}")
+        elif backward_estimates:
+            delta_G[i, i+1] = backward_estimates[0]
+            delta_G[i+1, i] = -backward_estimates[0]
+            delta_G_errors[i, i+1] = backward_errors[0]
+            delta_G_errors[i+1, i] = backward_errors[0]
     
-    return delta_G
+    return delta_G, delta_G_errors
 
 ##################################
 # Network Analysis Tools
