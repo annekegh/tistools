@@ -2440,9 +2440,9 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     memory_index = calculate_memory_effect_index(q_probs, q_weights, q_errors=loaded_q_errors)
 
     # Prepare data for forward plot
-    valid_k_fwd = [k for k in range(1, n_interfaces) if not np.isnan(memory_index['forward_variation'][k])]
-    valid_variation_fwd = [memory_index['forward_variation'][k] for k in valid_k_fwd]
-    valid_error_fwd = [memory_index['forward_variation_error'][k] if not np.isnan(memory_index['forward_variation_error'][k]) else 0 for k in valid_k_fwd]
+    valid_k_fwd = [k for k in range(1, n_interfaces) if not np.isnan(memory_index['forward_norm_variation'][k])]
+    valid_norm_variation_fwd = [memory_index['forward_norm_variation'][k] for k in valid_k_fwd]
+    valid_error_fwd = [memory_index['forward_norm_variation_error'][k] if not np.isnan(memory_index['forward_norm_variation_error'][k]) else 0 for k in valid_k_fwd]
     valid_positions_fwd = [interfaces[k] for k in valid_k_fwd]
     valid_colors_fwd = [forward_colors[k-1] for k in valid_k_fwd]
     valid_counts_fwd = [memory_index['forward_sample_sizes'][k] for k in valid_k_fwd]
@@ -2487,7 +2487,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ax6_twin.set_ylim(0, 100)
         
         # Create enhanced bar plot with gradient effect
-        bars = ax6.bar(valid_positions_fwd, valid_variation_fwd, yerr=valid_error_fwd, 
+        bars = ax6.bar(valid_positions_fwd, valid_norm_variation_fwd, yerr=valid_error_fwd, 
                       color=valid_colors_fwd, alpha=0.8, 
                       width=np.mean(np.diff(interfaces))*0.7, capsize=5,
                       edgecolor='white', linewidth=1.5, error_kw={'linewidth': 2, 'capthick': 2})
@@ -2505,7 +2505,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                                 capsize=5, capthick=2, elinewidth=2)
         
         # Enhanced annotations with stylish formatting
-        for pos, var, count, label in zip(valid_positions_fwd, valid_variation_fwd, valid_counts_fwd, valid_state_labels_fwd):
+        for pos, var, count, label in zip(valid_positions_fwd, valid_norm_variation_fwd, valid_counts_fwd, valid_state_labels_fwd):
             ax6.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9,
                     bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='gray'))
         
@@ -2526,7 +2526,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ax6_twin.tick_params(axis='y', labelcolor='#d62728', labelsize=10, length=6, width=1.2)
         
         # Set reasonable y-limits
-        max_y_fwd = max(10.0, max(valid_variation_fwd) * 1.2) if valid_variation_fwd else 10.0
+        max_y_fwd = max(10.0, max(valid_norm_variation_fwd) * 1.2) if valid_norm_variation_fwd else 10.0
         ax6.set_ylim(0, max_y_fwd)
         
         max_y_twin_fwd = max(10.0, max([v + e for v, e in zip(valid_mean_diff_fwd, valid_mean_diff_error_fwd)]) * 1.2) if valid_mean_diff_fwd else 10.0
@@ -2559,9 +2559,9 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     ax7 = fig2.add_subplot(gs2[1, 1])
 
     # Prepare data for backward plot
-    valid_k_bwd = [k for k in range(n_interfaces-1) if not np.isnan(memory_index['backward_variation'][k])]
-    valid_variation_bwd = [memory_index['backward_variation'][k] for k in valid_k_bwd]
-    valid_error_bwd = [memory_index['backward_variation_error'][k] if not np.isnan(memory_index['backward_variation_error'][k]) else 0 for k in valid_k_bwd]
+    valid_k_bwd = [k for k in range(n_interfaces-1) if not np.isnan(memory_index['backward_norm_variation'][k])]
+    valid_norm_variation_bwd = [memory_index['backward_norm_variation'][k] for k in valid_k_bwd]
+    valid_error_bwd = [memory_index['backward_norm_variation_error'][k] if not np.isnan(memory_index['backward_norm_variation_error'][k]) else 0 for k in valid_k_bwd]
     valid_positions_bwd = [interfaces[k] for k in valid_k_bwd]
     valid_colors_bwd = [backward_colors[k] for k in valid_k_bwd]
     valid_counts_bwd = [memory_index['backward_sample_sizes'][k] for k in valid_k_bwd]
@@ -2606,7 +2606,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ax7_twin.set_ylim(0, 100)
 
         # Create enhanced bar plot
-        bars = ax7.bar(valid_positions_bwd, valid_variation_bwd, yerr=valid_error_bwd, 
+        bars = ax7.bar(valid_positions_bwd, valid_norm_variation_bwd, yerr=valid_error_bwd, 
                       color=valid_colors_bwd, alpha=0.8,
                       width=np.mean(np.diff(interfaces))*0.7, capsize=5,
                       edgecolor='white', linewidth=1.5, error_kw={'linewidth': 2, 'capthick': 2})
@@ -2624,7 +2624,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                                 capsize=5, capthick=2, elinewidth=2)
         
         # Enhanced annotations
-        for pos, var, count, label in zip(valid_positions_bwd, valid_variation_bwd, valid_counts_bwd, valid_state_labels_bwd):
+        for pos, var, count, label in zip(valid_positions_bwd, valid_norm_variation_bwd, valid_counts_bwd, valid_state_labels_bwd):
             ax7.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9,
                     bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='gray'))
         
@@ -2645,7 +2645,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ax7_twin.tick_params(axis='y', labelcolor='#d62728', labelsize=10, length=6, width=1.2)
         
         # Set reasonable y-limits
-        max_y_bwd = max(10.0, max(valid_variation_bwd) * 1.2) if valid_variation_bwd else 10.0
+        max_y_bwd = max(10.0, max(valid_norm_variation_bwd) * 1.2) if valid_norm_variation_bwd else 10.0
         ax7.set_ylim(0, max_y_bwd)
         
         max_y_twin_bwd = max(10.0, max([v + e for v, e in zip(valid_mean_diff_bwd, valid_mean_diff_error_bwd)]) * 1.2) if valid_mean_diff_bwd else 10.0
@@ -2683,7 +2683,8 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     gs3 = gridspec.GridSpec(2, 2, height_ratios=[1, 1])
     
     # Run momentum vs free energy analysis with errors
-    momentum_results = analyze_momentum_vs_free_energy(interfaces, q_tot[0], q_tot[1], loaded_q_errors)
+    momentum_threshold = 0.2
+    momentum_results = analyze_momentum_vs_free_energy(interfaces, q_tot[0], q_tot[1], loaded_q_errors, momentum_threshold=momentum_threshold)
     
     # Plot 3.1: Enhanced Free Energy Profile - spans the entire top row
     ax8 = fig3.add_subplot(gs3[0, :])
@@ -2796,7 +2797,25 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         min_val = min(min(x_vals), min(y_vals)) * 0.9
         
         # Plot the ideal 1:1 line
-        ax9.plot([min_val, max_val], [min_val, max_val], '--', color='gray', alpha=0.7)
+        ax9.plot([0, 1], [0, 1], '--', color='gray', alpha=0.7, linewidth=2, label='Perfect agreement')
+        
+        # Add transparent band around the 1:1 line to show momentum threshold
+        # The momentum threshold defines when points are considered momentum-dominated
+        # Extract the momentum threshold from the momentum analysis 
+        
+        # Create band boundaries: for a given x, the band extends from
+        # y = x * (1 - threshold) to y = x * (1 + threshold)
+        x_band = np.linspace(0, 1, 100)
+        y_upper = x_band * (1 + momentum_threshold)
+        y_lower = x_band * (1 - momentum_threshold)
+        
+        # Clip the band to stay within [0,1] bounds
+        y_upper = np.clip(y_upper, 0, 1)
+        y_lower = np.clip(y_lower, 0, 1)
+        
+        # Fill the band
+        ax9.fill_between(x_band, y_lower, y_upper, alpha=0.2, color='gray', 
+                        label=f'Free energy dominated\n(±{momentum_threshold*100:.0f}% threshold)')
         
         # Plot each point with error bars, colored by significance
         for x, y, sig, label, x_err, y_err in zip(x_vals, y_vals, significance, labels, x_errs, y_errs):
@@ -2829,14 +2848,20 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ax9.set_xlabel('Diffusive Probability (Free Energy Model)', fontsize=12)
         ax9.set_ylabel('Observed Probability', fontsize=12)
         ax9.set_title('Observed vs Diffusive Transition Probabilities\n(excluding boundary interfaces)', fontsize=14)
-        ax9.set_xlim(min_val, max_val)
-        ax9.set_ylim(min_val, max_val)
+        ax9.set_xlim(0, 1)
+        ax9.set_ylim(0, 1)
+        ax9.set_aspect('equal')  # Make axes square/equal aspect ratio
         ax9.grid(True, alpha=0.3)
         
         # Add legend using the same color scheme as momentum_vs_fe
-        ax9.scatter([], [], color='blue', label='Free Energy Dominated')
-        ax9.scatter([], [], color='red', label='Momentum Effects')
-        ax9.legend(fontsize=10)
+        # Create custom legend entries
+        legend_elements = [
+            Line2D([0], [0], color='gray', linestyle='--', linewidth=2, label='Perfect agreement'),
+            plt.Rectangle((0, 0), 1, 1, fc='gray', alpha=0.2, label=f'Free energy dominated\n(±{momentum_threshold*100:.0f}% threshold)'),
+            Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=8, label='Free Energy Dominated'),
+            Line2D([0], [0], marker='o', color='w', markerfacecolor='red', markersize=8, label='Momentum Effects')
+        ]
+        ax9.legend(handles=legend_elements, fontsize=10, loc='upper left')
     else:
         ax9.text(0.5, 0.5, "Insufficient valid data for comparison\n(non-boundary transitions)",
                 ha='center', va='center', transform=ax9.transAxes)
@@ -2962,186 +2987,169 @@ def generate_state_labels(n_interfaces):
 
 def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples=5):
     """
-    Calculate a simplified memory effect index based solely on the variation in conditional 
-    crossing probabilities without normalizing or weighting by sample size.
-    
-    Parameters:
-    -----------
-    q_probs : numpy.ndarray
-        Matrix of conditional crossing probabilities where q_probs[i,k] is the probability
-        that a path starting at interface i and reaching k-1 (for i<k) or k+1 (for i>k)
-        will reach interface k.
-    q_weights : numpy.ndarray
-        Matrix of sample counts for each q value.
-    min_samples : int, optional
-        Minimum number of samples required to consider a q value valid.
-        
+    Calculate memory effect indices (absolute std, normalized std, and their errors)
+    based on the variation in conditional crossing probabilities.
+
     Returns:
     --------
     memory_index : dict
-        Dictionary containing:
-        - 'forward_variation': Standard deviation of forward probabilities for each target
-        - 'backward_variation': Standard deviation of backward probabilities for each target
-        - 'forward_sample_sizes': Number of samples used for forward calculations
-        - 'backward_sample_sizes': Number of samples used for backward calculations
+        Contains:
+        - 'forward_variation': Absolute std dev (%)
+        - 'forward_variation_error': Error of absolute std dev (%)
+        - 'forward_norm_variation': Normalized std dev (as a percentage, 0-100% or more)
+        - 'forward_norm_variation_error': Error of normalized std dev (as a percentage)
+        - 'backward_variation', etc.: Same for backward direction
+        - 'forward_sample_sizes', 'backward_sample_sizes'
     """
     n_interfaces = q_probs.shape[0]
 
-    if q_errors is not None:
-        if isinstance(q_errors, str):
-            # q_errors is a filepath string, try to load it.
-            try:
-                # Assuming q_errors is a path to a text file loadable by np.loadtxt
-                loaded_q_errors = read_block_errors(q_errors, q_probs.shape)
-                if loaded_q_errors.shape != q_probs.shape:
-                    raise RuntimeWarning(
-                        f"Shape of q_errors loaded from file '{q_errors}' ({loaded_q_errors.shape}) "
-                        f"does not match q_probs shape ({q_probs.shape})."
-                    )
-                # Update the local q_errors variable to the loaded numpy array.
-                # Note: The rest of this function does not currently use q_errors.
-                q_errors = loaded_q_errors
-            except FileNotFoundError:
-                q_errors = None  # Reset to None if file not found.
-                raise RuntimeWarning(f"q_errors file not found: {q_errors}")
-            except Exception as e:
-                q_errors = None 
-                raise RuntimeWarning(f"Error loading q_errors from file '{q_errors}': {e}")
-        elif not (isinstance(q_errors, np.ndarray) and q_errors.shape == q_probs.shape):
-            # q_errors is provided, is not a string, but is not a valid ndarray of the correct shape.
-            q_errors = None  # Reset to None to avoid further issues.
-            raise RuntimeWarning(
-                f"If provided, q_errors must be a NumPy array with shape {q_probs.shape} "
-                f"or a path to a loadable text file. "
-                f"Got type {type(q_errors)} with shape {getattr(q_errors, 'shape', 'N/A')}."
-            )
-    # If q_errors was None, it remains None.
-    # If it was a valid np.ndarray, it remains as is.
-    # If it was a string path, it is now a loaded np.ndarray (or an error was raised).
-    # The current function calculate_memory_effect_index does not use q_errors beyond this point.
-
-    
-    # Initialize result arrays
-    forward_variation = np.zeros(n_interfaces)
-    forward_variation.fill(np.nan)
-    forward_variation_error = np.zeros(n_interfaces)
-    forward_variation_error.fill(np.nan)              
+    forward_variation = np.full(n_interfaces, np.nan)
+    forward_variation_error = np.full(n_interfaces, np.nan)
+    forward_norm_variation = np.full(n_interfaces, np.nan)
+    forward_norm_variation_error = np.full(n_interfaces, np.nan)
     forward_sample_sizes = np.zeros(n_interfaces, dtype=int)
-    
-    backward_variation = np.zeros(n_interfaces)
-    backward_variation.fill(np.nan)
-    backward_variation_error = np.zeros(n_interfaces)  
-    backward_variation_error.fill(np.nan)              
+
+    backward_variation = np.full(n_interfaces, np.nan)
+    backward_variation_error = np.full(n_interfaces, np.nan)
+    backward_norm_variation = np.full(n_interfaces, np.nan)
+    backward_norm_variation_error = np.full(n_interfaces, np.nan)
     backward_sample_sizes = np.zeros(n_interfaces, dtype=int)
-    
-    # Calculate forward memory effect index (for targets k > 0)
-    for k in range(1, n_interfaces):
-        q_values = []
-        weights = []
-        q_errors_k = []
 
-        for i in range(max(1, k-1)):  # Skip adjacent interface (i=k-1), so range is 0 to k-2
-            if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples:
-                q_values.append(q_probs[i, k])
-                weights.append(q_weights[i, k])
-                if q_errors is not None and not np.isnan(q_errors[i, k]):
-                    q_errors_k.append(q_errors[i, k])
-                else:
-                    # Fallback to binomial error if block error not available
-                    binomial_error = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
-                    q_errors_k.append(binomial_error)
-        
-        if len(q_values) >= 2:
-            q_values = np.array(q_values)
-            weights = np.array(weights)
-            q_errors_arr = np.array(q_errors_k)
-            
-            total_samples = np.sum(weights)
-            forward_sample_sizes[k] = total_samples
-            
-            # Calculate standard deviation
-            std_dev = np.std(q_values)
-            forward_variation[k] = std_dev * 100  # Convert to percentage
-            
-            # Calculate standard error of the standard deviation using error propagation
-            n = len(q_values)
-            mean_q = np.mean(q_values)
-            
-            # For standard deviation σ = sqrt(Σ(q_i - μ)²/(n-1)), 
-            # the error propagation gives: σ_σ ≈ sqrt(Σ((q_i - μ)/σ * σ_q_i)²) / sqrt(2(n-1))
-            if std_dev > 0 and not np.any(np.isnan(q_errors_arr)):
-                # Partial derivatives of std with respect to each q_i
-                # ∂σ/∂q_i = (q_i - μ) / ((n-1) * σ)
-                partial_derivs = (q_values - mean_q) / ((n - 1) * std_dev)
-                
-                # Error propagation: σ_σ² = Σ(∂σ/∂q_i)² * σ_q_i²
-                std_error_squared = np.sum((partial_derivs * q_errors_arr) ** 2)
-                std_error = np.sqrt(std_error_squared)
-                
-                forward_variation_error[k] = std_error * 100  # Convert to percentage
-            else:
-                forward_variation_error[k] = np.nan
-        else:
-            forward_variation[k] = np.nan
-            forward_variation_error[k] = np.nan
-            forward_sample_sizes[k] = 0
-    
-    # Calculate backward memory effect index (for targets k < n_interfaces-1)
-    for k in range(n_interfaces - 1):
-        q_values = []
-        weights = []
-        q_errors_k = []
-        
-        for i in range(k+2, n_interfaces):  # Skip adjacent interface (i=k+1)
-            if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples:
-                q_values.append(q_probs[i, k])
-                weights.append(q_weights[i, k])
-                if q_errors is not None and not np.isnan(q_errors[i, k]):
-                    q_errors_k.append(q_errors[i, k])
-                else:
-                    # Fallback to binomial error if block error not available
-                    binomial_error = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
-                    q_errors_k.append(binomial_error)
-        
-        if len(q_values) >= 2:
-            q_values = np.array(q_values)
-            weights = np.array(weights)
-            q_errors_arr = np.array(q_errors_k)
+    # Helper for error propagation of std
+    def std_error(q_values, q_errors_arr):
+        n = len(q_values)
+        if n < 2: # Cannot calculate std_dev for less than 2 points
+            return np.nan
+        mean_q = np.mean(q_values)
+        std_dev = np.std(q_values)
+        if std_dev == 0 or np.any(np.isnan(q_errors_arr)):
+            # If std_dev is 0, its error is also 0, unless q_errors are NaN
+            return 0.0 if not np.any(np.isnan(q_errors_arr)) else np.nan
+        partials = (q_values - mean_q) / ((n - 1) * std_dev)
+        return np.sqrt(np.sum((partials * q_errors_arr) ** 2))
 
-            total_samples = np.sum(weights)
-            backward_sample_sizes[k] = total_samples
-            
-            # Calculate standard deviation
-            std_dev = np.std(q_values)
-            backward_variation[k] = std_dev * 100  # Convert to percentage
-            
-            # Calculate standard error of the standard deviation
-            n = len(q_values)
-            mean_q = np.mean(q_values)
-            
-            if std_dev > 0 and not np.any(np.isnan(q_errors_arr)):
-                partial_derivs = (q_values - mean_q) / ((n - 1) * std_dev)
-                std_error_squared = np.sum((partial_derivs * q_errors_arr) ** 2)
-                std_error = np.sqrt(std_error_squared)
+    # Helper for error propagation of mean
+    def mean_error(q_errors_arr):
+        n = len(q_errors_arr)
+        if n == 0 or np.any(np.isnan(q_errors_arr)):
+            return np.nan
+        return np.sqrt(np.sum(q_errors_arr ** 2)) / n
+
+    # Main loop for forward and backward
+    for direction in ['forward', 'backward']:
+        for k in range(n_interfaces):
+            if direction == 'forward' and k < 1:
+                continue
+            if direction == 'backward' and k >= n_interfaces - 1:
+                continue
+
+            q_values, weights, q_errs_list = [], [], []
+            if direction == 'forward':
+                # Iterate from interface 0 up to k-2 (exclusive of k-1)
+                idxs = range(k-1)
+            else: # backward
+                # Iterate from interface k+2 up to n_interfaces-1
+                idxs = range(k+2, n_interfaces)
+
+
+            for i in idxs:
+                if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples:
+                    q_values.append(q_probs[i, k])
+                    weights.append(q_weights[i, k])
+                    if q_errors is not None and not np.isnan(q_errors[i, k]):
+                        q_errs_list.append(q_errors[i, k])
+                    else:
+                        # Fallback to binomial error
+                        q_val = q_probs[i, k]
+                        N_val = q_weights[i, k]
+                        q_errs_list.append(np.sqrt(q_val * (1 - q_val) / N_val) if N_val > 0 else np.nan)
+
+            if len(q_values) >= 2:
+                q_values_arr = np.array(q_values)
+                q_errs_arr = np.array(q_errs_list)
+                weights_arr = np.array(weights)
+                total_samples = np.sum(weights_arr)
+
+                if direction == 'forward':
+                    forward_sample_sizes[k] = total_samples
+                else:
+                    backward_sample_sizes[k] = total_samples
+
+                mean_q = np.mean(q_values_arr)
+                std_dev = np.std(q_values_arr) # This is population std (ddof=0) by default in np.std
                 
-                backward_variation_error[k] = std_error * 100  # Convert to percentage
-            else:
-                backward_variation_error[k] = np.nan
-        else:
-            backward_variation[k] = np.nan
-            backward_variation_error[k] = np.nan
-            backward_sample_sizes[k] = 0
-            
-    memory_index = {
+                # For error propagation, it's common to use sample std (ddof=1) in formulas
+                # However, np.std's default ddof=0 is fine if consistently used.
+                # Let's stick to np.std's default for std_dev calculation.
+                # The std_error helper already uses (n-1) in its denominator for partials.
+
+                std_dev_err = std_error(q_values_arr, q_errs_arr)
+                mean_q_err = mean_error(q_errs_arr)
+
+                # Absolute std (as %)
+                abs_std_percent = std_dev * 100
+                abs_std_err_percent = std_dev_err * 100 if not np.isnan(std_dev_err) else np.nan
+
+
+                # Normalized std and error
+                # Denominator for normalization: sqrt(mu*(1-mu))
+                # This is the std of a Bernoulli variable with probability mu
+                norm_denominator = np.sqrt(mean_q * (1 - mean_q))
+                
+                norm_std_val = np.nan
+                norm_std_err_val = np.nan
+
+                if norm_denominator > 1e-9: # Avoid division by zero or near-zero
+                    norm_std_val = (std_dev / norm_denominator) * 100 # As percentage
+
+                    # Error propagation for norm_std = (std_dev / denom) * 100
+                    # d(norm_std)/d(std_dev) = (1/denom) * 100
+                    # d(norm_std)/d(mean_q) = -0.5*std_dev*(1-2*mean_q)/(denom**3) * 100
+                    if not np.isnan(std_dev_err) and not np.isnan(mean_q_err):
+                        dnorm_dstd = (1.0 / norm_denominator)
+                        dnorm_dmean = -0.5 * std_dev * (1 - 2 * mean_q) / (norm_denominator ** 3)
+                        
+                        norm_std_err_val = np.sqrt(
+                            (dnorm_dstd * std_dev_err) ** 2 +
+                            (dnorm_dmean * mean_q_err) ** 2
+                        ) * 100 # As percentage
+                    else:
+                        norm_std_err_val = np.nan
+                elif std_dev < 1e-9 : # If mean is 0 or 1, std_dev should be 0
+                    norm_std_val = 0.0
+                    norm_std_err_val = 0.0 # If std_dev is 0, its error is 0 (assuming q_errors are not NaN)
+                                         # and if mean_q is 0 or 1, its error should also be 0 if data is consistent.
+
+                if direction == 'forward':
+                    forward_variation[k] = abs_std_percent
+                    forward_variation_error[k] = abs_std_err_percent
+                    forward_norm_variation[k] = norm_std_val
+                    forward_norm_variation_error[k] = norm_std_err_val
+                else:
+                    backward_variation[k] = abs_std_percent
+                    backward_variation_error[k] = abs_std_err_percent
+                    backward_norm_variation[k] = norm_std_val
+                    backward_norm_variation_error[k] = norm_std_err_val
+            else: # len(q_values) < 2
+                if direction == 'forward':
+                    forward_sample_sizes[k] = np.sum(weights) if weights else 0
+                else:
+                    backward_sample_sizes[k] = np.sum(weights) if weights else 0
+
+
+    return {
         'forward_variation': forward_variation,
-        'forward_variation_error': forward_variation_error, 
+        'forward_variation_error': forward_variation_error,
+        'forward_norm_variation': forward_norm_variation,
+        'forward_norm_variation_error': forward_norm_variation_error,
         'backward_variation': backward_variation,
-        'backward_variation_error': backward_variation_error, 
+        'backward_variation_error': backward_variation_error,
+        'backward_norm_variation': backward_norm_variation,
+        'backward_norm_variation_error': backward_norm_variation_error,
         'forward_sample_sizes': forward_sample_sizes,
         'backward_sample_sizes': backward_sample_sizes
     }
     
-    return memory_index
 
 def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, q_errors=None, min_samples=5, account_for_distances=True):
     """
@@ -4614,7 +4622,7 @@ def plot_destination_bias(p, interfaces=None, ax_forward=None, ax_backward=None,
         (ax_forward, ax_backward): The axes containing the forward and backward plots
     """
     import seaborn as sns
-    
+        
     n_interfaces = p.shape[0]
     
     if interfaces is None:
