@@ -96,9 +96,7 @@
     ├── setup.py
     ├── test
     │   ├── block_error_analysis.ipynb
-    │   ├── msm_pptis.ipynb
-    │   ├── msm_pptis_clean.ipynb
-    │   └── msm_pptis_mfpt.ipynb
+    │   └── msm_pptis_clean.ipynb
     └── pyproject.toml
 ```
 
