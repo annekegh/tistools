@@ -2805,17 +2805,17 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         
         # Create band boundaries: for a given x, the band extends from
         # y = x * (1 - threshold) to y = x * (1 + threshold)
-        x_band = np.linspace(0, 1, 100)
-        y_upper = x_band * (1 + momentum_threshold)
-        y_lower = x_band * (1 - momentum_threshold)
+        # x_band = np.linspace(0, 1, 100)
+        # y_upper = x_band * (1 + momentum_threshold)
+        # y_lower = x_band * (1 - momentum_threshold)
         
-        # Clip the band to stay within [0,1] bounds
-        y_upper = np.clip(y_upper, 0, 1)
-        y_lower = np.clip(y_lower, 0, 1)
+        # # Clip the band to stay within [0,1] bounds
+        # y_upper = np.clip(y_upper, 0, 1)
+        # y_lower = np.clip(y_lower, 0, 1)
         
-        # Fill the band
-        ax9.fill_between(x_band, y_lower, y_upper, alpha=0.2, color='gray', 
-                        label=f'Free energy dominated\n(±{momentum_threshold*100:.0f}% threshold)')
+        # # Fill the band
+        # ax9.fill_between(x_band, y_lower, y_upper, alpha=0.2, color='gray', 
+        #                 label=f'Free energy dominated\n(±{momentum_threshold*100:.0f}% threshold)')
         
         # Plot each point with error bars, colored by significance
         for x, y, sig, label, x_err, y_err in zip(x_vals, y_vals, significance, labels, x_errs, y_errs):
