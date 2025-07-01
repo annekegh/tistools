@@ -18,7 +18,7 @@ from tistools import get_local_probs, get_global_probs_from_dict
 
 # MSM functions
 from tistools import construct_M, construct_M_N3, global_pcross_msm
-from tistools import mfpt_to_first_last_state, construct_tau_vector
+from tistools import mfpt_to_first_last_state, construct_tau_vector, mfpt_to_absorbing_states
 
 # Writing output
 from tistools import write_running_estimates, write_plot_block_error
@@ -74,12 +74,16 @@ def load_txt_data(filename):
     pcross : np.ndarray
         Array of Pcross values.
     """
-    data = np.genfromtxt(filename, skip_header=1, dtype=float, names=["cycle", "tau", "pcross"])
+    data = np.genfromtxt(filename, skip_header=1, dtype=float, names=["cycle", "tau+", "tau-", "flux", "mfpt", "pcross", "rate"])
     cycles = data["cycle"]
-    tau = data["tau"]
+    taups = data["tau+"]
+    taums = data["tau-"]
+    fluxs = data["flux"]
+    mfpts = data["mfpt"]
+    rates = data["rate"]
     pcross = data["pcross"]
     
-    return cycles, tau, pcross
+    return cycles, taups, taums, fluxs, mfpts, pcross, rates
 
 
 def block_error_analysis(path_ensembles, interfaces, interval, load=False):
@@ -115,22 +119,26 @@ def block_error_analysis(path_ensembles, interfaces, interval, load=False):
     if load and os.path.exists(filename):
         # Attempt to load data from the file
         print("The data file exists, reading...")
-        _, taus, pcross = load_txt_data(filename)
+        _, taups, taums, fluxs, mfpts, pcross, rates = load_txt_data(filename)
 
         # Validate the loaded data: check for empty values or NaNs
         # if taus is None or pcross is None or np.isnan(taus).any() or np.isnan(pcross).any():
-        if taus is None or pcross is None:
+        if taups is None or pcross is None:
             print("Invalid data in file, recalculating...")
 
             # If data is invalid, recalculate running estimates
-            _, taus, pcross, _, _, _, _, _ = calculate_running_estimate(path_ensembles, interfaces, interval)
+            _, taups, pcross, _, _, _, _, _, taums, fluxs, mfpts, rates = calculate_running_estimate(path_ensembles, interfaces, interval)
     else:
         # If loading is disabled or the file doesn't exist, calculate running estimates
         print("First time calculating the data file ...")
-        _, taus, pcross, _, _, _, _, _ = calculate_running_estimate(path_ensembles, interfaces, interval)
+        _, taups, pcross, _, _, _, _, _, taums, fluxs, mfpts, rates = calculate_running_estimate(path_ensembles, interfaces, interval)
 
-    block_error_calculation(taus, interval, "Tau")
+    block_error_calculation(taups, interval, "Tau_p")
     block_error_calculation(pcross, interval, "Pcross")
+    block_error_calculation(taums, interval, "Tau_m")
+    block_error_calculation(fluxs, interval, "Flux")
+    block_error_calculation(mfpts, interval, "Tau_A,1")
+    block_error_calculation(rates, interval, "k_AB (MSM)")
 
 
 def block_error_calculation(running_estimate, interval, label):
@@ -355,7 +363,7 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
     """
 
     # Prepare result storage
-    cycles, taus, pcross = [], [], []
+    cycles, taups, taums, fluxs, pcross, mfpts, rates = [], [], [], [], [], [], []
     pmms, pmps, ppms, ppps, Pcrossfulls = [], [], [], [], []
     pathtypes = ("LML", "LMR", "RML", "RMR")
     
@@ -413,12 +421,23 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
         _, _, h1, _ = mfpt_to_first_last_state(M, np.nan_to_num(tau1), np.nan_to_num(tau_m), np.nan_to_num(tau2))
         _, _, y1, _ = global_pcross_msm(M)
 
+        # Calculate MFPT
+        absor = np.array([NS - 1])
+        kept = np.array([i for i in range(NS) if i not in absor])
+
+        _, _, _, h2 = mfpt_to_absorbing_states(M, np.nan_to_num(tau1), np.nan_to_num(tau_m), np.nan_to_num(tau2), absor, kept, remove_initial_m=False) #, doprint=True)
+        mfpt = h2[0][0]  # Mean first passage time to the last state
+
         # Print cycle information
         print(f"{nskip:5d} cycles, tau {h1[0][0]:.8f}, Pcross {y1[0][0]:.8f}")
 
         # Store results
         cycles.append(nskip)
-        taus.append(h1[0][0])
+        taups.append(h1[0][0])
+        taums.append(tau[0])
+        fluxs.append(1/(tau_m[0]+h1[0][0]))
+        mfpts.append(mfpt)
+        rates.append(1/mfpt)
         pcross.append(y1[0][0])
         pmms.append(pmm)
         pmps.append(pmp)
@@ -427,7 +446,7 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
         Pcrossfulls.append(Pcrossfull)
 
     # Write to file
-    write_running_estimates(f"pcross_tau_interval_{interval}.txt", cycles, taus, "Tau", pcross, "Pcross")
+    write_running_estimates(f"pcross_tau_interval_{interval}.txt", cycles, taups, "Tau_p", taums, "Tau_m", fluxs, "Flux", mfpts, "Tau_A,1", pcross, "Pcross", rates, "k_AB (MSM)")
     write_running_estimates(f"ploc_interval_{interval}.txt", cycles,
         np.array(pmms), "P_LML",
         np.array(pmps), "P_LMR",
@@ -435,4 +454,4 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
         np.array(ppps), "P_RMR",
         np.array(Pcrossfulls)[:, 1:], "P_Cross"
     )
-    return cycles, taus, pcross, pmms, pmps, ppms, ppps, Pcrossfulls
+    return cycles, taups, pcross, pmms, pmps, ppms, ppps, Pcrossfulls, taums, fluxs, mfpts, rates
