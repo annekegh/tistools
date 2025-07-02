@@ -436,6 +436,7 @@ def mfpt_to_absorbing_states(M, tau1, taum, tau2, absor, kept, doprint=False, re
 
     # Compute G vector (unconditional MFPT)
     g1 = np.zeros((len(absor), 1))  # Boundary condition: g1 is initialized to zero
+    print(absor, "g1: ", g1, "D", D, "tp", tp)
     g2 = np.linalg.solve(a, np.dot(D, g1) + tp)  # Solve (I - Mp) g2 = D g1 + tp
 
     # Compute H vector (conditional MFPT)
@@ -520,7 +521,7 @@ def mfpt_to_first_last_state(M, tau1, taum, tau2, doprint=False):
     absor = np.array([0, NS - 1])
     kept = np.array([i for i in range(NS) if i not in absor])
 
-    return mfpt_to_absorbing_states(M, tau1, taum, tau2, absor, kept, doprint=doprint, remove_initial_m="m")
+    return mfpt_to_absorbing_states(M, tau1, taum, tau2, absor, kept, doprint=doprint, remove_initial_m=True)
 
 
 #======================================
