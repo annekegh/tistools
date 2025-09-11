@@ -122,7 +122,10 @@ class PathEnsemble(object):
             self.totaltime = np.sum(self.lengths)
 
             self.weights = []
-            self.shootlinks = np.full_like(self.cyclenumbers, None, dtype=object)
+            self.shootlinks = np.array([float(dat[16]) for dat in data])
+            print(f"{data[5]}")
+            print(self.shootlinks)
+            # self.shootlinks = np.full_like(self.cyclenumbers, None, dtype=object)
             self.name = ""
             self.interfaces = []  # [ [L, M, R], string([L,M,R]) ] 2 lists in a list
 
@@ -581,10 +584,14 @@ def read_pathensemble(fn, ostart=0):
     data = []
     with open(fn, "r") as f:
         for line in f:
-            words = line.split()
-            cycle = int(words[0])
-            if cycle >= ostart:
-                data.append(words)
+            try:
+                words = line.split()
+                cycle = int(words[0])
+                if cycle >= ostart:
+                    data.append(words)
+            except:
+                # Skip lines that do not match the expected format
+                continue
 
     pe = PathEnsemble(data)
 

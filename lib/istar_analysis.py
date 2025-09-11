@@ -690,7 +690,7 @@ def get_summed_probs(pes, interfaces, weights=None, dbens=False):
     
     return p
 
-def compute_weight_matrices(pes, interfaces, n_int=None, tr=False, weights=None):
+def compute_weight_matrices(pes, interfaces, n_int=None, tr=False, weights=None, correct_ha=False, norm=False):
     """
     Compute weight matrices for transition analysis across all path ensembles.
     
@@ -752,7 +752,8 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr=False, weights=None)
         masks[i] = get_lmr_masks(pe)
         if weights is None:
             # Calculate weights using the staple method
-            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, n_int, ACCFLAGS, REJFLAGS, verbose=True)
+            ha = pe.shootlinks if correct_ha else None
+            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, n_int, ACCFLAGS, REJFLAGS, ha_factors=ha, verbose=True)
         else:
             w = weights[i]
             
@@ -827,16 +828,21 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr=False, weights=None)
         print(f"Sum weights ensemble {i}: ", np.sum(w_path[i]))
 
     X = w_path
-    for i in range(len(pes)):
-        if tr:
+    if tr:
+        for i in range(len(pes)):
             if i == 2 and X[i][0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
                 X[i][1, 0] *= 2     # Time reversal needs to be adjusted to compensate for this
+            elif i == 2 and X[i][1, 0] == 0:
+                X[i][0, 1] *= 2
             elif i == len(interfaces)-1 and X[i][-1, -2] == 0:
                 X[i][-2, -1] *= 2
             X[i] = (X[i] + X[i].T) / 2.0   # Properly symmetrize the matrix
+        if norm:
+            X[i] /= np.sum(X[i]) if np.sum(X[i]) > 0 else np.zeros_like(X[i])
+
     return X
 
-def compute_weight_matrix(pe, pe_id, interfaces, tr=False, weights=None):
+def compute_weight_matrix(pe, pe_id, interfaces, tr=False, weights=None, correct_ha=False):
     """
     Compute weight matrix for a single path ensemble.
     
@@ -883,7 +889,8 @@ def compute_weight_matrix(pe, pe_id, interfaces, tr=False, weights=None):
     # Get the lmr masks, weights, ACCmask, and loadmask of the paths
     masks = get_lmr_masks(pe)
     if weights is None:
-        w = get_weights_staple(pe_id, pe.flags, pe.generation, pe.lmrs, len(interfaces), ACCFLAGS, REJFLAGS, verbose=False)
+        ha = pe.shootlinks if correct_ha else None
+        w = get_weights_staple(pe_id, pe.flags, pe.generation, pe.lmrs, len(interfaces), ACCFLAGS, REJFLAGS, ha_factors=ha, verbose=False)
     else:
         w = weights
     accmask = get_flag_mask(pe, "ACC")
@@ -964,7 +971,7 @@ def compute_weight_matrix(pe, pe_id, interfaces, tr=False, weights=None):
     return X_path
 
 
-def get_weights_staple(pe_i, flags, gen, ptypes, n_pes, ACCFLAGS, REJFLAGS, verbose=True):
+def get_weights_staple(pe_i, flags, gen, ptypes, n_pes, ACCFLAGS, REJFLAGS, ha_factors=None, verbose=True):
     """
     Calculate weights for each trajectory in a path ensemble using the staple method.
     
@@ -1018,6 +1025,7 @@ def get_weights_staple(pe_i, flags, gen, ptypes, n_pes, ACCFLAGS, REJFLAGS, verb
     AssertionError
         If input arrays have inconsistent lengths or if unexpected path flags are found
     """
+    print(f"{len(ha_factors) if ha_factors is not None else None} ha_factors for {pe_i}th ensemble")
     ntraj = len(flags)
     
     # Validate input dimensions
@@ -1038,10 +1046,15 @@ def get_weights_staple(pe_i, flags, gen, ptypes, n_pes, ACCFLAGS, REJFLAGS, verb
     acc_index = 0
     tot_w = 0
     prev_ha = 1
+    print(ha_factors)
     assert flags[0] == 'ACC'
     for i, fgp in enumerate(zip(flags, gen, ptypes)):
         flag, gg, ptype = fgp
         if flag in ACCFLAGS:
+        # or (pe_i == 1 and ptype in ["RMR", "R**"]):
+            # if pe_i == 1 and ptype in ["RMR", "R**"] and flag == "ILL":
+            #     print(f"Resetting acc_w for trajectory {i} in ensemble {pe_i} with type {ptype} and generation {gg, flag}")
+            #     acc_w = 0
             # Store previous trajectory with accumulated weight
             weights[acc_index] = prev_ha * acc_w
             tot_w += prev_ha * acc_w
@@ -1049,13 +1062,18 @@ def get_weights_staple(pe_i, flags, gen, ptypes, n_pes, ACCFLAGS, REJFLAGS, verb
             acc_index = i
             acc_w = 1
             accepted += 1
-            if gg == 'sh' and \
-                ((pe_i == 2 and ptype == "RMR") or\
-                (pe_i == n_pes-1 and ptype == "LML") or\
-                (2 < pe_i < n_pes-1 and ptype in ["LML", "RMR"])):
-                prev_ha = 2
+            if ha_factors is not None:
+                prev_ha = ha_factors[acc_index]
+                # if ha_factors[acc_index] == 2:
+                    # print(f"High acceptance factor of 2 for trajectory {acc_index} in ensemble {pe_i} with type {ptype} and generation {gg}")
             else:
-                prev_ha = 1
+                if gg == 'sh' and \
+                    ((pe_i == 2 and ptype == "RMR") or\
+                    (pe_i == n_pes-1 and ptype == "LML") or\
+                    (2 < pe_i < n_pes-1 and ptype in ["LML", "RMR"])):
+                    prev_ha = 2
+                else:
+                    prev_ha = 1
         elif flag in REJFLAGS:
             acc_w += 1    # Weight of previous accepted trajectory increased
             rejected += 1
@@ -1203,7 +1221,7 @@ def cprobs_repptis_istar(pes, interfaces, n_int=None):
 
         plocistar[i] = {}
         if i == 0:
-            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, len(interfaces), ACCFLAGS, REJFLAGS, verbose = False)
+            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, len(interfaces), ACCFLAGS, REJFLAGS, ha_factors=pe.weights,verbose = False)
             masks= get_lmr_masks(pe)
             accmask = get_flag_mask(pe, "ACC")
             loadmask = get_generation_mask(pe, "ld")
@@ -1368,7 +1386,7 @@ def plot_rv_comp(pes, interfaces, n_repptis, n_staple, pe_idxs=None):
     fig.legend()
     fig.show()
 
-def display_data(pes, interfaces, n_int=None, weights=None):
+def display_data(pes, interfaces, n_int=None, weights=None, correct_ha=False):
     """
     Display detailed analysis of raw and weighted transition data across all path ensembles.
     
@@ -1417,6 +1435,9 @@ def display_data(pes, interfaces, n_int=None, weights=None):
     tresholdtr = 0.05
     masks = {}
     X = {}
+    X_norm = {}
+    X_tr = {}
+    X_tr_norm = {}
     C = {}
     C_md = {}  # Number of paths where new MD steps are performed (shooting/WF)
     ploc_repptis = {}
@@ -1430,7 +1451,8 @@ def display_data(pes, interfaces, n_int=None, weights=None):
         # Get the lmr masks, weights, ACCmask, and loadmask of the paths
         masks[i] = get_lmr_masks(pe)
         if weights is None:
-            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, n_int, ACCFLAGS, REJFLAGS, verbose=True)
+            ha = pe.shootlinks if correct_ha else None
+            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, n_int, ACCFLAGS, REJFLAGS, ha_factors=ha,verbose=True)
         else:
             w = weights[i]
         accmask = get_flag_mask(pe, "ACC")
@@ -1445,10 +1467,12 @@ def display_data(pes, interfaces, n_int=None, weights=None):
         logger.debug(msg)
 
         X[i] = np.zeros([len(interfaces), len(interfaces)])
+        X_tr[i] = np.zeros([len(interfaces), len(interfaces)])
+        X_tr_norm[i] = np.zeros([len(interfaces), len(interfaces)])
         C[i] = np.zeros([len(interfaces), len(interfaces)])
         C_md[i] = np.zeros([len(interfaces), len(interfaces)])
-        X_val = compute_weight_matrix(pe, i, interfaces, tr=False, weights=weights)
-        X_val_tr = compute_weight_matrix(pe, i, interfaces, tr=True, weights=weights)
+        X_val = compute_weight_matrix(pe, i, interfaces, tr=False, weights=weights, correct_ha=True)
+        X_val_tr = compute_weight_matrix(pe, i, interfaces, tr=True, weights=weights, correct_ha=True)
 
         # 1. Displaying raw data, only unweighted X_ijk
         # 2. Displaying weighted data W_ijk
@@ -1474,7 +1498,7 @@ def display_data(pes, interfaces, n_int=None, weights=None):
                             dir_mask = masks[i]["LMR"]    # Distinction for 0 -> 1 paths in [0*] 
                         elif i == 2:
                             # dir_mask = pe.dirs == 1
-                            dir_mask = np.full_like(pe.dirs, True)  # For now no distinct    ion yet for [1*] paths: classify all paths as 1 -> 0. Later: dir_mask = np.logical_or(pe.dirs == 1, masks[i]["LML"])
+                            dir_mask = np.full_like(pe.dirs, True)  # For now no distinction yet for [1*] paths: classify all paths as 1 -> 0. Later: dir_mask = np.logical_or(pe.dirs == 1, masks[i]["LML"])
                         else:
                             dir_mask = np.full_like(pe.dirs, False)
                     elif j == 0 and k == 2:
@@ -1552,6 +1576,11 @@ def display_data(pes, interfaces, n_int=None, weights=None):
         print(np.array2string(X[i], precision=4, suppress_small=True))
         print(f"Sum weights ensemble {i}: {np.sum(X[i]):.4f}")
         
+        print("\n2b. Normalized weighted data")
+        print(f"X_norm[{i}] = ")
+        X_norm[i] = X[i] / np.sum(X[i]) if np.sum(X[i]) != 0 else np.zeros_like(X[i])
+        print(np.array2string(X_norm[i], precision=4, suppress_small=True))
+
         # Warnings for significant differences between weighted and raw data
         if len(idx_weirdw) > 0:
             print("\n[WARNING] Significant differences between weighted and raw counts:")
@@ -1563,12 +1592,15 @@ def display_data(pes, interfaces, n_int=None, weights=None):
         
         # 4. Weighted data with time reversal symmetry
         print("\n3a. Weighted data with time reversal")
+        X_copy = X[i].copy()
         if i == 2 and X[i][0, 1] == 0:     # In [1*] all LML paths are classified as 1 -> 0 (for now).
-            X[i][1, 0] *= 2     # Time reversal needs to be adjusted to compensate for this
+            X_copy[1, 0] *= 2     # Time reversal needs to be adjusted to compensate for this
+        elif i == 2 and X[i][1, 0] == 0:
+            X_copy[0, 1] *= 2
         elif i == len(interfaces)-1 and X[i][-1, -2] == 0:
-            X[i][-2, -1] *= 2
-        X_tr = (X[i]+X[i].T)/2.0
-        print(np.array2string(X_tr, precision=4, suppress_small=True))
+            X_copy[-2, -1] *= 2
+        X_tr[i] = (X_copy+X_copy.T)/2.0
+        print(np.array2string(X_tr[i], precision=4, suppress_small=True))
         
         # Warnings for significant differences in time-reversal symmetry
         if len(idx_tr) > 0:
@@ -1581,7 +1613,7 @@ def display_data(pes, interfaces, n_int=None, weights=None):
         # Warning for interfaces (columns) with unusually low sampling
         total_sum = np.sum(X_tr[i])
         col_sums = np.sum(X_tr[i], axis=0)
-        n_cols = X_tr.shape[1]
+        n_cols = X_tr[i].shape[1]
         threshold = total_sum / (5 * n_cols)  # Threshold for warning: 20% of average
         
         low_cols = np.where(col_sums < threshold)[0]
@@ -1591,9 +1623,14 @@ def display_data(pes, interfaces, n_int=None, weights=None):
                 print(f"  Interface {col}: weight sum={col_sums[col]:.2f}, "
                     f"only {(col_sums[col]/total_sum)*100:.1f}% of total weight "
                     f"(threshold: {threshold:.2f})")
-        
+
+        print("3b. Normalized data with time reversal")
+        print(f"X_tr_norm[{i}] = ")
+        X_tr_norm[i] = X_tr[i] / np.sum(X_tr[i]) if np.sum(X_tr[i]) != 0 else np.zeros_like(X_tr[i])
+        print(np.array2string(X_tr_norm[i], precision=4, suppress_small=True))
+
         # 5. Unweighted data with time reversal symmetry
-        print("\n3b. Unweighted data with time reversal")
+        print("\n3c. Unweighted data with time reversal")
         C_tr = (C[i]+C[i].T)/2.0
         print(np.array2string(C_tr, precision=4, suppress_small=True))            
 
@@ -1608,6 +1645,16 @@ def display_data(pes, interfaces, n_int=None, weights=None):
         for k in range(len(interfaces)):
             W[j][k] = np.sum([X[i][j][k] for i in range(n_int)])
     
+    W_norm = np.zeros_like(W)
+    for j in range(len(interfaces)):
+        for k in range(len(interfaces)):
+            W_norm[j][k] = np.sum(X_norm[i][j][k] for i in range(n_int))
+    
+    W_tr_norm = np.zeros_like(W)
+    for j in range(len(interfaces)):
+        for k in range(len(interfaces)):
+            W_tr_norm[j][k] = np.sum(X_tr_norm[i][j][k] for i in range(n_int))
+
     # Combined weights without time-reversal symmetry
     print("\n4. Weights of all ensembles combined (sum), no TR")
     print(np.array2string(W, precision=4, suppress_small=True))
@@ -1617,10 +1664,10 @@ def display_data(pes, interfaces, n_int=None, weights=None):
     W_tr = (W+W.T)/2.
     if W[1,0] == 0:
         W_tr[0,1] *= 1 
-        W_tr[1,0] *= 1
+        W_tr[1,0] *= W_tr[0,1]
     print(np.array2string(W_tr, precision=4, suppress_small=True))
 
-    return C, X, W
+    return C, X_tr, X_norm, X_tr_norm, X, W_tr, W_norm, W_tr_norm, W
 
 def ploc_repptis_from_staples(pes, interfaces, n_int=None, staple_weights=None):
     """
@@ -1666,7 +1713,7 @@ def ploc_repptis_from_staples(pes, interfaces, n_int=None, staple_weights=None):
         # Get masks, weights, and other path statistics
         masks[i] = get_lmr_masks(pe)
         if staple_weights is None:
-            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, n_int, ACCFLAGS, REJFLAGS, verbose=False)
+            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, n_int, ACCFLAGS, REJFLAGS, ha_factors=pe.weights,verbose=False)
         else:
             w = staple_weights[i]
             
@@ -1693,7 +1740,7 @@ def ploc_repptis_from_staples(pes, interfaces, n_int=None, staple_weights=None):
         
         # Special handling for first ensemble
         if i == 0:
-            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, len(interfaces), ACCFLAGS, REJFLAGS, verbose=False)
+            w = get_weights_staple(i, pe.flags, pe.generation, pe.lmrs, len(interfaces), ACCFLAGS, REJFLAGS, ha_factors=pe.weights,verbose=False)
             masks = get_lmr_masks(pe)
             accmask = get_flag_mask(pe, "ACC")
             loadmask = get_generation_mask(pe, "ld")
@@ -1923,7 +1970,7 @@ def memory_analysis(w_path, tr=False):
 
     return q_k, q_tot
 
-def ploc_memory(pathensembles, interfaces, trr=True):
+def ploc_memory(pathensembles, interfaces, trr=True, correct_ha=False):
     """
     Calculate global crossing probabilities using multiple methods and compare their results.
     
@@ -1931,7 +1978,7 @@ def ploc_memory(pathensembles, interfaces, trr=True):
     global crossing probabilities:
     1. Milestoning: Based on local transitions between adjacent interfaces
     2. REPPTIS: Using the replica exchange TIS formalism
-    3. APPTIS: Using the iSTAR path ensemble network approach
+    3. APPTIS: Using the iSTAR path ensemble network approach (with and without HA correction)
     
     The comparison reveals how different theoretical frameworks estimate transition
     probabilities, highlighting possible model dependencies or memory effects.
@@ -1945,20 +1992,25 @@ def ploc_memory(pathensembles, interfaces, trr=True):
     trr : bool, optional
         If True, enforces time-reversal symmetry in the APPTIS calculation.
         Default is True.
+    correct_ha : bool, optional
+        If True, applies high acceptance correction to the APPTIS calculation.
+        Default is False.
     
     Returns
     -------
     dict
         Dictionary containing global crossing probabilities calculated with different methods:
         - "mlst": Milestoning probabilities
-        - "apptis": APPTIS probabilities using iSTAR
+        - "apptis": APPTIS probabilities using iSTAR without HA correction
+        - "apptis_ha": APPTIS probabilities using iSTAR with HA correction
         - "repptis": REPPTIS probabilities
         
     Notes
     -----
-    This function also generates a logarithmic plot comparing the three methods, showing:
+    This function also generates a logarithmic plot comparing the four methods, showing:
     - How estimates of crossing probabilities vary between methods
     - Whether the system exhibits significant memory effects (differences between methods)
+    - Impact of high acceptance correction on APPTIS results
     - Which method might be most appropriate for the system under study
     
     Significant differences between methods usually indicate memory effects or
@@ -1967,6 +2019,8 @@ def ploc_memory(pathensembles, interfaces, trr=True):
     plocs = {}
     plocs["mlst"] = [1.,]
     plocs["apptis"] = [1.,]
+    plocs["apptis_ha"] = [1.,]
+    plocs["apptis_ha, norm"] = [1.,]
     repptisploc = []
 
     for i, pe in enumerate(pathensembles):
@@ -1983,13 +2037,29 @@ def ploc_memory(pathensembles, interfaces, trr=True):
             z1, z2, y1, y2 = global_pcross_msm(Milst)
             plocs["mlst"].append(y1[0][0])
 
-        # APPTIS p_loc
+        # APPTIS p_loc (without HA correction)
         if i < len(pathensembles)-1:
-            wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], len(interfaces), tr=trr)
+            wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], len(interfaces), tr=trr, correct_ha=False, norm=True)
             pi, _ = get_transition_probs_weights(wi)
             Mi = construct_M_istar(pi, max(4, 2*len(interfaces[:i+2])), len(interfaces[:i+2]))
             z1, z2, y1, y2 = global_pcross_msm_star(Mi)
             plocs["apptis"].append(y1[0][0])
+        
+        # APPTIS p_loc (without HA correction)
+        if i < len(pathensembles)-1:
+            wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], len(interfaces), tr=trr, correct_ha=True, norm=False)
+            pi, _ = get_transition_probs_weights(wi)
+            Mi = construct_M_istar(pi, max(4, 2*len(interfaces[:i+2])), len(interfaces[:i+2]))
+            z1, z2, y1, y2 = global_pcross_msm_star(Mi)
+            plocs["apptis_ha"].append(y1[0][0])
+
+        # APPTIS p_loc (with HA correction)
+        if i < len(pathensembles)-1:
+            wi_ha = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], len(interfaces), tr=trr, correct_ha=True, norm=True)
+            pi_ha, _ = get_transition_probs_weights(wi_ha)
+            Mi_ha = construct_M_istar(pi_ha, max(4, 2*len(interfaces[:i+2])), len(interfaces[:i+2]))
+            z1_ha, z2_ha, y1_ha, y2_ha = global_pcross_msm_star(Mi_ha)
+            plocs["apptis_ha, norm"].append(y1_ha[0][0])
 
     _, _, plocs["repptis"] = get_global_probs_from_dict(repptisploc)
 
@@ -2000,14 +2070,18 @@ def ploc_memory(pathensembles, interfaces, trr=True):
     print("\nREPPTIS p_loc:")
     print(np.array2string(np.array(plocs["repptis"]), precision=4, suppress_small=True))
     
-    print("\nAPPTIS p_loc:")
+    print("\nAPPTIS p_loc (no HA correction):")
     print(np.array2string(np.array(plocs["apptis"]), precision=4, suppress_small=True))
+    
+    print("\nAPPTIS p_loc (with HA correction):")
+    print(np.array2string(np.array(plocs["apptis_ha"]), precision=4, suppress_small=True))
 
     # Make a figure of the global crossing probabilities
     plt.rcParams['text.usetex'] = True
     fig, ax = plt.subplots()
     ax.set_yscale("log")
     ax.errorbar([i for i in range(len(interfaces))], plocs["apptis"], fmt="-o", c = "b", ecolor="r", capsize=6, label="APPTIS")
+    ax.errorbar([i for i in range(len(interfaces))], plocs["apptis_ha"], fmt="-s", c = "cyan", ecolor="r", capsize=6, label="APPTIS (HA corrected)")
     ax.errorbar([i for i in range(len(interfaces))], plocs["repptis"], fmt="-o", c = "orange", ecolor="r", capsize=6., label="REPPTIS")
     ax.errorbar([i for i in range(len(interfaces))], plocs["mlst"], fmt="-o", c = "r", ecolor="r", capsize=6., label="Milestoning")
     ax.set_xlabel(r"Interface index")
@@ -2052,28 +2126,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     import seaborn as sns
     # Add legend
     from matplotlib.lines import Line2D
-
-    # Process q_errors input ONCE at the beginning
-    loaded_q_errors = None
-    if q_errors is not None:
-        if isinstance(q_errors, str):
-            try:
-                loaded_q_errors = read_block_errors(q_errors, q_tot[0].shape)
-                if loaded_q_errors.shape == q_tot[0].shape:
-                    print(f"Successfully loaded q_errors from file: {q_errors}")
-                else:
-                    print(f"Warning: Shape mismatch in q_errors file")
-                    loaded_q_errors = None
-            except Exception as e:
-                print(f"Warning: Could not load q_errors: {e}")
-                loaded_q_errors = None
-        elif isinstance(q_errors, np.ndarray) and q_errors.shape == q_tot[0].shape:
-            loaded_q_errors = q_errors
-            print("Using provided q_errors NumPy array.")
-        else:
-            print(f"Warning: Invalid q_errors provided")
-            loaded_q_errors = None
-
+    
     # Extract the probability matrix and weights matrix from q_tot
     q_probs = q_tot[0]
     q_weights = q_tot[1]
@@ -2091,12 +2144,12 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
             is_equidistant = True
     
     # Generate more descriptive state labels
-    # state_labels = generate_state_labels(n_interfaces)
+    state_labels = generate_state_labels(n_interfaces)
 
-    # M = construct_M_istar(p, 2*n_interfaces, n_interfaces)
+    M = construct_M_istar(p, 2*n_interfaces, n_interfaces)
     
-    # Calculate diffusive reference probabilities with errors
-    diff_ref, diff_ref_errors = calculate_diffusive_reference(interfaces, q_tot[0], q_tot[1], loaded_q_errors)
+    # Calculate diffusive reference probabilities based on interface spacing
+    diff_ref = calculate_diffusive_reference(interfaces, q_tot[0], q_tot[1])
     plocs_repptis, plocs_istar = ploc_repptis_from_staples(pes, interfaces, n_int=n_interfaces)
     
     # Function to generate high-contrast colors for plots
@@ -2280,18 +2333,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     fig2 = plt.figure(figsize=(18, 12))
     gs2 = gridspec.GridSpec(2, 2, height_ratios=[1, 0.8])
     
-    # Set a stylish color scheme and font
-    plt.rcParams.update({
-        'font.size': 10,
-        'font.family': 'serif',
-        'axes.linewidth': 1.2,
-        'axes.spines.top': False,
-        'axes.spines.right': False,
-        'grid.alpha': 0.3,
-        'grid.linestyle': '--'
-    })
-    
-    # Create colors for targets using viridis
+    # Create colors for targets
     forward_targets = [k for k in range(1, n_interfaces)]
     forward_colors = generate_high_contrast_colors(len(forward_targets))
     
@@ -2308,7 +2350,6 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ref_probs = []
         valid_indices = []
         repptisp = []
-        error_bars = []
         
         for i in range(k):
             # Include adjacent transitions only for interface 0->1
@@ -2318,48 +2359,44 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 valid_indices.append(i)
                 ref_probs.append(diff_ref[i, k])
                 repptisp.append(plocs_repptis[k]["LMR"])
-                
-                # Calculate error bars
-                if loaded_q_errors is not None and not np.isnan(loaded_q_errors[i, k]):
-                    error_bars.append(loaded_q_errors[i, k])
-                else:
-                    # Fallback to binomial error if block error not available
-                    binomial_error = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
-                    error_bars.append(binomial_error)
         
         if target_data:
-            # Plot actual probabilities with enhanced styling and subtle error bars
-            ax4.errorbar(starting_positions, target_data, yerr=error_bars,
-                    fmt='o-', label=(f'{k-1 if k>0 else k}→{k}'), linewidth=3, markersize=10,
-                    color=forward_colors[idx], markeredgecolor='white', markeredgewidth=1.5,
-                    alpha=0.85, capsize=4, capthick=1.5, elinewidth=1.5, 
-                    ecolor=forward_colors[idx])
+            # Plot actual probabilities with physical positions on x-axis
+            ax4.plot(starting_positions, target_data, 'o-', 
+                    label=(f'{k-1 if k>0 else k}→{k}'), linewidth=2, markersize=8,
+                    color=forward_colors[idx])
             
-            # Plot diffusive reference as elegant dashed lines
+            # Plot diffusive reference as dashed lines
             ax4.plot(starting_positions, ref_probs, '--',
-                    color=forward_colors[idx], alpha=0.6, linewidth=2)
+                    color=forward_colors[idx], alpha=0.5)
+            # ax4.plot(starting_positions, repptisp, ':',
+            #         color=forward_colors[idx], alpha=0.5)
     
-    # Configure the forward plot with enhanced styling
-    ax4.set_xlabel('Starting interface Position (λ$\\subset$)', fontweight='bold', fontsize=12)
-    ax4.set_ylabel('Probability q(i,k)', fontweight='bold', fontsize=12)
-    ax4.set_title('Forward Transition Probabilities (L→R)', fontsize=14, fontweight='bold', pad=20)
+    # Configure the forward plot
+    ax4.set_xlabel('Starting interface Position (λ$\\subset$)')
+    ax4.set_ylabel('Probability q(i,k)')
+    ax4.set_title('Forward Transition Probabilities (L→R)', fontsize=12)
     ax4.set_ylim(0, 1.05)
-    ax4.grid(True, alpha=0.3, linestyle='--')
-    ax4.set_facecolor('#fafafa')
+    sns.despine(ax=ax4)
     
-    # Enhanced axis styling
-    ax4.tick_params(axis='both', which='major', labelsize=10, length=6, width=1.2)
-    
-    # Create better x-axis ticks
+    # Create better x-axis ticks using interface indices as labels but keeping physical distances
     ax4.set_xlim(min(interfaces) - 0.1, interfaces[n_interfaces-2] + 0.1)
+    # Set the physical positions of interfaces on the x-axis
     ax4.set_xticks(interfaces)
+    # Use state_labels for the tick labels
     ax4.set_xticklabels(["0→"]+[f"{i}$\\subset$" for i in range(1, n_interfaces-1)] + [f"{n_interfaces-1}"])
     
-    # Stylish legend with enhanced appearance
-    legend = ax4.legend(title='Target Region', loc='best', fontsize=10, title_fontsize=11,
-                       frameon=True, fancybox=True, shadow=True, framealpha=0.9)
-    legend.get_frame().set_facecolor('white')
-    legend.get_frame().set_edgecolor('gray')
+    # Add explanatory text about the dashed lines
+    ref_text = """
+    Dashed lines: Diffusive reference probabilities
+    • Based on free energy differences between interfaces
+    • Calculated using detailed balance principle
+    """
+    # ax4.text(0.02, 0.02, ref_text, transform=ax4.transAxes, fontsize=9, 
+    #          bbox=dict(facecolor='white', alpha=0.8))
+    
+    # Add a legend with reasonable size
+    ax4.legend(title='Target Region', loc='best', fontsize=9)
     
     # Plot 2.2: Backward Transition Probabilities (R→L)
     ax5 = fig2.add_subplot(gs2[0, 1])
@@ -2370,7 +2407,6 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         starting_positions = []
         ref_probs = []
         valid_indices = []
-        error_bars = []
         
         for i in range(k+1, n_interfaces):
             # Exclude adjacent transitions (i.e., exclude i=k+1)
@@ -2379,179 +2415,124 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 starting_positions.append(interfaces[i])
                 valid_indices.append(i)
                 ref_probs.append(diff_ref[i, k])
-                
-                # Calculate error bars
-                if loaded_q_errors is not None and not np.isnan(loaded_q_errors[i, k]):
-                    error_bars.append(loaded_q_errors[i, k])
-                else:
-                    # Fallback to binomial error if block error not available
-                    binomial_error = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
-                    error_bars.append(binomial_error)
         
         if target_data:
-            # Plot actual probabilities with enhanced styling and subtle error bars
-            ax5.errorbar(starting_positions, target_data, yerr=error_bars,
-                    fmt='o-', label=(f'{k}←{k+1}'), linewidth=3, markersize=10,
-                    color=backward_colors[idx], markeredgecolor='white', markeredgewidth=1.5,
-                    alpha=0.85, capsize=4, capthick=1.5, elinewidth=1.5,
-                    ecolor=forward_colors[idx])
+            # Plot actual probabilities with physical po5)
+            ax5.plot(starting_positions, target_data, 'o-', 
+                    label=(f'{k}←{k+1}'), linewidth=2, markersize=8,
+                    color=backward_colors[idx])
             
-            # Plot diffusive reference as elegant dashed lines
+            # Plot diffusive reference as dashed lines12
             ax5.plot(starting_positions, ref_probs, '--', 
-                    color=backward_colors[idx], alpha=0.6, linewidth=2)
+                    color=backward_colors[idx], alpha=0.5)
     
-    # Configure the backward plot with enhanced styling
-    ax5.set_xlabel('Starting interface Position (λ)$\\supset$', fontweight='bold', fontsize=12)
-    ax5.set_ylabel('Probability q(i,k)', fontweight='bold', fontsize=12)
-    ax5.set_title('Backward Transition Probabilities (R→L)', fontsize=14, fontweight='bold', pad=20)
+    # Configure the backward plot
+    ax5.set_xlabel('Starting interface Position (λ)$\\supset$')
+    ax5.set_ylabel('Probability q(i,k)')
+    ax5.set_title('Backward Transition Probabilities (R→L)', fontsize=12)
     ax5.set_ylim(0, 1.05)
-    ax5.grid(True, alpha=0.3, linestyle='--')
-    ax5.set_facecolor('#fafafa')
-    
-    # Enhanced axis styling
-    ax5.tick_params(axis='both', which='major', labelsize=10, length=6, width=1.2)
-    
-    # Create better x-axis ticks
+    sns.despine(ax=ax5)
+        
+    # Add explanatory text about the dashed lines
+    # ax5.text(0.02, 0.02, ref_text, transform=ax5.tra9,
+    #          bbox=dict(facecolor='whiteintalpha=0.8)ices as labels but keeping physical distances
     ax5.set_xlim(interfaces[1] - 0.1, max(interfaces) + 0.1)
+    # Set the physical positions of interfaces on the x-axis
     ax5.set_xticks(interfaces)
+    # Use state_labels for the tick labels
     ax5.set_xticklabels(["0←"]+[f"{i}$\\supset$" for i in range(1, n_interfaces-1)] + [f"{n_interfaces-1}"])
     
-    # Add explanatory text with enhanced styling
-    ref_text = """
-    Dashed lines: Diffusive reference probabilities
-    • Based on free energy differences between interfaces
-    • Calculated using detailed balance principle
-    Error bars: Statistical uncertainty
-    """
+    # Add explanatory text about the dashed lines
     ax5.text(0.02, 0.02, ref_text, transform=ax5.transAxes, fontsize=9,
-             bbox=dict(facecolor='white', alpha=0.9, boxstyle='round,pad=0.5', 
-                      edgecolor='gray', linewidth=1))
+             bbox=dict(facecolor='white', alpha=0.8))
     
-    # Stylish legend
-    legend = ax5.legend(title='Target Region', loc='best', fontsize=10, title_fontsize=11,
-                       frameon=True, fancybox=True, shadow=True, framealpha=0.9)
-    legend.get_frame().set_facecolor('white')
-    legend.get_frame().set_edgecolor('gray')
+    # Add a legend with reasonable size
+    ax5.legend(title='Target Region', loc='best', fontsize=9)
     
     # Plot 2.3: Forward Memory Retention
     ax6 = fig2.add_subplot(gs2[1, 0])
 
     # Calculate memory retention using simplified approach
-    memory_index = calculate_memory_effect_index(q_probs, q_weights, q_errors=loaded_q_errors)
+    memory_index = calculate_memory_effect_index(q_probs, q_weights, q_errors=q_errors)
 
     # Prepare data for forward plot
-    valid_k_fwd = [k for k in range(1, n_interfaces) if not np.isnan(memory_index['forward_norm_variation'][k])]
-    valid_norm_variation_fwd = [memory_index['forward_norm_variation'][k] for k in valid_k_fwd]
-    valid_error_fwd = [memory_index['forward_norm_variation_error'][k] if not np.isnan(memory_index['forward_norm_variation_error'][k]) else 0 for k in valid_k_fwd]
+    valid_k_fwd = [k for k in range(1, n_interfaces) if not np.isnan(memory_index['forward_variation'][k])]
+    valid_variation_fwd = [memory_index['forward_variation'][k] for k in valid_k_fwd]
+    valid_error_fwd = [memory_index['forward_variation_error'][k] if not np.isnan(memory_index['forward_variation_error'][k]) else 0 for k in valid_k_fwd]
     valid_positions_fwd = [interfaces[k] for k in valid_k_fwd]
     valid_colors_fwd = [forward_colors[k-1] for k in valid_k_fwd]
     valid_counts_fwd = [memory_index['forward_sample_sizes'][k] for k in valid_k_fwd]
+    # Use state_labels for valid_k_fwd
     valid_state_labels_fwd = [(f'{k}$\\subset$' if k < n_interfaces-1 else f'{k}') for k in valid_k_fwd]
 
     # Calculate mean difference with diffusive reference for each target interface
     forward_mean_diff = np.zeros(n_interfaces)
     forward_mean_diff.fill(np.nan)
-    forward_mean_diff_error = np.zeros(n_interfaces)
-    forward_mean_diff_error.fill(np.nan)
     
     for k in range(1, n_interfaces):
         diffs = []
-        diff_errors = []
         for i in range(k-1):  # Skip adjacent interface (i=k-1)
                 # Only consider non-adjacent transitions with enough samples
                 if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
                     diffs.append(abs(q_probs[i, k] - diff_ref[i, k]))
-                    # Propagate errors: error of |a - b| is sqrt(σ_a² + σ_b²)
-                    if loaded_q_errors is not None and not np.isnan(loaded_q_errors[i, k]):
-                        q_err = loaded_q_errors[i, k]
-                    else:
-                        q_err = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
-                    
-                    # Error in diffusive reference (assumed small, use 5% of value)
-                    diff_ref_err = 0.05 * diff_ref[i, k]
-                    combined_err = np.sqrt(q_err**2 + diff_ref_err**2)
-                    diff_errors.append(combined_err)
         
         if diffs:
                 forward_mean_diff[k] = np.mean(diffs) * 100  # Convert to percentage
-                # Error in mean: standard error of the mean
-                forward_mean_diff_error[k] = (np.std(diff_errors) / np.sqrt(len(diff_errors))) * 100 if len(diff_errors) > 1 else np.mean(diff_errors) * 100
     
-    # Extract valid mean differences and errors to plot
+    # Extract valid mean differences to plot
     valid_mean_diff_fwd = [forward_mean_diff[k] if not np.isnan(forward_mean_diff[k]) else 0 for k in valid_k_fwd]
-    valid_mean_diff_error_fwd = [forward_mean_diff_error[k] if not np.isnan(forward_mean_diff_error[k]) else 0 for k in valid_k_fwd]
 
     if valid_k_fwd:
         # Create a twin axis for the memory retention plot
         ax6_twin = ax6.twinx()
         ax6_twin.set_ylim(0, 100)
         
-        # Create enhanced bar plot with gradient effect
-        bars = ax6.bar(valid_positions_fwd, valid_norm_variation_fwd, yerr=valid_error_fwd, 
-                      color=valid_colors_fwd, alpha=0.8, 
-                      width=np.mean(np.diff(interfaces))*0.7, capsize=5,
-                      edgecolor='white', linewidth=1.5, error_kw={'linewidth': 2, 'capthick': 2})
+        # Create bar plot for variation
+        bars = ax6.bar(valid_positions_fwd, valid_variation_fwd, yerr=valid_error_fwd, color=valid_colors_fwd, alpha=0.7, 
+                            width=np.mean(np.diff(interfaces))*0.7, capsize=5)  # Use average interface spacing for width
         
-        # Add gradient effect to bars
-        for bar, color in zip(bars, valid_colors_fwd):
-            bar.set_edgecolor('white')
-            bar.set_linewidth(1.5)
+        # Add line plot for mean differences
+        line = ax6_twin.plot(valid_positions_fwd, valid_mean_diff_fwd, 'o--', color='red', 
+                                    linewidth=2, markersize=8, label='Mean |Δq|')
         
-        # Add stylish line plot for mean differences with error bars and transparent facecolor
-        line = ax6_twin.errorbar(valid_positions_fwd, valid_mean_diff_fwd, yerr=valid_mean_diff_error_fwd,
-                                fmt='o--', color='#d62728', linewidth=3, markersize=10, 
-                                markerfacecolor='none', markeredgecolor='#d62728', 
-                                markeredgewidth=2, label='Mean |Δq|', alpha=0.9,
-                                capsize=5, capthick=2, elinewidth=2)
+        # Add annotations showing variation and sample size
+        for pos, var, count, label in zip(valid_positions_fwd, valid_variation_fwd, valid_counts_fwd, valid_state_labels_fwd):
+                ax6.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
         
-        # Enhanced annotations with stylish formatting
-        for pos, var, count, label in zip(valid_positions_fwd, valid_norm_variation_fwd, valid_counts_fwd, valid_state_labels_fwd):
-            ax6.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9,
-                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='gray'))
-        
-        # Configure main plot with enhanced styling
+        # Configure main plot
         ax6.set_xticks(interfaces)
         ax6.set_xticklabels([(f'{k-1 if k>0 else k}→{k}' if k < n_interfaces-1 else f'{k}') for k in range(n_interfaces)])
-        ax6.set_xlabel('Target Region', fontweight='bold', fontsize=12)
-        ax6.set_ylabel('Memory Effect (Std. Dev. %)', color='#1f77b4', fontweight='bold', fontsize=12)
-        ax6.tick_params(axis='y', labelcolor='#1f77b4', labelsize=10, length=6, width=1.2)
-        ax6.tick_params(axis='x', labelsize=10, length=6, width=1.2)
-        ax6.set_title('Forward Memory Retention: Variation in Crossing Probabilities', 
-                     fontsize=14, fontweight='bold', pad=20)
-        ax6.grid(True, alpha=0.3, linestyle='--')
-        ax6.set_facecolor('#fafafa')
+        ax6.set_xlabel('Target Region')
+        ax6.set_ylabel('Memory Effect (Std. Dev. %)', color='C0')
+        ax6.tick_params(axis='y', labelcolor='C0')
+        ax6.set_title('Forward Memory Retention: Variation in Crossing Probabilities', fontsize=12)
         
-        # Configure twin axis with enhanced styling
-        ax6_twin.set_ylabel('Mean |Δq| (%)', color='#d62728', fontweight='bold', fontsize=12)
-        ax6_twin.tick_params(axis='y', labelcolor='#d62728', labelsize=10, length=6, width=1.2)
+        # Configure twin axis
+        ax6_twin.set_ylabel('Mean |Δq| (%)', color='red')
+        ax6_twin.tick_params(axis='y', labelcolor='red')
         
         # Set reasonable y-limits
-        max_y_fwd = max(10.0, max(valid_norm_variation_fwd) * 1.2) if valid_norm_variation_fwd else 10.0
+        max_y_fwd = max(10.0, max(valid_variation_fwd) * 1.2) if valid_variation_fwd else 10.0
         ax6.set_ylim(0, max_y_fwd)
         
-        max_y_twin_fwd = max(10.0, max([v + e for v, e in zip(valid_mean_diff_fwd, valid_mean_diff_error_fwd)]) * 1.2) if valid_mean_diff_fwd else 10.0
+        max_y_twin_fwd = max(10.0, max(valid_mean_diff_fwd) * 1.2) if valid_mean_diff_fwd else 10.0
         ax6_twin.set_ylim(0, max_y_twin_fwd)
         
-        # Set x limits based on the valid data points
+        # Set x limits based on the valid data points rather than all interfa10s7
         if len(valid_positions_fwd) > 0:
-            padding = np.mean(np.diff(interfaces)) if len(interfaces) > 1 else 0.5
-            ax6.set_xlim(min(valid_positions_fwd) - padding/2, max(valid_positions_fwd) + padding/2)
+                padding = np.mean(np.diff(interfaces)) if len(interfaces) > 1 else 0.5
+                ax6.set_xlim(min(valid_positions_fwd) - padding/2, max(valid_positions_fwd) + padding/2)
         
-        # Create a stylish combined legend with transparent marker facecolor
+        # Create a combined legend
         custom_lines = [
-            Line2D([0], [0], color='black', lw=0, marker='s', markersize=12, 
-                   markerfacecolor='#1f77b4', alpha=0.8, markeredgecolor='#1f77b4', markeredgewidth=1.5),
-            Line2D([0], [0], color='#d62728', lw=3, marker='o', markersize=8, 
-                   markerfacecolor='none', markeredgecolor='#d62728', markeredgewidth=2)
+                Line2D([0], [0], color='black', lw=0, marker='s', markersize=10, markerfacecolor='C0', alpha=0.7),
+                Line2D([0], [0], color='red', lw=2, marker='o', markersize=6)
         ]
-        legend = ax6.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left',
-                           frameon=True, fancybox=True, shadow=True, framealpha=0.9)
-        legend.get_frame().set_facecolor('white')
-        legend.get_frame().set_edgecolor('gray')
+        ax6.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left')
         
     else:
         ax6.text(0.5, 0.5, "Insufficient data for forward memory retention analysis", 
-                ha='center', va='center', transform=ax6.transAxes, fontsize=12, fontweight='bold')
+                ha='center', va='center', transform=ax6.transAxes)
         ax6.set_xticks(interfaces)
         ax6.set_xticklabels([f"{k}$\\subset$" for k in range(n_interfaces)])
 
@@ -2559,186 +2540,126 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     ax7 = fig2.add_subplot(gs2[1, 1])
 
     # Prepare data for backward plot
-    valid_k_bwd = [k for k in range(n_interfaces-1) if not np.isnan(memory_index['backward_norm_variation'][k])]
-    valid_norm_variation_bwd = [memory_index['backward_norm_variation'][k] for k in valid_k_bwd]
-    valid_error_bwd = [memory_index['backward_norm_variation_error'][k] if not np.isnan(memory_index['backward_norm_variation_error'][k]) else 0 for k in valid_k_bwd]
+    valid_k_bwd = [k for k in range(n_interfaces-1) if not np.isnan(memory_index['backward_variation'][k])]
+    valid_variation_bwd = [memory_index['backward_variation'][k] for k in valid_k_bwd]
+    valid_error_bwd = [memory_index['backward_variation_error'][k] if not np.isnan(memory_index['backward_variation_error'][k]) else 0 for k in valid_k_bwd]
     valid_positions_bwd = [interfaces[k] for k in valid_k_bwd]
     valid_colors_bwd = [backward_colors[k] for k in valid_k_bwd]
     valid_counts_bwd = [memory_index['backward_sample_sizes'][k] for k in valid_k_bwd]
+    # Use state_labels for valid_k_bwd
     valid_state_labels_bwd = [(f'{k}$\\subset$' if k > 0 else f'{k}') for k in valid_k_bwd]
     
     # Calculate mean difference with diffusive reference for each target interface
     backward_mean_diff = np.zeros(n_interfaces)
     backward_mean_diff.fill(np.nan)
-    backward_mean_diff_error = np.zeros(n_interfaces)
-    backward_mean_diff_error.fill(np.nan)
     
     for k in range(n_interfaces-1):
         diffs = []
-        diff_errors = []
         for i in range(k+2, n_interfaces):  # Skip adjacent interface (i=k+1)
                 # Only consider non-adjacent transitions with enough samples
                 if not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
                     diffs.append(abs(q_probs[i, k] - diff_ref[i, k]))
-                    # Propagate errors: error of |a - b| is sqrt(σ_a² + σ_b²)
-                    if loaded_q_errors is not None and not np.isnan(loaded_q_errors[i, k]):
-                        q_err = loaded_q_errors[i, k]
-                    else:
-                        q_err = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
-                    
-                    # Error in diffusive reference (assumed small, use 5% of value)
-                    diff_ref_err = 0.05 * diff_ref[i, k]
-                    combined_err = np.sqrt(q_err**2 + diff_ref_err**2)
-                    diff_errors.append(combined_err)
         
         if diffs:
                 backward_mean_diff[k] = np.mean(diffs) * 100  # Convert to percentage
-                # Error in mean: standard error of the mean
-                backward_mean_diff_error[k] = (np.std(diff_errors) / np.sqrt(len(diff_errors))) * 100 if len(diff_errors) > 1 else np.mean(diff_errors) * 100
     
-    # Extract valid mean differences and errors to plot
+    # Extract valid mean differences to plot
     valid_mean_diff_bwd = [backward_mean_diff[k] if not np.isnan(backward_mean_diff[k]) else 0 for k in valid_k_bwd]
-    valid_mean_diff_error_bwd = [backward_mean_diff_error[k] if not np.isnan(backward_mean_diff_error[k]) else 0 for k in valid_k_bwd]
 
     if valid_k_bwd:
         # Create a twin axis for the memory retention plot
         ax7_twin = ax7.twinx()
         ax7_twin.set_ylim(0, 100)
 
-        # Create enhanced bar plot
-        bars = ax7.bar(valid_positions_bwd, valid_norm_variation_bwd, yerr=valid_error_bwd, 
-                      color=valid_colors_bwd, alpha=0.8,
-                      width=np.mean(np.diff(interfaces))*0.7, capsize=5,
-                      edgecolor='white', linewidth=1.5, error_kw={'linewidth': 2, 'capthick': 2})
+        # Create bar plot using interface physical positions
+        bars = ax7.bar(valid_positions_bwd, valid_variation_bwd, yerr=valid_error_bwd, color=valid_colors_bwd, alpha=0.7,
+                            width=np.mean(np.diff(interfaces))*0.7, capsize=5)  # Use average interface spacing for width
         
-        # Add gradient effect to bars
-        for bar, color in zip(bars, valid_colors_bwd):
-            bar.set_edgecolor('white')
-            bar.set_linewidth(1.5)
+        # Add line plot for mean differences
+        line = ax7_twin.plot(valid_positions_bwd, valid_mean_diff_bwd, 'o--', color='red', 
+                                    linewidth=2, markersize=8, label='Mean |Δq|')
         
-        # Add stylish line plot for mean differences with error bars and transparent facecolor
-        line = ax7_twin.errorbar(valid_positions_bwd, valid_mean_diff_bwd, yerr=valid_mean_diff_error_bwd,
-                                fmt='o--', color='#d62728', linewidth=3, markersize=10, 
-                                markerfacecolor='none', markeredgecolor='#d62728', 
-                                markeredgewidth=2, label='Mean |Δq|', alpha=0.9,
-                                capsize=5, capthick=2, elinewidth=2)
+        # Add annotations showing variation and sample size
+        for pos, var, count, label in zip(valid_positions_bwd, valid_variation_bwd, valid_counts_bwd, valid_state_labels_bwd):
+                ax7.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
         
-        # Enhanced annotations
-        for pos, var, count, label in zip(valid_positions_bwd, valid_norm_variation_bwd, valid_counts_bwd, valid_state_labels_bwd):
-            ax7.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9,
-                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='gray'))
-        
-        # Configure plot with enhanced styling
+        # Configure plot
         ax7.set_xticks(interfaces)
         ax7.set_xticklabels([f'{k}←{k+1}' for k in range(n_interfaces)])
-        ax7.set_xlabel('Target Region', fontweight='bold', fontsize=12)
-        ax7.set_ylabel('Memory Effect (Std. Dev. %)', color='#1f77b4', fontweight='bold', fontsize=12)
-        ax7.tick_params(axis='y', labelcolor='#1f77b4', labelsize=10, length=6, width=1.2)
-        ax7.tick_params(axis='x', labelsize=10, length=6, width=1.2)
-        ax7.set_title('Backward Memory Retention: Variation in Crossing Probabilities', 
-                     fontsize=14, fontweight='bold', pad=20)
-        ax7.grid(True, alpha=0.3, linestyle='--')
-        ax7.set_facecolor('#fafafa')
+        ax7.set_xlabel('Target Region')
+        ax7.set_ylabel('Memory Effect (Std. Dev. %)', color='C0')
+        ax7.tick_params(axis='y', labelcolor='C0')
+        ax7.set_title('Backward Memory Retention: Variation in Crossing Probabilities', fontsize=12)
         
         # Configure twin axis
-        ax7_twin.set_ylabel('Mean |Δq| (%)', color='#d62728', fontweight='bold', fontsize=12)
-        ax7_twin.tick_params(axis='y', labelcolor='#d62728', labelsize=10, length=6, width=1.2)
+        ax7_twin.set_ylabel('Mean |Δq| (%)', color='red')
+        ax7_twin.tick_params(axis='y', labelcolor='red')
         
         # Set reasonable y-limits
-        max_y_bwd = max(10.0, max(valid_norm_variation_bwd) * 1.2) if valid_norm_variation_bwd else 10.0
+        max_y_bwd = max(10.0, max(valid_variation_bwd) * 1.2) if valid_variation_bwd else 10.0
         ax7.set_ylim(0, max_y_bwd)
         
-        max_y_twin_bwd = max(10.0, max([v + e for v, e in zip(valid_mean_diff_bwd, valid_mean_diff_error_bwd)]) * 1.2) if valid_mean_diff_bwd else 10.0
+        max_y_twin_bwd = max(10.0, max(valid_mean_diff_bwd) * 1.2) if valid_mean_diff_bwd else 10.0
         ax7_twin.set_ylim(0, max_y_twin_bwd)
         
-        # Set x limits based on the valid data points
+        # Set x limits based on the valid data points rather than all interfaces
         if len(valid_positions_bwd) > 0:
-            padding = np.mean(np.diff(interfaces)) if len(interfaces) > 1 else 0.5
-            ax7.set_xlim(min(valid_positions_bwd) - padding/2, max(valid_positions_bwd) + padding/2)
+                padding = np.mean(np.diff(interfaces)) if len(interfaces) > 1 else 0.5
+                ax7.set_xlim(min(valid_positions_bwd) - padding/2, max(valid_positions_bwd) + padding/2)
         
-        # Create a stylish combined legend with transparent marker facecolor
+        # Create a combined legend
         custom_lines = [
-            Line2D([0], [0], color='black', lw=0, marker='s', markersize=12, 
-                   markerfacecolor='#1f77b4', alpha=0.8, markeredgecolor='#1f77b4', markeredgewidth=1.5),
-            Line2D([0], [0], color='#d62728', lw=3, marker='o', markersize=8, 
-                   markerfacecolor='none', markeredgecolor='#d62728', markeredgewidth=2)
+                Line2D([0], [0], color='black', lw=0, marker='s', markersize=10, markerfacecolor='C0', alpha=0.7),
+                Line2D([0], [0], color='red', lw=2, marker='o', markersize=6)
         ]
-        legend = ax7.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left',
-                           frameon=True, fancybox=True, shadow=True, framealpha=0.9)
-        legend.get_frame().set_facecolor('white')
-        legend.get_frame().set_edgecolor('gray')
+        ax7.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left')
         
     else:
         ax7.text(0.5, 0.5, "Insufficient data for backward memory retention analysis", 
-                ha='center', va='center', transform=ax7.transAxes, fontsize=12, fontweight='bold')
+                ha='center', va='center', transform=ax7.transAxes)
         ax7.set_xticks(interfaces)
         ax7.set_xticklabels([f'{k}←{k+1}' for k in range(n_interfaces)])
-    
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    fig2.suptitle('TIS Memory Effect Analysis - Transition Probabilities and Memory Retention', 
-                 fontsize=16, fontweight='bold', y=0.98)
+    fig2.suptitle('TIS Memory Effect Analysis - Transition Probabilities and Memory Retention', fontsize=14)
 
     # ================ Figure 3: Free Energy Landscape and Momentum Effects ================
     fig3 = plt.figure(figsize=(18, 14))
     gs3 = gridspec.GridSpec(2, 2, height_ratios=[1, 1])
     
-    # Run momentum vs free energy analysis with errors
-    momentum_threshold = 0.2
-    momentum_results = analyze_momentum_vs_free_energy(interfaces, q_tot[0], q_tot[1], loaded_q_errors, momentum_threshold=momentum_threshold)
+    # Run momentum vs free energy analysis
+    momentum_results = analyze_momentum_vs_free_energy(interfaces, q_tot[0], q_tot[1])
     
     # Plot 3.1: Enhanced Free Energy Profile - spans the entire top row
     ax8 = fig3.add_subplot(gs3[0, :])
     
     # Extract data from momentum analysis
     delta_G = momentum_results['free_energy_differences']
-    delta_G_errors = momentum_results.get('free_energy_errors', None)  # Add this to momentum analysis
-
+    
     # Calculate cumulative free energy profile
     cumulative_G = np.zeros(len(interfaces))
-    cumulative_G_errors = np.zeros(len(interfaces))
-    
     for i in range(1, len(interfaces)):
         # Add up all the delta_G values from the first interface
         valid_path = True
-        accumulated_error_squared = 0.0
-        
         for j in range(i):
             if np.isnan(delta_G[j, j+1]):
                 valid_path = False
                 break
             cumulative_G[i] += delta_G[j, j+1]
-            
-            # Error propagation: errors add in quadrature for independent measurements
-            if delta_G_errors is not None and not np.isnan(delta_G_errors[j, j+1]):
-                accumulated_error_squared += delta_G_errors[j, j+1]**2
         
         if not valid_path:
             cumulative_G[i] = np.nan
-            cumulative_G_errors[i] = np.nan
-        else:
-            cumulative_G_errors[i] = np.sqrt(accumulated_error_squared)
     
-    # Plot free energy profile with error bars
-    if delta_G_errors is not None:
-        ax8.errorbar(interfaces, cumulative_G, yerr=cumulative_G_errors, 
-                    fmt='o-', linewidth=2.5, color='royalblue', 
-                    capsize=5, capthick=2, elinewidth=2,
-                    label='Free Energy Profile')
-    else:
-        ax8.plot(interfaces, cumulative_G, 'o-', linewidth=2.5, color='royalblue', 
-                label='Free Energy Profile')
-
-    # Add marker points with annotations including errors
-    for i, (pos, g, err) in enumerate(zip(interfaces, cumulative_G, cumulative_G_errors)):
+    # Plot free energy profile with improved styling
+    ax8.plot(interfaces, cumulative_G, 'o-', linewidth=2.5, color='royalblue', 
+             label='Free Energy Profile')
+    
+    # Add marker points with annotations
+    for i, (pos, g) in enumerate(zip(interfaces, cumulative_G)):
         if not np.isnan(g):
             ax8.plot(pos, g, 'o', markersize=8, color='royalblue')
-            if delta_G_errors is not None and not np.isnan(err):
-                text = f"{g:.2f}±{err:.2f}"
-            else:
-                text = f"{g:.2f}"
-            ax8.text(pos, g + 0.15, text, ha='center', va='bottom', fontsize=10, 
+            ax8.text(pos, g + 0.15, f"{g:.2f}", ha='center', va='bottom', fontsize=10, 
                     bbox=dict(facecolor='white', alpha=0.7, boxstyle='round,pad=0.2'))
-
+    
     # Enhance the appearance
     ax8.set_xlabel('Interface Position (λ)', fontsize=12)
     ax8.set_ylabel('Free Energy G(λ) (kT)', fontsize=12)
@@ -2769,67 +2690,33 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 not np.isnan(momentum_effects[i, j])):
                 
                 if q_weights is None or q_weights[i, j] >= 5:  # Min samples
-                    observed = q_tot[0][i, j]  # Use original q_matrix value
-                    predicted = diffusive_q[i, j]
+                    observed = diffusive_q[i, j] * (1 + momentum_effects[i, j])  # q_matrix value
                     significant = momentum_significance[i, j]
-                    
-                    # Calculate error for observed probability
-                    if loaded_q_errors is not None and not np.isnan(loaded_q_errors[i, j]):
-                        obs_error = loaded_q_errors[i, j]
-                    else:
-                        # Fallback to binomial error if block error not available
-                        n_samples = q_weights[i, j] if q_weights is not None else 10
-                        obs_error = np.sqrt(observed * (1 - observed) / n_samples)
-                    
-                    # Error for predicted probability (from free energy uncertainty)
-                    # This would need to be calculated from the free energy differences
-                    pred_error = 0.05 * predicted  # Placeholder - implement proper propagation
-                    
-                    valid_points.append((predicted, observed, significant, f"{i}→{j}", 
-                                    pred_error, obs_error))
-
+                    valid_points.append((diffusive_q[i, j], observed, significant, f"{i}→{j}"))
+    
     if valid_points:
-        # Unpack the valid points including errors
-        x_vals, y_vals, significance, labels, x_errs, y_errs = zip(*valid_points)
+        # Unpack the valid points
+        x_vals, y_vals, significance, labels = zip(*valid_points)
         
         # Calculate plot limits
         max_val = max(max(x_vals), max(y_vals)) * 1.1
         min_val = min(min(x_vals), min(y_vals)) * 0.9
         
         # Plot the ideal 1:1 line
-        ax9.plot([0, 1], [0, 1], '--', color='gray', alpha=0.7, linewidth=2, label='Perfect agreement')
+        ax9.plot([min_val, max_val], [min_val, max_val], '--', color='gray', alpha=0.7)
         
-        # Add transparent band around the 1:1 line to show momentum threshold
-        # The momentum threshold defines when points are considered momentum-dominated
-        # Extract the momentum threshold from the momentum analysis 
-        
-        # Create band boundaries: for a given x, the band extends from
-        # y = x * (1 - threshold) to y = x * (1 + threshold)
-        # x_band = np.linspace(0, 1, 100)
-        # y_upper = x_band * (1 + momentum_threshold)
-        # y_lower = x_band * (1 - momentum_threshold)
-        
-        # # Clip the band to stay within [0,1] bounds
-        # y_upper = np.clip(y_upper, 0, 1)
-        # y_lower = np.clip(y_lower, 0, 1)
-        
-        # # Fill the band
-        # ax9.fill_between(x_band, y_lower, y_upper, alpha=0.2, color='gray', 
-        #                 label=f'Free energy dominated\n(±{momentum_threshold*100:.0f}% threshold)')
-        
-        # Plot each point with error bars, colored by significance
-        for x, y, sig, label, x_err, y_err in zip(x_vals, y_vals, significance, labels, x_errs, y_errs):
+        # Plot each point, colored by significance
+        for x, y, sig, label in zip(x_vals, y_vals, significance, labels):
             color = 'red' if sig else 'blue'
-            ax9.errorbar(x, y, xerr=x_err, yerr=y_err, 
-                        fmt='o', color=color, markersize=6, alpha=0.7,
-                        capsize=3, capthick=1, elinewidth=1)
+            ax9.scatter(x, y, color=color, s=50, alpha=0.7)
         
         # Add labels with improved readability
-        for i, (x, y, sig, label, x_err, y_err) in enumerate(zip(x_vals, y_vals, significance, labels, x_errs, y_errs)):
+        for i, (x, y, sig, label) in enumerate(zip(x_vals, y_vals, significance, labels)):
             # Calculate offset direction based on point position to avoid overlaps
             dx = 10 if x < 0.5 * (min_val + max_val) else -30
             dy = 10 if y < 0.5 * (min_val + max_val) else -15
             
+            # Create a small white background for the text to improve readability
             text = ax9.annotate(
                 label, 
                 (x, y), 
@@ -2848,20 +2735,14 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ax9.set_xlabel('Diffusive Probability (Free Energy Model)', fontsize=12)
         ax9.set_ylabel('Observed Probability', fontsize=12)
         ax9.set_title('Observed vs Diffusive Transition Probabilities\n(excluding boundary interfaces)', fontsize=14)
-        ax9.set_xlim(0, 1)
-        ax9.set_ylim(0, 1)
-        ax9.set_aspect('equal')  # Make axes square/equal aspect ratio
+        ax9.set_xlim(min_val, max_val)
+        ax9.set_ylim(min_val, max_val)
         ax9.grid(True, alpha=0.3)
         
         # Add legend using the same color scheme as momentum_vs_fe
-        # Create custom legend entries
-        legend_elements = [
-            Line2D([0], [0], color='gray', linestyle='--', linewidth=2, label='Perfect agreement'),
-            plt.Rectangle((0, 0), 1, 1, fc='gray', alpha=0.2, label=f'Free energy dominated\n(±{momentum_threshold*100:.0f}% threshold)'),
-            Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=8, label='Free Energy Dominated'),
-            Line2D([0], [0], marker='o', color='w', markerfacecolor='red', markersize=8, label='Momentum Effects')
-        ]
-        ax9.legend(handles=legend_elements, fontsize=10, loc='upper left')
+        ax9.scatter([], [], color='blue', label='Free Energy Dominated')
+        ax9.scatter([], [], color='red', label='Momentum Effects')
+        ax9.legend(fontsize=10)
     else:
         ax9.text(0.5, 0.5, "Insufficient valid data for comparison\n(non-boundary transitions)",
                 ha='center', va='center', transform=ax9.transAxes)
@@ -2987,222 +2868,223 @@ def generate_state_labels(n_interfaces):
 
 def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples=5):
     """
-    Calculate memory effect indices (absolute std, normalized std, and their errors)
-    based on the variation in conditional crossing probabilities.
-
+    Calculate a simplified memory effect index based solely on the variation in conditional 
+    crossing probabilities without normalizing or weighting by sample size.
+    
+    Parameters:
+    -----------
+    q_probs : numpy.ndarray
+        Matrix of conditional crossing probabilities where q_probs[i,k] is the probability
+        that a path starting at interface i and reaching k-1 (for i<k) or k+1 (for i>k)
+        will reach interface k.
+    q_weights : numpy.ndarray
+        Matrix of sample counts for each q value.
+    min_samples : int, optional
+        Minimum number of samples required to consider a q value valid.
+        
     Returns:
     --------
     memory_index : dict
-        Contains:
-        - 'forward_variation': Absolute std dev (%)
-        - 'forward_variation_error': Error of absolute std dev (%)
-        - 'forward_norm_variation': Normalized std dev (as a percentage, 0-100% or more)
-        - 'forward_norm_variation_error': Error of normalized std dev (as a percentage)
-        - 'backward_variation', etc.: Same for backward direction
-        - 'forward_sample_sizes', 'backward_sample_sizes'
+        Dictionary containing:
+        - 'forward_variation': Standard deviation of forward probabilities for each target
+        - 'backward_variation': Standard deviation of backward probabilities for each target
+        - 'forward_sample_sizes': Number of samples used for forward calculations
+        - 'backward_sample_sizes': Number of samples used for backward calculations
     """
     n_interfaces = q_probs.shape[0]
 
-    forward_variation = np.full(n_interfaces, np.nan)
-    forward_variation_error = np.full(n_interfaces, np.nan)
-    forward_norm_variation = np.full(n_interfaces, np.nan)
-    forward_norm_variation_error = np.full(n_interfaces, np.nan)
+    if q_errors is not None:
+        if isinstance(q_errors, str):
+            # q_errors is a filepath string, try to load it.
+            try:
+                # Assuming q_errors is a path to a text file loadable by np.loadtxt
+                loaded_q_errors = read_block_errors(q_errors, q_probs.shape)
+                if loaded_q_errors.shape != q_probs.shape:
+                    raise RuntimeWarning(
+                        f"Shape of q_errors loaded from file '{q_errors}' ({loaded_q_errors.shape}) "
+                        f"does not match q_probs shape ({q_probs.shape})."
+                    )
+                # Update the local q_errors variable to the loaded numpy array.
+                # Note: The rest of this function does not currently use q_errors.
+                q_errors = loaded_q_errors
+            except FileNotFoundError:
+                q_errors = None  # Reset to None if file not found.
+                raise RuntimeWarning(f"q_errors file not found: {q_errors}")
+            except Exception as e:
+                q_errors = None 
+                raise RuntimeWarning(f"Error loading q_errors from file '{q_errors}': {e}")
+        elif not (isinstance(q_errors, np.ndarray) and q_errors.shape == q_probs.shape):
+            # q_errors is provided, is not a string, but is not a valid ndarray of the correct shape.
+            q_errors = None  # Reset to None to avoid further issues.
+            raise RuntimeWarning(
+                f"If provided, q_errors must be a NumPy array with shape {q_probs.shape} "
+                f"or a path to a loadable text file. "
+                f"Got type {type(q_errors)} with shape {getattr(q_errors, 'shape', 'N/A')}."
+            )
+    # If q_errors was None, it remains None.
+    # If it was a valid np.ndarray, it remains as is.
+    # If it was a string path, it is now a loaded np.ndarray (or an error was raised).
+    # The current function calculate_memory_effect_index does not use q_errors beyond this point.
+
+    
+    # Initialize result arrays
+    forward_variation = np.zeros(n_interfaces)
+    forward_variation.fill(np.nan)
+    forward_variation_error = np.zeros(n_interfaces)
+    forward_variation_error.fill(np.nan)              
     forward_sample_sizes = np.zeros(n_interfaces, dtype=int)
-
-    backward_variation = np.full(n_interfaces, np.nan)
-    backward_variation_error = np.full(n_interfaces, np.nan)
-    backward_norm_variation = np.full(n_interfaces, np.nan)
-    backward_norm_variation_error = np.full(n_interfaces, np.nan)
+    
+    backward_variation = np.zeros(n_interfaces)
+    backward_variation.fill(np.nan)
+    backward_variation_error = np.zeros(n_interfaces)  
+    backward_variation_error.fill(np.nan)              
     backward_sample_sizes = np.zeros(n_interfaces, dtype=int)
+    
+    # Calculate forward memory effect index (for targets k > 0)
+    for k in range(1, n_interfaces):
+        q_values = []
+        weights = []
+        q_errors_k = []
 
-    # Helper for error propagation of std
-    def std_error(q_values, q_errors_arr):
-        n = len(q_values)
-        if n < 2: # Cannot calculate std_dev for less than 2 points
-            return np.nan
-        mean_q = np.mean(q_values)
-        std_dev = np.std(q_values)
-        if std_dev == 0 or np.any(np.isnan(q_errors_arr)):
-            # If std_dev is 0, its error is also 0, unless q_errors are NaN
-            return 0.0 if not np.any(np.isnan(q_errors_arr)) else np.nan
-        partials = (q_values - mean_q) / ((n - 1) * std_dev)
-        return np.sqrt(np.sum((partials * q_errors_arr) ** 2))
-
-    # Helper for error propagation of mean
-    def mean_error(q_errors_arr):
-        n = len(q_errors_arr)
-        if n == 0 or np.any(np.isnan(q_errors_arr)):
-            return np.nan
-        return np.sqrt(np.sum(q_errors_arr ** 2)) / n
-
-    # Main loop for forward and backward
-    for direction in ['forward', 'backward']:
-        for k in range(n_interfaces):
-            if direction == 'forward' and k < 1:
-                continue
-            if direction == 'backward' and k >= n_interfaces - 1:
-                continue
-
-            q_values, weights, q_errs_list = [], [], []
-            if direction == 'forward':
-                # Iterate from interface 0 up to k-2 (exclusive of k-1)
-                idxs = range(k-1)
-            else: # backward
-                # Iterate from interface k+2 up to n_interfaces-1
-                idxs = range(k+2, n_interfaces)
-
-
-            for i in idxs:
-                if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples:
-                    q_values.append(q_probs[i, k])
-                    weights.append(q_weights[i, k])
-                    if q_errors is not None and not np.isnan(q_errors[i, k]):
-                        q_errs_list.append(q_errors[i, k])
-                    else:
-                        # Fallback to binomial error
-                        q_val = q_probs[i, k]
-                        N_val = q_weights[i, k]
-                        q_errs_list.append(np.sqrt(q_val * (1 - q_val) / N_val) if N_val > 0 else np.nan)
-
-            if len(q_values) >= 2:
-                q_values_arr = np.array(q_values)
-                q_errs_arr = np.array(q_errs_list)
-                weights_arr = np.array(weights)
-                total_samples = np.sum(weights_arr)
-
-                if direction == 'forward':
-                    forward_sample_sizes[k] = total_samples
+        for i in range(max(1, k-1)):  # Skip adjacent interface (i=k-1), so range is 0 to k-2
+            if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples:
+                q_values.append(q_probs[i, k])
+                weights.append(q_weights[i, k])
+                if q_errors is not None and not np.isnan(q_errors[i, k]):
+                    q_errors_k.append(q_errors[i, k])
                 else:
-                    backward_sample_sizes[k] = total_samples
-
-                mean_q = np.mean(q_values_arr)
-                std_dev = np.std(q_values_arr) # This is population std (ddof=0) by default in np.std
+                    # Fallback to binomial error if block error not available
+                    binomial_error = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
+                    q_errors_k.append(binomial_error)
+        
+        if len(q_values) >= 2:
+            q_values = np.array(q_values)
+            weights = np.array(weights)
+            q_errors_arr = np.array(q_errors_k)
+            
+            total_samples = np.sum(weights)
+            forward_sample_sizes[k] = total_samples
+            
+            # Calculate standard deviation
+            std_dev = np.std(q_values)
+            forward_variation[k] = std_dev * 100  # Convert to percentage
+            
+            # Calculate standard error of the standard deviation using error propagation
+            n = len(q_values)
+            mean_q = np.mean(q_values)
+            
+            # For standard deviation σ = sqrt(Σ(q_i - μ)²/(n-1)), 
+            # the error propagation gives: σ_σ ≈ sqrt(Σ((q_i - μ)/σ * σ_q_i)²) / sqrt(2(n-1))
+            if std_dev > 0 and not np.any(np.isnan(q_errors_arr)):
+                # Partial derivatives of std with respect to each q_i
+                # ∂σ/∂q_i = (q_i - μ) / ((n-1) * σ)
+                partial_derivs = (q_values - mean_q) / ((n - 1) * std_dev)
                 
-                # For error propagation, it's common to use sample std (ddof=1) in formulas
-                # However, np.std's default ddof=0 is fine if consistently used.
-                # Let's stick to np.std's default for std_dev calculation.
-                # The std_error helper already uses (n-1) in its denominator for partials.
-
-                std_dev_err = std_error(q_values_arr, q_errs_arr)
-                mean_q_err = mean_error(q_errs_arr)
-
-                # Absolute std (as %)
-                abs_std_percent = std_dev * 100
-                abs_std_err_percent = std_dev_err * 100 if not np.isnan(std_dev_err) else np.nan
-
-
-                # Normalized std and error
-                # Denominator for normalization: sqrt(mu*(1-mu))
-                # This is the std of a Bernoulli variable with probability mu
-                norm_denominator = np.sqrt(mean_q * (1 - mean_q))
+                # Error propagation: σ_σ² = Σ(∂σ/∂q_i)² * σ_q_i²
+                std_error_squared = np.sum((partial_derivs * q_errors_arr) ** 2)
+                std_error = np.sqrt(std_error_squared)
                 
-                norm_std_val = np.nan
-                norm_std_err_val = np.nan
-
-                if norm_denominator > 1e-9: # Avoid division by zero or near-zero
-                    norm_std_val = (std_dev / norm_denominator) * 100 # As percentage
-
-                    # Error propagation for norm_std = (std_dev / denom) * 100
-                    # d(norm_std)/d(std_dev) = (1/denom) * 100
-                    # d(norm_std)/d(mean_q) = -0.5*std_dev*(1-2*mean_q)/(denom**3) * 100
-                    if not np.isnan(std_dev_err) and not np.isnan(mean_q_err):
-                        dnorm_dstd = (1.0 / norm_denominator)
-                        dnorm_dmean = -0.5 * std_dev * (1 - 2 * mean_q) / (norm_denominator ** 3)
-                        
-                        norm_std_err_val = np.sqrt(
-                            (dnorm_dstd * std_dev_err) ** 2 +
-                            (dnorm_dmean * mean_q_err) ** 2
-                        ) * 100 # As percentage
-                    else:
-                        norm_std_err_val = np.nan
-                elif std_dev < 1e-9 : # If mean is 0 or 1, std_dev should be 0
-                    norm_std_val = 0.0
-                    norm_std_err_val = 0.0 # If std_dev is 0, its error is 0 (assuming q_errors are not NaN)
-                                         # and if mean_q is 0 or 1, its error should also be 0 if data is consistent.
-
-                if direction == 'forward':
-                    forward_variation[k] = abs_std_percent
-                    forward_variation_error[k] = abs_std_err_percent
-                    forward_norm_variation[k] = norm_std_val
-                    forward_norm_variation_error[k] = norm_std_err_val
+                forward_variation_error[k] = std_error * 100  # Convert to percentage
+            else:
+                forward_variation_error[k] = np.nan
+        else:
+            forward_variation[k] = np.nan
+            forward_variation_error[k] = np.nan
+            forward_sample_sizes[k] = 0
+    
+    # Calculate backward memory effect index (for targets k < n_interfaces-1)
+    for k in range(n_interfaces - 1):
+        q_values = []
+        weights = []
+        q_errors_k = []
+        
+        for i in range(k+2, n_interfaces):  # Skip adjacent interface (i=k+1)
+            if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples:
+                q_values.append(q_probs[i, k])
+                weights.append(q_weights[i, k])
+                if q_errors is not None and not np.isnan(q_errors[i, k]):
+                    q_errors_k.append(q_errors[i, k])
                 else:
-                    backward_variation[k] = abs_std_percent
-                    backward_variation_error[k] = abs_std_err_percent
-                    backward_norm_variation[k] = norm_std_val
-                    backward_norm_variation_error[k] = norm_std_err_val
-            else: # len(q_values) < 2
-                if direction == 'forward':
-                    forward_sample_sizes[k] = np.sum(weights) if weights else 0
-                else:
-                    backward_sample_sizes[k] = np.sum(weights) if weights else 0
+                    # Fallback to binomial error if block error not available
+                    binomial_error = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
+                    q_errors_k.append(binomial_error)
+        
+        if len(q_values) >= 2:
+            q_values = np.array(q_values)
+            weights = np.array(weights)
+            q_errors_arr = np.array(q_errors_k)
 
-
-    return {
+            total_samples = np.sum(weights)
+            backward_sample_sizes[k] = total_samples
+            
+            # Calculate standard deviation
+            std_dev = np.std(q_values)
+            backward_variation[k] = std_dev * 100  # Convert to percentage
+            
+            # Calculate standard error of the standard deviation
+            n = len(q_values)
+            mean_q = np.mean(q_values)
+            
+            if std_dev > 0 and not np.any(np.isnan(q_errors_arr)):
+                partial_derivs = (q_values - mean_q) / ((n - 1) * std_dev)
+                std_error_squared = np.sum((partial_derivs * q_errors_arr) ** 2)
+                std_error = np.sqrt(std_error_squared)
+                
+                backward_variation_error[k] = std_error * 100  # Convert to percentage
+            else:
+                backward_variation_error[k] = np.nan
+        else:
+            backward_variation[k] = np.nan
+            backward_variation_error[k] = np.nan
+            backward_sample_sizes[k] = 0
+            
+    memory_index = {
         'forward_variation': forward_variation,
-        'forward_variation_error': forward_variation_error,
-        'forward_norm_variation': forward_norm_variation,
-        'forward_norm_variation_error': forward_norm_variation_error,
+        'forward_variation_error': forward_variation_error, 
         'backward_variation': backward_variation,
-        'backward_variation_error': backward_variation_error,
-        'backward_norm_variation': backward_norm_variation,
-        'backward_norm_variation_error': backward_norm_variation_error,
+        'backward_variation_error': backward_variation_error, 
         'forward_sample_sizes': forward_sample_sizes,
         'backward_sample_sizes': backward_sample_sizes
     }
     
+    return memory_index
 
-def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, q_errors=None, min_samples=5, account_for_distances=True):
+def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, min_samples=5, account_for_distances=True):
     """
-    Calculate diffusive reference probabilities with error propagation.
+    Calculate diffusive reference probabilities for non-equidistant interfaces,
+    using the same approach as analyze_momentum_vs_free_energy.
     
-    Parameters
-    ----------
+    Parameters:
+    -----------
     interfaces : list or array
         The positions of the interfaces along the reaction coordinate
     q_matrix : numpy.ndarray
         Matrix of conditional crossing probabilities
     q_weights : numpy.ndarray, optional
         Matrix of sample counts for each q_matrix value
-    q_errors : numpy.ndarray, optional
-        Matrix of standard errors for each q_matrix value (already loaded)
     min_samples : int, optional
         Minimum number of samples required to consider a q value valid
     account_for_distances : bool, optional
-        Whether to account for physical distances between interfaces
+        Whether to account for physical distances between interfaces (default: True)
         
-    Returns
+    Returns:
     --------
-    tuple
-        (diffusive_q, diffusive_q_errors) - Reference probabilities and their errors
+    diffusive_q : numpy.ndarray
+        A matrix of diffusive reference probabilities for each i,k pair
     """
     n_interfaces = len(interfaces)
     diffusive_q = np.zeros((n_interfaces, n_interfaces))
-    diffusive_q_errors = np.zeros((n_interfaces, n_interfaces))
     diffusive_q.fill(np.nan)
-    diffusive_q_errors.fill(np.nan)
     
-    # Step 1: Estimate free energy differences with errors
-    delta_G, delta_G_errors = estimate_free_energy_differences(
-        interfaces, q_matrix, q_weights, q_errors, min_samples, account_for_distances)
+    # Step 1: Estimate free energy differences between interfaces
+    delta_G = estimate_free_energy_differences(interfaces, q_matrix, q_weights, min_samples, account_for_distances)
+    
+    # Check if interfaces have physical values we can use for geometric corrections
+    has_physical_distances = isinstance(interfaces[0], (int, float)) and len(interfaces) > 1 and account_for_distances
     
     # For diagonal elements (self-transitions), probability is 0
     for i in range(n_interfaces):
         diffusive_q[i, i] = 0.0
-        diffusive_q_errors[i, i] = 0.0
-    
-    # Error propagation for Boltzmann factor: p = 1/(1 + exp(ΔG))
-    def boltzmann_error_propagation(delta_G_val, delta_G_err):
-        """Error propagation for p = 1/(1 + exp(ΔG))"""
-        if np.isnan(delta_G_val) or np.isnan(delta_G_err):
-            return np.nan
-        
-        exp_dG = np.exp(delta_G_val)
-        denominator = 1 + exp_dG
-        
-        # dp/dΔG = -exp(ΔG) / (1 + exp(ΔG))²
-        derivative = -exp_dG / (denominator**2)
-        
-        return abs(derivative) * delta_G_err
     
     # Create reference probabilities for forward transitions (i<k)
     for k in range(1, n_interfaces):
@@ -3210,15 +3092,27 @@ def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, q_errors
             if i == k-1:
                 # Adjacent interfaces always have probability 1.0
                 diffusive_q[i, k] = 1.0
-                diffusive_q_errors[i, k] = 0.0
             else:
-                # Non-adjacent interfaces use the diffusive reference
+                # Non-adjacent interfaces use the diffusive reference with geometric correction
+                ref_prob = 0.5  # Default value
+                
+                # Use Boltzmann factor for the free energy difference between k-1 and k
                 if not np.isnan(delta_G[k-1, k]):
-                    ref_prob = 1.0 / (1.0 + np.exp(delta_G[k-1, k]))
-                    ref_prob_err = boltzmann_error_propagation(delta_G[k-1, k], delta_G_errors[k-1, k])
-                    
-                    diffusive_q[i, k] = ref_prob
-                    diffusive_q_errors[i, k] = ref_prob_err
+                    # Apply geometric correction if we have physical interface positions
+                    if has_physical_distances and k > 1:
+                        # Calculate distance-based geometric expected probability
+                        dist_km1_to_k = interfaces[k] - interfaces[k-1]
+                        dist_km2_to_km1 = interfaces[k-1] - interfaces[k-2] if k > 1 else dist_km1_to_k
+                        geo_q = dist_km2_to_km1 / (dist_km1_to_k + dist_km2_to_km1) if (dist_km1_to_k + dist_km2_to_km1) > 0 else 0.5
+                        
+                        # Combine geometric factor with free energy difference
+                        # For forward transitions: P = 1/(1 + exp(ΔG))
+                        ref_prob = 1.0 / (1.0 + np.exp(delta_G[k-1, k]) * (1-geo_q)/geo_q)
+                    else:
+                        # Without geometry, just use free energy
+                        ref_prob = 1.0 / (1.0 + np.exp(delta_G[k-1, k]))
+                
+                diffusive_q[i, k] = ref_prob
     
     # Create reference probabilities for backward transitions (i>k)
     for k in range(n_interfaces-1):
@@ -3226,17 +3120,43 @@ def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, q_errors
             if i == k+1:
                 # Adjacent interfaces always have probability 1.0
                 diffusive_q[i, k] = 1.0
-                diffusive_q_errors[i, k] = 0.0
             else:
-                # Non-adjacent interfaces use the diffusive reference
+                # Non-adjacent interfaces use the diffusive reference with geometric correction
+                ref_prob = 0.5  # Default value
+                
+                # Use Boltzmann factor for the free energy difference between k and k+1
                 if not np.isnan(delta_G[k, k+1]):
-                    ref_prob = 1.0 / (1.0 + np.exp(-delta_G[k, k+1]))
-                    ref_prob_err = boltzmann_error_propagation(-delta_G[k, k+1], delta_G_errors[k, k+1])
-                    
-                    diffusive_q[i, k] = ref_prob
-                    diffusive_q_errors[i, k] = ref_prob_err
+                    # Apply geometric correction if we have physical interface positions
+                    if has_physical_distances and k+2 < n_interfaces:
+                        # Calculate distance-based geometric expected probability
+                        dist_k_to_kp1 = interfaces[k+1] - interfaces[k]
+                        dist_kp1_to_kp2 = interfaces[k+2] - interfaces[k+1] if k+2 < n_interfaces else dist_k_to_kp1
+                        geo_q = dist_kp1_to_kp2 / (dist_k_to_kp1 + dist_kp1_to_kp2) if (dist_k_to_kp1 + dist_kp1_to_kp2) > 0 else 0.5
+                        
+                        # Combine geometric factor with free energy difference
+                        # For backward transitions: P = 1/(1 + exp(-ΔG))
+                        ref_prob = 1.0 / (1.0 + np.exp(-delta_G[k, k+1]) * (1-geo_q)/geo_q)
+                    else:
+                        # Without geometry, just use free energy
+                        ref_prob = 1.0 / (1.0 + np.exp(-delta_G[k, k+1]))
+                
+                diffusive_q[i, k] = ref_prob
     
-    return diffusive_q, diffusive_q_errors
+    # Handle edge cases and verify
+    for i in range(n_interfaces):
+        for k in range(n_interfaces):
+            # Ensure probabilities are in valid range
+            if not np.isnan(diffusive_q[i, k]):
+                # Constrain to [0,1]
+                diffusive_q[i, k] = max(0.0, min(1.0, diffusive_q[i, k]))
+    
+    # Print some statistics about the calculated reference probabilities
+    print("\nDiffusive reference probability summary:")
+    print(f"Mean forward reference probability: {np.nanmean([diffusive_q[i,j] for i in range(n_interfaces) for j in range(i+1,n_interfaces)]):.4f}")
+    print(f"Mean backward reference probability: {np.nanmean([diffusive_q[i,j] for i in range(n_interfaces) for j in range(i)]):.4f}")
+    print(f"Accounted for physical distances: {has_physical_distances}")
+    
+    return diffusive_q
 
 def calculate_diffusive_reference_spacing(interfaces):
     """
@@ -3329,7 +3249,7 @@ def calculate_diffusive_reference_spacing(interfaces):
     
     return diff_ref
 
-def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, q_errors=None, min_samples=5, momentum_threshold=0.2):
+def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_samples=5, momentum_threshold=0.2):
     """
     Distinguish between free energy effects and momentum effects in turn-based path networks
     by comparing observed transition probabilities with diffusive predictions based on estimated free energies.
@@ -3360,9 +3280,8 @@ def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, q_erro
     """
     n_interfaces = len(interfaces)
     
-    # Step 1: Estimate free energy differences with errors
-    delta_G, delta_G_errors = estimate_free_energy_differences(
-        interfaces, q_matrix, q_weights, q_errors, min_samples, account_for_distances=True)
+    # Step 1: Estimate free energy differences between interfaces
+    delta_G = estimate_free_energy_differences(interfaces, q_matrix, q_weights, min_samples, account_for_distances=True)
     
     # Step 2: Calculate diffusive reference probabilities based on free energy
     diffusive_q = np.zeros_like(q_matrix)
@@ -3509,7 +3428,6 @@ def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, q_erro
     
     return {
         'free_energy_differences': delta_G,
-        'free_energy_errors': delta_G_errors, 
         'diffusive_probabilities': diffusive_q,
         'momentum_effects': momentum_effects,
         'momentum_significance': momentum_significance,
@@ -3520,7 +3438,7 @@ def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, q_erro
         'avg_probabilities': avg_probabilities
     }
 
-def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, q_errors=None, min_samples=5, account_for_distances=True):
+def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_samples=5, account_for_distances=True):
     """
     Estimate free energy differences between interfaces from conditional crossing probabilities,
     taking into account physical distances between interfaces. Uses only the first valid forward
@@ -3549,93 +3467,97 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, q_err
     """
     n_interfaces = len(interfaces)
     delta_G = np.zeros((n_interfaces, n_interfaces))
-    delta_G_errors = np.zeros((n_interfaces, n_interfaces))
     delta_G.fill(np.nan)
-    delta_G_errors.fill(np.nan)
     
     # Check if interfaces have physical values we can use
     has_physical_distances = isinstance(interfaces[0], (int, float)) and len(interfaces) > 1 and account_for_distances
     
-    # Helper function to propagate errors through logarithm
-    def log_error_propagation(q, q_err):
-        """Error propagation for ln(q/(1-q))"""
-        if q <= 0 or q >= 1 or q_err <= 0:
-            return np.nan
-        
-        # d/dq [ln(q/(1-q))] = 1/(q(1-q))
-        derivative = 1.0 / (q * (1 - q))
-        return abs(derivative) * q_err
-
     # Helper function to check if a q value is valid and usable
-    def is_valid_q(i, k, q_matrix, q_weights, min_samples):
-        """Helper function to check if a q value is valid and usable"""
+    def is_valid_q(i, k):
         return (not np.isnan(q_matrix[i, k]) and
                 (q_weights is None or q_weights[i, k] >= min_samples) and
                 abs(i-k) >= 2)
     
-    # For each pair of adjacent interfaces
+    # For each pair of adjacent interfaces, estimate the free energy difference
     for i in range(n_interfaces - 1):
-        forward_estimates = []
-        forward_errors = []
-        backward_estimates = []
-        backward_errors = []
+        forward_estimate = None
+        backward_estimate = None
         
-        # Forward cascade: collect all valid estimates with errors
-        for start in range(i-1, -1, -1):
-            if is_valid_q(start, i+1, q_matrix, q_weights, min_samples):
+        # Forward cascade: try q[i-1,i+1], then q[i-2,i+1], etc.
+        # Only take the first valid estimate (closest to the transition)
+        for start in range(i-1, -1, -1):  # Start from i-1 and go backwards to 0
+            if is_valid_q(start, i+1):
+                # First valid forward transition from 'start' to i+1 (going through i)
                 q_fw = q_matrix[start, i+1]
-                q_err = q_errors[start, i+1] if q_errors is not None else np.sqrt(q_fw * (1-q_fw) / q_weights[start, i+1])
+                weight = q_weights[start, i+1] if q_weights is not None else 1.0
                 
-                if 0 < q_fw < 1:
+                # Adjust for physical distances
+                if has_physical_distances and i > 0:
+                    dist_i_to_ip1 = interfaces[i+1] - interfaces[i]
+                    dist_im1_to_i = interfaces[i] - interfaces[i-1]
+                    geo_q = dist_im1_to_i / (dist_i_to_ip1 + dist_im1_to_i) if (dist_i_to_ip1 + dist_im1_to_i) > 0 else 1.0
+                    dG_obs = -np.log(q_fw / (1 - q_fw))
+                    dG_geo = -np.log(geo_q / (1 - geo_q))
+                    dG = dG_obs - dG_geo
+                else:
                     dG = -np.log(q_fw / (1 - q_fw))
-                    dG_err = log_error_propagation(q_fw, q_err)
-                    
-                    forward_estimates.append(dG)
-                    forward_errors.append(dG_err)
-                    break  # Take only the first valid estimate
-        
-        # Backward cascade: collect all valid estimates with errors  
-        for start in range(i+2, n_interfaces):
-            if is_valid_q(start, i, q_matrix, q_weights, min_samples):
-                q_bw = q_matrix[start, i]
-                q_err = q_errors[start, i] if q_errors is not None else np.sqrt(q_bw * (1-q_bw) / q_weights[start, i])
                 
-                if 0 < q_bw < 1:
-                    dG = np.log(q_bw / (1 - q_bw))
-                    dG_err = log_error_propagation(q_bw, q_err)
-                    
-                    backward_estimates.append(dG)
-                    backward_errors.append(dG_err)
-                    break  # Take only the first valid estimate
+                forward_estimate = np.nan_to_num(dG, posinf=6.0, neginf=-6.0)
+                print(f"Forward ΔG estimate for interfaces {i}-{i+1}: {dG:.4f} using q[{start},{i+1}]={q_fw:.4f}, weight={weight:.1f}")
+                break  # Take only the first valid estimate
         
-        # Combine estimates with proper error propagation
-        if forward_estimates and backward_estimates:
-            # Weighted average of forward and backward estimates
-            fw_est, fw_err = forward_estimates[0], forward_errors[0]
-            bw_est, bw_err = backward_estimates[0], backward_errors[0]
+        # Backward cascade: try q[i+2,i], then q[i+3,i], etc.
+        # Only take the first valid estimate (closest to the transition)
+        for start in range(i+2, n_interfaces):
+            if is_valid_q(start, i):
+                # First valid backward transition from 'start' to i (going through i+1)
+                q_bw = q_matrix[start, i]
+                weight = q_weights[start, i] if q_weights is not None else 1.0
+                
+                # Adjust for physical distances
+                if has_physical_distances and i+1 < n_interfaces-1:
+                    dist_ip1_to_i = interfaces[i+1] - interfaces[i]
+                    dist_ip2_to_ip1 = interfaces[i+2] - interfaces[i+1]
+                    geo_q = dist_ip2_to_ip1 / (dist_ip2_to_ip1 + dist_ip1_to_i) if (dist_ip2_to_ip1 + dist_ip1_to_i) > 0 else 1.0
+                    dG_obs = np.log(q_bw / (1 - q_bw))
+                    dG_geo = np.log(geo_q / (1 - geo_q))
+                    dG = dG_obs - dG_geo
+                else:
+                    dG = np.log(q_bw / (1 - q_bw))
+                
+                backward_estimate = np.nan_to_num(dG, posinf=6.0, neginf=-6.0)
+                print(f"Backward ΔG estimate for interfaces {i}-{i+1}: {dG:.4f} using q[{start},{i}]={q_bw:.4f}, weight={weight:.1f}")
+                break  # Take only the first valid estimate
+        
+        # Combine forward and backward estimates if available
+        if forward_estimate is not None and backward_estimate is not None:
+            # Take the average of the forward and backward estimates
+            # This helps eliminate biases from the timestep
+            combined_dG = (forward_estimate + backward_estimate) / 2.0
             
-            # For average: σ²_avg = (σ₁² + σ₂²)/4
-            combined_dG = (fw_est + bw_est) / 2.0
-            combined_err = np.sqrt(fw_err**2 + bw_err**2) / 2.0
+            # Report the difference to highlight any systematic bias
+            bias = forward_estimate - backward_estimate
+            print(f"Combined ΔG for interfaces {i}-{i+1}: {combined_dG:.4f} (forward-backward bias: {bias:.4f})")
             
             delta_G[i, i+1] = combined_dG
             delta_G[i+1, i] = -combined_dG
-            delta_G_errors[i, i+1] = combined_err
-            delta_G_errors[i+1, i] = combined_err
             
-        elif forward_estimates:
-            delta_G[i, i+1] = forward_estimates[0]
-            delta_G[i+1, i] = -forward_estimates[0]
-            delta_G_errors[i, i+1] = forward_errors[0]
-            delta_G_errors[i+1, i] = forward_errors[0]
+        elif forward_estimate is not None:
+            # Only forward estimate available
+            delta_G[i, i+1] = forward_estimate
+            delta_G[i+1, i] = -forward_estimate
+            print(f"Using only forward estimate for interfaces {i}-{i+1}: {forward_estimate:.4f}")
             
-        elif backward_estimates:
-            delta_G[i, i+1] = backward_estimates[0]
-            delta_G[i+1, i] = -backward_estimates[0]
-            delta_G_errors[i, i+1] = backward_errors[0]
-            delta_G_errors[i+1, i] = backward_errors[0]
+        elif backward_estimate is not None:
+            # Only backward estimate available
+            delta_G[i, i+1] = backward_estimate
+            delta_G[i+1, i] = -backward_estimate
+            print(f"Using only backward estimate for interfaces {i}-{i+1}: {backward_estimate:.4f}")
+            
+        else:
+            print(f"No valid estimates found for interfaces {i}-{i+1}")
     
-    return delta_G, delta_G_errors
+    return delta_G
 
 ##################################
 # Network Analysis Tools
@@ -4622,7 +4544,7 @@ def plot_destination_bias(p, interfaces=None, ax_forward=None, ax_backward=None,
         (ax_forward, ax_backward): The axes containing the forward and backward plots
     """
     import seaborn as sns
-        
+    
     n_interfaces = p.shape[0]
     
     if interfaces is None:
