@@ -53,7 +53,7 @@ def set_flags_ACC_REJ():
     REJFLAGS = [
         'FTL', 'NCR', 'BWI', 'BTL', 'BTX', 'FTX', 'BTS', 'KOB', 'FTS',
         'EWI', 'SWI', 'MCR', 'TSS', 'TSA', 'HAS', 'CSA', 'NSG', 'SWD',
-        'SWH', 'ILL', '0-L'
+        'SWH', 'ILL', '0-L', 'INF', 'REJ'
     ]
 
     # Define acceptance flags

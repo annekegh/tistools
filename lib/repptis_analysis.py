@@ -1051,15 +1051,15 @@ def get_global_probs_from_dict(ensemble_probabilities):
         A list of probabilities, one per ensemble i, representing the TIS probability of crossing i+1.
     """
 
-    P_plus, P_min, P_cross = [1.0], [1.0], [1.0, ensemble_probabilities[1]['LMR']]
+    P_plus, P_min, P_cross = [1.0], [1.0], [1.0, ensemble_probabilities[0]['LMR']]
     for i, probabilities in enumerate(ensemble_probabilities):
-        if i <= 1:  # Skip the first two ensembles as they are initial conditions
+        if i <= 0:  # Skip the first two ensembles as they are initial conditions
             continue
         # Calculate the global crossing probabilities
         P_plus.append((probabilities['LMR'] * P_plus[-1]) / (probabilities['LMR'] + probabilities['LML'] * P_min[-1]))
         P_min.append((probabilities['RML'] * P_min[-1]) / (probabilities['LMR'] + probabilities['LML'] * P_min[-1]))
         # Calculate the TIS probabilities
-        P_cross.append(ensemble_probabilities[1]['LMR'] * P_plus[-1])
+        P_cross.append(ensemble_probabilities[0]['LMR'] * P_plus[-1])
     return P_min, P_plus, P_cross
 
 def get_global_probs_from_local(p_minus_plus, p_minus_minus, p_plus_plus, p_plus_minus):  # was: get_global_probz

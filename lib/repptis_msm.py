@@ -451,8 +451,10 @@ def mfpt_to_absorbing_states(M, tau1, taum, tau2, absor, kept, doprint=False, re
     if doprint:
         print("Eigenvalues of Mp:")
         print(np.linalg.eigvals(Mp))
+        print("Condition number of Mp:", np.linalg.cond(Mp))
         print("Eigenvalues of (I - Mp):")
         print(np.linalg.eigvals(a))
+        print("Condition number of (I - Mp):", np.linalg.cond(a))
         print("Transition matrix components:")
         print("D:\n", D)
         print("E:\n", E)
