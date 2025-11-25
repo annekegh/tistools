@@ -453,7 +453,7 @@ class PathEnsemble(object):
             idx_mismatch = np.where(el != pe_el)[0]
             if len(idx_mismatch) == 0:
                 continue
-            if (flags[idx_mismatch] != "REJ").all():
+            if (flags[idx_mismatch] == "REJ").all():
                 print(f"Mismatch in REJ paths for {typ}, ignoring.")
                 continue
             else:
