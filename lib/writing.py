@@ -44,7 +44,7 @@ def write_plot_block_error(filename, running_estimate, rel_errors, interval):
     # Labels and title
     plt.xlabel("Block Length")
     plt.ylabel("Relative Error")
-    plt.title(f"Best Estimate = {best_estimate:.4f}, "
+    plt.title(f"Best Estimate = {best_estimate:.5e}, "
               f"Relative Error = {100 * second_half_err_avg:.2f} %")
     plt.legend()
 
@@ -114,7 +114,7 @@ def write_running_estimates(filename, cycles, *args):
                 array = running_estimates[j]
                 for col in range(array.shape[1] if len(array.shape) > 1 else 1):
                     value = array[i, col] if len(array.shape) > 1 else array[i]
-                    value_str = f"{value:.10f}"  # Ensure consistent floating-point format
+                    value_str = f"{value:.15e}"  # Ensure consistent floating-point format
                     row_values.append(f"{value_str:<{col_widths[j + 1]}} ")
 
             f.write("".join(row_values) + "\n")

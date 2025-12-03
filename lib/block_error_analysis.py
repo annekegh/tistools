@@ -133,12 +133,12 @@ def block_error_analysis(path_ensembles, interfaces, interval, load=False):
         print("First time calculating the data file ...")
         _, taups, pcross, _, _, _, _, _, taums, fluxs, mfpts, rates = calculate_running_estimate(path_ensembles, interfaces, interval)
 
-    # block_error_calculation(taups, interval, "Tau_p")
+    block_error_calculation(taups, interval, "Tau_p")
     block_error_calculation(pcross, interval, "Pcross")
-    # block_error_calculation(taums, interval, "Tau_m")
-    # block_error_calculation(fluxs, interval, "Flux")
-    # block_error_calculation(mfpts, interval, "Tau_A,1")
-    # block_error_calculation(rates, interval, "k_AB (MSM)")
+    block_error_calculation(taums, interval, "Tau_m")
+    block_error_calculation(fluxs, interval, "Flux")
+    block_error_calculation(mfpts, interval, "Tau_A,1")
+    block_error_calculation(rates, interval, "k_AB (MSM)")
 
 
 def block_error_calculation(running_estimate, interval, label):
@@ -285,10 +285,10 @@ def load_path_ensembles(indir, load=False):
         # Set weights and orders
         weights, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS + ["REJ"], verbose=False)
         pe.set_weights(weights)
-        # if load == True:
-        #     pe.set_orders(load=True, acc_only=True)
-        # else:
-        #     pe.set_orders(load=False, acc_only=True, save=True)
+        if load == True:
+            pe.set_orders(load=True, acc_only=True)
+        else:
+            pe.set_orders(load=False, acc_only=True, save=True)
 
         pathensembles_original.append(pe)
     
@@ -374,7 +374,7 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
 
         for i, pe in enumerate(pathensembles):
             pathensembles_nskip(pe, nskip)
-            # set_taus(pe)
+            set_taus(pe)
 
             # Skip [0-] index as it is not used for Pcross calculations
             if i == 0:
@@ -407,38 +407,38 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
             M = construct_M_N3(pmm, pmp, ppm, ppp, N)
 
         # Collect tau values
-        # tau_mm, tau_mp, tau_pm, tau_pp = collect_tau(pathensembles)
-        # tau1_mm, tau1_mp, tau1_pm, tau1_pp = collect_tau1(pathensembles)
-        # tau2_mm, tau2_mp, tau2_pm, tau2_pp = collect_tau2(pathensembles)
+        tau_mm, tau_mp, tau_pm, tau_pp = collect_tau(pathensembles)
+        tau1_mm, tau1_mp, tau1_pm, tau1_pp = collect_tau1(pathensembles)
+        tau2_mm, tau2_mp, tau2_pm, tau2_pp = collect_tau2(pathensembles)
 
         # # Construct tau vectors
-        # tau = construct_tau_vector(N, NS, tau_mm, tau_mp, tau_pm, tau_pp)
-        # tau1 = construct_tau_vector(N, NS, tau1_mm, tau1_mp, tau1_pm, tau1_pp)
-        # tau2 = construct_tau_vector(N, NS, tau2_mm, tau2_mp, tau2_pm, tau2_pp)
-        # tau_m = tau - tau1 - tau2
+        tau = construct_tau_vector(N, NS, tau_mm, tau_mp, tau_pm, tau_pp)
+        tau1 = construct_tau_vector(N, NS, tau1_mm, tau1_mp, tau1_pm, tau1_pp)
+        tau2 = construct_tau_vector(N, NS, tau2_mm, tau2_mp, tau2_pm, tau2_pp)
+        tau_m = tau - tau1 - tau2
 
         # # Compute Mean First Passage Time (MFPT) and global cross probability
-        # _, _, h1, _ = mfpt_to_first_last_state(M, np.nan_to_num(tau1), np.nan_to_num(tau_m), np.nan_to_num(tau2))
+        _, _, h1, _ = mfpt_to_first_last_state(M, np.nan_to_num(tau1), np.nan_to_num(tau_m), np.nan_to_num(tau2))
         _, _, y1, _ = global_pcross_msm(M)
 
         # # Calculate MFPT
-        # absor = np.array([NS - 1])
-        # kept = np.array([i for i in range(NS) if i not in absor])
+        absor = np.array([NS - 1])
+        kept = np.array([i for i in range(NS) if i not in absor])
 
-        # _, _, _, h2 = mfpt_to_absorbing_states(M, np.nan_to_num(tau1), np.nan_to_num(tau_m), np.nan_to_num(tau2), absor, kept, remove_initial_m=False) #, doprint=True)
-        # mfpt = h2[0][0]  # Mean first passage time to the last state
+        _, _, _, h2 = mfpt_to_absorbing_states(M, np.nan_to_num(tau1), np.nan_to_num(tau_m), np.nan_to_num(tau2), absor, kept, remove_initial_m=False) #, doprint=True)
+        mfpt = h2[0][0]  # Mean first passage time to the last state
 
         # Print cycle information
-        # print(f"{nskip:5d} cycles, tau {h1[0][0]:.8f}, Pcross {y1[0][0]:.8f}")
+        print(f"{nskip:5d} cycles, tau {h1[0][0]:.8f}, Pcross {y1[0][0]:.8f}")
         print(f"{nskip:5d} cycles, Pcross {y1[0][0]:.8f}")
 
         # Store results
         cycles.append(nskip)
-        # taups.append(h1[0][0])
-        # taums.append(tau[0])
-        # fluxs.append(1/(tau_m[0]+h1[0][0]))
-        # mfpts.append(mfpt)
-        # rates.append(1/mfpt)
+        taups.append(h1[0][0])
+        taums.append(tau[0])
+        fluxs.append(1/(tau_m[0]+h1[0][0]))
+        mfpts.append(mfpt)
+        rates.append(1/mfpt)
         pcross.append(y1[0][0])
         pmms.append(pmm)
         pmps.append(pmp)
@@ -447,8 +447,8 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
         Pcrossfulls.append(Pcrossfull)
 
     # Write to file
-    # write_running_estimates(f"pcross_tau_interval_{interval}.txt", cycles, taups, "Tau_p", taums, "Tau_m", fluxs, "Flux", mfpts, "Tau_A,1", pcross, "Pcross", rates, "k_AB (MSM)")
-    write_running_estimates(f"pcross_tau_interval_{interval}.txt", cycles, pcross, "Pcross")
+    write_running_estimates(f"pcross_tau_interval_{interval}.txt", cycles, taups, "Tau_p", taums, "Tau_m", fluxs, "Flux", mfpts, "Tau_A,1", pcross, "Pcross", rates, "k_AB (MSM)")
+    # write_running_estimates(f"pcross_tau_interval_{interval}.txt", cycles, pcross, "Pcross")
     write_running_estimates(f"ploc_interval_{interval}.txt", cycles,
         np.array(pmms), "P_LML",
         np.array(pmps), "P_LMR",
