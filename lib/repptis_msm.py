@@ -442,7 +442,7 @@ def global_pcross_msm(M, doprint=False):
     # Extract transition probabilities related to states 0 and -1
     D = M[1:-1, np.array([0, -1])]  # Transitions from intermediate states to 0 or -1
     E = M[np.array([0, -1]), 1:-1]  # Transitions from 0 or -1 to intermediate states
-    M11 = M[np.array([0, -1]), np.array([0, -1])]  # Transitions within states 0 and -1
+    M11 = M[np.ix_(np.array([0, -1]), np.array([0, -1]))]  # Transitions within states 0 and -1
 
     # Solve for Z vector (probability of reaching -1 before 0)
     z1 = np.array([[0], [1]])  # Boundary conditions: 0 for state 0, 1 for state -1
