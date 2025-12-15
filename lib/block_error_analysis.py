@@ -3,6 +3,7 @@
 
 import os
 import glob
+import copy
 import warnings
 import numpy as np
 
@@ -14,7 +15,7 @@ from tistools import set_taus, collect_tau, collect_tau1, collect_tau2
 from tistools import ACCFLAGS, REJFLAGS
 
 # REPPTIS analysis
-from tistools import get_local_probs, get_global_probs_from_dict
+from tistools import get_local_probs, get_global_probs_from_dict, get_global_probs_from_local
 
 # MSM functions
 from tistools import construct_M, construct_M_N3, global_pcross_msm
@@ -118,7 +119,7 @@ def block_error_analysis(path_ensembles, interfaces, interval, load=False):
 
     if load and os.path.exists(filename):
         # Attempt to load data from the file
-        print("The data file exists, reading...")
+        # print("The data file exists, reading...")
         _, taups, taums, fluxs, mfpts, pcross, rates = load_txt_data(filename)
 
         # Validate the loaded data: check for empty values or NaNs
@@ -130,7 +131,7 @@ def block_error_analysis(path_ensembles, interfaces, interval, load=False):
             _, taups, pcross, _, _, _, _, _, taums, fluxs, mfpts, rates = calculate_running_estimate(path_ensembles, interfaces, interval)
     else:
         # If loading is disabled or the file doesn't exist, calculate running estimates
-        print("First time calculating the data file ...")
+        # print("First time calculating the data file ...")
         _, taups, pcross, _, _, _, _, _, taums, fluxs, mfpts, rates = calculate_running_estimate(path_ensembles, interfaces, interval)
 
     block_error_calculation(taups, interval, "Tau_p")
@@ -171,6 +172,7 @@ def block_error_calculation(running_estimate, interval, label):
         
         # Perform recursive blocking to obtain block-averaged values
         blocked_values = recursive_blocker(blocked_estimate)  
+        # print(np.array(blocked_values))
 
         # Compute absolute and relative errors
         abs_err = np.sqrt(np.var(blocked_values, ddof=1) / len(blocked_values))  
@@ -276,6 +278,7 @@ def load_path_ensembles(indir, load=False):
     # Initialize path ensembles
     pathensembles_original = []
     for i, folder in enumerate(folders):
+        print(f"Ensemble {i:03d} loading ...")
         pe = read_pathensemble(f"{folder}/pathensemble.txt")
         pe.set_name(folder)
         pe.set_interfaces([LMR_interfaces[i], LMR_strings[i]])
@@ -283,7 +286,7 @@ def load_path_ensembles(indir, load=False):
         pe.set_in_zero_plus(i == 1)
         
         # Set weights and orders
-        weights, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS + ["REJ"], verbose=False)
+        weights, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose=False)
         pe.set_weights(weights)
         if load == True:
             pe.set_orders(load=True, acc_only=True)
@@ -295,7 +298,7 @@ def load_path_ensembles(indir, load=False):
     return pathensembles_original, interfaces
 
 
-def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
+def calculate_running_estimate(pathensembles_original, interfaces, interval=1, time_conv=0.02):
     """
     Computes running estimates of key parameters from path ensembles.
 
@@ -329,6 +332,9 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
     interval : int, optional, default=1
         The step size for computing running estimates. Setting `interval > 1` reduces 
         the number of computations by skipping intermediate cycles.
+    
+    time_conv : float, optional, default=0.02
+        Time conversion factor to adjust time units in calculations. Default is 0.02, for 0.002 dt and subcycles 10.
 
     Returns
     -------
@@ -367,8 +373,9 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
     pmms, pmps, ppms, ppps, Pcrossfulls = [], [], [], [], []
     pathtypes = ("LML", "LMR", "RML", "RMR")
     
+    max_cycle = max(pe.cyclenumbers[-1] for pe in pathensembles_original)
     # Iterate over cycle numbers with interval steps
-    for nskip in range(50, len(pathensembles_original[0].lmrs) + interval, interval):
+    for nskip in range(interval, max_cycle + interval, interval):
         pathensembles = [shallow_copy(pe) for pe in pathensembles_original]
         data = {i: {} for i in range(len(pathensembles))}
 
@@ -391,13 +398,15 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
         ]
         # _, _, Pcrossfull = get_globall_probs(psfull)
         _, _, Pcrossfull = get_global_probs_from_dict(psfull)
-
+        
         # Extract probability distributions
         pmp, pmm, ppp, ppm = zip(*[
             (data[i]["full"]["LMR"], data[i]["full"]["LML"],
              data[i]["full"]["RMR"], data[i]["full"]["RML"])
             for i in range(1, len(pathensembles))
         ])
+
+        _, _, Pcross_from_local = get_global_probs_from_local(pmp, pmm, ppp, ppm)
 
         # Construct transition matrix M
         N, NS = len(interfaces), 4 * len(interfaces) - 5
@@ -411,35 +420,45 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
         tau1_mm, tau1_mp, tau1_pm, tau1_pp = collect_tau1(pathensembles)
         tau2_mm, tau2_mp, tau2_pm, tau2_pp = collect_tau2(pathensembles)
 
-        # # Construct tau vectors
+        # Construct tau vectors
         tau = construct_tau_vector(N, NS, tau_mm, tau_mp, tau_pm, tau_pp)
         tau1 = construct_tau_vector(N, NS, tau1_mm, tau1_mp, tau1_pm, tau1_pp)
         tau2 = construct_tau_vector(N, NS, tau2_mm, tau2_mp, tau2_pm, tau2_pp)
         tau_m = tau - tau1 - tau2
 
-        # # Compute Mean First Passage Time (MFPT) and global cross probability
+        # Compute Mean First Passage Time (MFPT) and global cross probability
         _, _, h1, _ = mfpt_to_first_last_state(M, np.nan_to_num(tau1), np.nan_to_num(tau_m), np.nan_to_num(tau2))
         _, _, y1, _ = global_pcross_msm(M)
 
-        # # Calculate MFPT
+        # Calculate MFPT
         absor = np.array([NS - 1])
         kept = np.array([i for i in range(NS) if i not in absor])
 
         _, _, _, h2 = mfpt_to_absorbing_states(M, np.nan_to_num(tau1), np.nan_to_num(tau_m), np.nan_to_num(tau2), absor, kept, remove_initial_m=False) #, doprint=True)
-        mfpt = h2[0][0]  # Mean first passage time to the last state
+
+        MSM_tau_p = h1[0][0]
+        MSM_flux = (1 / (tau_m[0] + MSM_tau_p)) / time_conv
+        MSM_pcross = y1[0][0]
+        MSM_rate = MSM_flux * MSM_pcross * 1e12
+        MSM_MFPT = h2[0][0] * time_conv * 1e-12
+
+        REPPTIS_tau_pm = tau[1]
+        REPPTIS_flux = (1 / (tau_m[0] + REPPTIS_tau_pm)) / time_conv
+        REPPTIS_Pcross = Pcross_from_local[-1]
+        REPPTIS_rate = REPPTIS_flux * REPPTIS_Pcross * 1e12
+        REPPTIS_MFPT = 1 / REPPTIS_rate
 
         # Print cycle information
-        print(f"{nskip:5d} cycles, tau {h1[0][0]:.8f}, Pcross {y1[0][0]:.8f}")
-        print(f"{nskip:5d} cycles, Pcross {y1[0][0]:.8f}")
-
+        print(f"{nskip:7d}{tau_m[0]:25.18e}{REPPTIS_tau_pm:25.18e}{MSM_tau_p:25.18e}{REPPTIS_flux:25.18e}{MSM_flux:25.18e}{REPPTIS_Pcross:25.18e}{MSM_pcross:25.18e}{REPPTIS_rate:25.18e}{MSM_rate:25.18e}{REPPTIS_MFPT:25.18e}{MSM_MFPT:25.18e}")
+    
         # Store results
         cycles.append(nskip)
-        taups.append(h1[0][0])
+        taups.append(MSM_tau_p)
         taums.append(tau[0])
-        fluxs.append(1/(tau_m[0]+h1[0][0]))
-        mfpts.append(mfpt)
-        rates.append(1/mfpt)
-        pcross.append(y1[0][0])
+        fluxs.append(MSM_flux)
+        mfpts.append(MSM_MFPT)
+        rates.append(MSM_rate)
+        pcross.append(MSM_pcross)
         pmms.append(pmm)
         pmps.append(pmp)
         ppms.append(ppm)
@@ -448,7 +467,6 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
 
     # Write to file
     write_running_estimates(f"pcross_tau_interval_{interval}.txt", cycles, taups, "Tau_p", taums, "Tau_m", fluxs, "Flux", mfpts, "Tau_A,1", pcross, "Pcross", rates, "k_AB (MSM)")
-    # write_running_estimates(f"pcross_tau_interval_{interval}.txt", cycles, pcross, "Pcross")
     write_running_estimates(f"ploc_interval_{interval}.txt", cycles,
         np.array(pmms), "P_LML",
         np.array(pmps), "P_LMR",
@@ -457,3 +475,171 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1):
         np.array(Pcrossfulls)[:, 1:], "P_Cross"
     )
     return cycles, taups, pcross, pmms, pmps, ppms, ppps, Pcrossfulls, taums, fluxs, mfpts, rates
+    
+def calculate_block_values(path_ensembles_original, interfaces, nskip, time_conv=0.02):
+    """
+    Computes running estimates of key parameters from path ensembles.
+
+    This function iterates over the cycle number, progressively truncating the 
+    `pathensembles_original` object up to the given cycle number. At each step, 
+    it calculates various parameters, including probabilities and time constants (taus). 
+    
+    Since this process involves recalculating parameters at each cycle, it can be 
+    computationally expensive, particularly for large numbers of cycles (e.g., 30,000). 
+    The slowest part of the function is `set_taus`. To mitigate this, an interval parameter 
+    is introduced, allowing calculations to be performed at specified intervals 
+    (e.g., every 10 cycles if `interval=10`), improving efficiency.
+
+    Using intervals greater than 1 will affect the block error analysis since fewer 
+    data points are used. However, if the data comes from an MD time series, which 
+    typically exhibits high correlation, the difference between using an interval of 
+    1 and 10 should be minimal. 
+
+    At the same block length, the exact error value will be preserved. For example, 
+    the relative error for an interval of 1 with a block length of 100 will be equal 
+    to that of an interval of 10 with a block length of 10.
+
+    Parameters
+    ----------
+    pathensembles_original : :py:class:`.PathEnsemble`
+        The original path ensembles containing trajectory data.
+
+    interfaces : list of float
+        A list of interface positions used for computing transition probabilities.
+
+    interval : int, optional, default=1
+        The step size for computing running estimates. Setting `interval > 1` reduces 
+        the number of computations by skipping intermediate cycles.
+    
+    time_conv : float, optional, default=0.02
+        Time conversion factor to adjust time units in calculations. Default is 0.02, for 0.002 dt and subcycles 10.
+
+    Returns
+    -------
+    cycles : list of int
+        List of cycle numbers processed. Useful when `interval > 1`.
+
+    taus : list of float
+        Running estimates of the Tau+ values.
+
+    pcross : list of float
+        Running estimates of the crossing probabilities.
+
+    pmms : list of tuple
+        Running estimates of P_minus_minus (LML) values.
+        Each tuple contains `len(interfaces) - 1` elements.
+
+    pmps : list of tuple
+        Running estimates of P_minus_plus (LMR) values.
+        Each tuple contains `len(interfaces) - 1` elements.
+
+    ppms : list of tuple
+        Running estimates of P_plus_minus (RML) values.
+        Each tuple contains `len(interfaces) - 1` elements.
+
+    ppps : list of tuple
+        Running estimates of P_plus_plus (RMR) values.
+        Each tuple contains `len(interfaces) - 1` elements.
+
+    Pcrossfulls : list of tuple
+        Running estimates of the global crossing probabilities for each interface.
+        Each tuple contains `len(interfaces)` elements.
+    """
+
+    # Prepare result storage
+    tau_ms, MSM_tau_ps, MSM_fluxs, MSM_pcrosss, MSM_rates, MSM_MFPTs, REPPTIS_tau_pms, REPPTIS_fluxs, REPPTIS_Pcrosss, REPPTIS_rates, REPPTIS_MFPTs = [], [], [], [], [], [], [], [], [], [], []
+    pathtypes = ("LML", "LMR", "RML", "RMR")
+
+    pathensembles = [copy.deepcopy(pe) for pe in path_ensembles_original]
+    data = {i: {} for i in range(len(pathensembles))}
+    min_list = []
+    all_data = []
+    for i, pe in enumerate(pathensembles):        
+        pathensembles_nskip(pe, nskip)
+        min_list.append(pe.cyclenumbers[0])
+        flags = np.array(pe.flags, dtype=object)
+        lmrs = np.array(pe.lmrs, dtype=object)
+
+        # keep only lmrs where flag == "ACC"
+        acc_lmrs = lmrs[flags == "ACC"]
+        all_data.append(acc_lmrs)
+
+        set_taus(pe)
+
+        if i == 0:
+            continue  
+
+        plocfull = get_local_probs(pe, tr=False)
+        data[i]["full"] = {ptype: plocfull[ptype] for ptype in pathtypes}
+
+    # Extract global probabilities
+    psfull = [
+        {ptype: data[i]["full"][ptype] for ptype in ("LMR", "RML", "RMR", "LML")}
+        for i in range(1, len(pathensembles))
+    ]
+    _, _, Pcrossfull = get_global_probs_from_dict(psfull)
+
+    # Extract probability distributions
+    pmp, pmm, ppp, ppm = zip(*[
+        (data[i]["full"]["LMR"], data[i]["full"]["LML"],
+            data[i]["full"]["RMR"], data[i]["full"]["RML"])
+        for i in range(1, len(pathensembles))
+    ])
+
+    _, _, Pcross_from_local = get_global_probs_from_local(pmp, pmm, ppp, ppm)
+
+    # Construct transition matrix M
+    N, NS = len(interfaces), 4 * len(interfaces) - 5
+    if N > 3:
+        M = construct_M(pmm, pmp, ppm, ppp, N)
+    else:
+        M = construct_M_N3(pmm, pmp, ppm, ppp, N)
+
+    # Collect tau values
+    tau_mm, tau_mp, tau_pm, tau_pp = collect_tau(pathensembles)
+    tau1_mm, tau1_mp, tau1_pm, tau1_pp = collect_tau1(pathensembles)
+    tau2_mm, tau2_mp, tau2_pm, tau2_pp = collect_tau2(pathensembles)
+
+    # Construct tau vectors
+    tau = construct_tau_vector(N, NS, tau_mm, tau_mp, tau_pm, tau_pp)
+    tau1 = construct_tau_vector(N, NS, tau1_mm, tau1_mp, tau1_pm, tau1_pp)
+    tau2 = construct_tau_vector(N, NS, tau2_mm, tau2_mp, tau2_pm, tau2_pp)
+    tau_m = tau - tau1 - tau2
+
+    # Compute Mean First Passage Time (MFPT) and global cross probability
+    _, _, h1, _ = mfpt_to_first_last_state(M, np.nan_to_num(tau1), np.nan_to_num(tau_m), np.nan_to_num(tau2))
+    _, _, y1, _ = global_pcross_msm(M)
+
+    # Calculate MFPT
+    absor = np.array([NS - 1])
+    kept = np.array([i for i in range(NS) if i not in absor])
+
+    _, _, _, h2 = mfpt_to_absorbing_states(M, np.nan_to_num(tau1), np.nan_to_num(tau_m), np.nan_to_num(tau2), absor, kept, doprint=False)
+
+    MSM_tau_p = h1[0][0]
+    MSM_flux = (1 / (tau_m[0] + MSM_tau_p)) / time_conv
+    MSM_pcross = y1[0][0]
+    MSM_rate = MSM_flux * MSM_pcross * 1e12
+    MSM_MFPT = h2[0][0] * time_conv * 1e-12
+
+    REPPTIS_tau_pm = tau[1]
+    REPPTIS_flux = (1 / (tau_m[0] + REPPTIS_tau_pm)) / time_conv
+    REPPTIS_Pcross = Pcross_from_local[-1]
+    REPPTIS_rate = REPPTIS_flux * REPPTIS_Pcross * 1e12
+    REPPTIS_MFPT = 1 / REPPTIS_rate
+
+    print(f"{min(min_list):7d}{pe.cyclenumbers[-1]:7d}{tau_m[0]:25.18e}{REPPTIS_tau_pm:25.18e}{MSM_tau_p:25.18e}{REPPTIS_flux:25.18e}{MSM_flux:25.18e}{REPPTIS_Pcross:25.18e}{MSM_pcross:25.18e}{REPPTIS_rate:25.18e}{MSM_rate:25.18e}{REPPTIS_MFPT:25.18e}{MSM_MFPT:25.18e}")
+
+    tau_ms.append(tau_m[0])
+    MSM_tau_ps.append(MSM_tau_p)
+    MSM_fluxs.append(MSM_flux)
+    MSM_pcrosss.append(MSM_pcross)
+    MSM_rates.append(MSM_rate)
+    MSM_MFPTs.append(MSM_MFPT)
+    REPPTIS_tau_pms.append(REPPTIS_tau_pm)
+    REPPTIS_fluxs.append(REPPTIS_flux)
+    REPPTIS_Pcrosss.append(REPPTIS_Pcross)
+    REPPTIS_rates.append(REPPTIS_rate)
+    REPPTIS_MFPTs.append(REPPTIS_MFPT)
+
+    return tau_ms, MSM_tau_ps, MSM_fluxs, MSM_pcrosss, MSM_rates, MSM_MFPTs, REPPTIS_tau_pms, REPPTIS_fluxs, REPPTIS_Pcrosss, REPPTIS_rates, REPPTIS_MFPTs

@@ -1,0 +1,316 @@
+#!/usr/bin/env python
+"""
+tistools-msm-analysis: MSM-based analysis of REPPTIS simulations.
+
+Computes:
+  - Global crossing probability P_A(λ_B | λ_A)
+  - Mean pathlengths (tau) per path type
+  - Flux through λ_A
+  - Rate constant k = flux × P_cross
+
+Usage:
+    tistools-msm-analysis <simulation_dir> [options]
+
+Example:
+    tistools-msm-analysis /path/to/repptis_sim --dt 0.002 --subcycles 10 --plot
+"""
+
+import argparse
+import glob
+import os
+import sys
+from pathlib import Path
+
+import numpy as np
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="MSM-based analysis of REPPTIS simulations.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument(
+        "simdir",
+        type=str,
+        help="Path to REPPTIS simulation directory containing ensemble folders (000, 001, ...)",
+    )
+    parser.add_argument(
+        "--inputfile",
+        type=str,
+        default=None,
+        help="Path to input file (default: <simdir>/repptis.rst)",
+    )
+    parser.add_argument(
+        "--dt",
+        type=float,
+        default=0.002,
+        help="Integration timestep in ps (default: 0.002)",
+    )
+    parser.add_argument(
+        "--subcycles",
+        type=int,
+        default=1,
+        help="Subcycles between order parameter evaluations (default: 1)",
+    )
+    parser.add_argument(
+        "--zero-minus-one",
+        action="store_true",
+        default=False,
+        help="Set if lambda_-1 interface is defined",
+    )
+    parser.add_argument(
+        "--plot",
+        action="store_true",
+        help="Generate and save P_cross plot",
+    )
+    parser.add_argument(
+        "--load-orders",
+        action="store_true",
+        help="Load order parameters from .npy files (faster if available)",
+    )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Print detailed output",
+    )
+    parser.add_argument(
+        "--output", "-o",
+        type=str,
+        default=None,
+        help="Output file for results (default: stdout)",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    # Import tistools functions
+    try:
+        from tistools import (
+            read_inputfile,
+            get_LMR_interfaces,
+            read_pathensemble,
+            get_weights,
+            ACCFLAGS,
+            REJFLAGS,
+        )
+        from tistools import (
+            get_local_probs,
+            get_global_probs_from_local,
+        )
+        from tistools import (
+            construct_M,
+            global_pcross_msm,
+            mfpt_to_first_last_state,
+            construct_tau_vector,
+        )
+        from tistools import (
+            set_tau_distrib,
+            set_tau_first_hit_M_distrib,
+            collect_tau,
+            collect_tau1,
+            collect_tau2,
+            collect_taum,
+        )
+    except ImportError as e:
+        print(f"Error: Could not import tistools: {e}", file=sys.stderr)
+        print("Make sure tistools is installed or in your PYTHONPATH.", file=sys.stderr)
+        sys.exit(1)
+
+    # Setup paths
+    simdir = Path(args.simdir).resolve()
+    if not simdir.exists():
+        print(f"Error: Directory {simdir} does not exist", file=sys.stderr)
+        sys.exit(1)
+
+    inputfile = args.inputfile or str(simdir / "repptis.rst")
+    if not os.path.exists(inputfile):
+        # Try alternative names
+        for alt in ["retis.rst", "retis3.rst", "infretis.rst"]:
+            alt_path = simdir / alt
+            if alt_path.exists():
+                inputfile = str(alt_path)
+                break
+        else:
+            print(f"Error: Input file not found. Tried {inputfile}", file=sys.stderr)
+            sys.exit(1)
+
+    # Find ensemble folders
+    folders = sorted(glob.glob(str(simdir / "0[0-9][0-9]")))
+    if not folders:
+        print(f"Error: No ensemble folders found in {simdir}", file=sys.stderr)
+        sys.exit(1)
+
+    # Output setup
+    out = open(args.output, "w") if args.output else sys.stdout
+
+    def log(msg, verbose_only=False):
+        if verbose_only and not args.verbose:
+            return
+        print(msg, file=out)
+
+    log("=" * 70)
+    log("MSM-REPPTIS Analysis")
+    log("=" * 70)
+    log(f"Simulation directory: {simdir}")
+    log(f"Input file: {inputfile}")
+    log(f"Found {len(folders)} ensemble folders")
+    log(f"Timestep: {args.dt} ps, Subcycles: {args.subcycles}")
+    log("")
+
+    # Read input and load ensembles
+    log("Loading path ensembles...", verbose_only=True)
+    interfaces, zero_left, timestep = read_inputfile(inputfile)
+    LMR_interfaces, LMR_strings = get_LMR_interfaces(interfaces, zero_left)
+
+    pathensembles = []
+    for i, fol in enumerate(folders):
+        pe = read_pathensemble(fol + "/pathensemble.txt")
+        pe.set_name(fol)
+        pe.set_interfaces([LMR_interfaces[i], LMR_strings[i]])
+        if i == 0:
+            pe.set_zero_minus_one(args.zero_minus_one)
+            pe.set_in_zero_minus(True)
+        if i == 1:
+            pe.set_in_zero_plus(True)
+
+        w, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose=False)
+        pe.set_weights(w)
+
+        # Load order parameters
+        pe.set_orders(load=args.load_orders, acc_only=True, save=False)
+        pathensembles.append(pe)
+        log(f"  Loaded ensemble {i}: {fol}", verbose_only=True)
+
+    log(f"Loaded {len(pathensembles)} path ensembles\n")
+
+    # Compute local probabilities
+    log("Computing local crossing probabilities...", verbose_only=True)
+    pathtypes = ("LML", "LMR", "RML", "RMR")
+    pmms, pmps, ppms, ppps = [], [], [], []
+
+    for i, pe in enumerate(pathensembles):
+        if i == 0:
+            continue  # Skip [0-]
+        plocfull = get_local_probs(pe, tr=False)
+        pmms.append(plocfull["LML"])
+        pmps.append(plocfull["LMR"])
+        ppms.append(plocfull["RML"])
+        ppps.append(plocfull["RMR"])
+
+    # Global crossing probability (standard method)
+    Pmin, Pplus, Pcross = get_global_probs_from_local(pmps, pmms, ppps, ppms)
+
+    log("CROSSING PROBABILITY")
+    log("-" * 40)
+    log(f"{'Interface':>10} {'P_cross':>15}")
+    for i, (intf, pc) in enumerate(zip(interfaces, Pcross)):
+        log(f"{intf:>10.3f} {pc:>15.6e}")
+    log(f"\nP_cross(λ_B | λ_A) = {Pcross[-1]:.6e}\n")
+
+    # Build MSM
+    N = len(interfaces)
+    NS = 4 * N - 5
+
+    if N > 3:
+        M = construct_M(pmms, pmps, ppms, ppps, N)
+    elif N == 3:
+        from tistools import construct_M_N3
+        M = construct_M_N3(pmms, pmps, ppms, ppps, N)
+    else:
+        log("Error: Need at least 3 interfaces for MSM analysis", file=sys.stderr)
+        sys.exit(1)
+
+    # MSM crossing probability
+    z1, z2, y1, y2 = global_pcross_msm(M)
+    pcross_msm = y1[0][0]
+    log(f"P_cross (MSM): {pcross_msm:.6e}")
+    log(f"Difference from standard: {abs(Pcross[-1] - pcross_msm):.2e}\n")
+
+    # Pathlength analysis
+    log("Computing pathlengths...", verbose_only=True)
+    for pe in pathensembles:
+        set_tau_distrib(pe)
+        set_tau_first_hit_M_distrib(pe)
+
+    tau_mm, tau_mp, tau_pm, tau_pp = collect_tau(pathensembles)
+    tau1_mm, tau1_mp, tau1_pm, tau1_pp = collect_tau1(pathensembles)
+    tau2_mm, tau2_mp, tau2_pm, tau2_pp = collect_tau2(pathensembles)
+    taum_mm, taum_mp, taum_pm, taum_pp = collect_taum(pathensembles)
+
+    tau = construct_tau_vector(N, NS, tau_mm, tau_mp, tau_pm, tau_pp)
+    tau1 = construct_tau_vector(N, NS, tau1_mm, tau1_mp, tau1_pm, tau1_pp)
+    taum = construct_tau_vector(N, NS, taum_mm, taum_mp, taum_pm, taum_pp)
+    tau2 = construct_tau_vector(N, NS, tau2_mm, tau2_mp, tau2_pm, tau2_pp)
+    tau_m = tau - tau1 - tau2
+
+    log("PATHLENGTHS (in MD steps)")
+    log("-" * 40)
+    log(f"tau[0-]: {tau[0]:.2f}")
+    if args.verbose:
+        log(f"\nFull tau vector:\n{tau}")
+
+    # Flux calculation
+    g1, g2, h1, h2 = mfpt_to_first_last_state(
+        M, np.nan_to_num(tau1), np.nan_to_num(tau_m), np.nan_to_num(tau2)
+    )
+    tau_0plus = h1[0][0]
+
+    dt_eff = args.dt * args.subcycles  # effective timestep in ps
+    flux = 1.0 / ((tau[0] + tau_0plus) * dt_eff)
+
+    log("\nFLUX CALCULATION")
+    log("-" * 40)
+    log(f"tau[0-]: {tau[0]:.2f} steps")
+    log(f"tau[0+]: {tau_0plus:.2f} steps")
+    log(f"Total tau: {tau[0] + tau_0plus:.2f} steps")
+    log(f"Effective dt: {dt_eff:.4f} ps")
+    log(f"\nFlux f_A = {flux:.6e} ps^-1")
+
+    # Rate constant
+    rate = flux * pcross_msm
+    log("\nRATE CONSTANT")
+    log("-" * 40)
+    log(f"k = flux × P_cross = {rate:.6e} ps^-1")
+    log(f"k = {rate * 1e12:.6e} s^-1")
+    log(f"1/k (MFPT) = {1/rate:.6e} ps = {1/rate/1e6:.6f} μs")
+
+    # Plot
+    if args.plot:
+        try:
+            import matplotlib.pyplot as plt
+
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.semilogy(interfaces, Pcross, "o-", label="Standard")
+            ax.set_xlabel(r"$\lambda$")
+            ax.set_ylabel(r"$P_A(\lambda | \lambda_A)$")
+            ax.set_title("Global Crossing Probability")
+            ax.grid(True, alpha=0.3)
+            fig.tight_layout()
+
+            plot_file = simdir / "pcross_msm.pdf"
+            fig.savefig(plot_file)
+            log(f"\nPlot saved to {plot_file}")
+            plt.close(fig)
+        except ImportError:
+            log("\nWarning: matplotlib not available, skipping plot")
+
+    # Summary
+    log("\n" + "=" * 70)
+    log("SUMMARY")
+    log("=" * 70)
+    log(f"P_cross     = {pcross_msm:.6e}")
+    log(f"Flux        = {flux:.6e} ps^-1")
+    log(f"Rate k      = {rate:.6e} ps^-1")
+    log(f"MFPT (1/k)  = {1/rate:.6e} ps")
+    log("=" * 70)
+
+    if args.output:
+        out.close()
+        print(f"Results written to {args.output}")
+
+
+if __name__ == "__main__":
+    main()

@@ -53,7 +53,7 @@ def set_flags_ACC_REJ():
     REJFLAGS = [
         'FTL', 'NCR', 'BWI', 'BTL', 'BTX', 'FTX', 'BTS', 'KOB', 'FTS',
         'EWI', 'SWI', 'MCR', 'TSS', 'TSA', 'HAS', 'CSA', 'NSG', 'SWD',
-        'SWH', 'ILL', '0-L', 'INF', 'REJ'
+        'SWH', 'ILL', '0-L', 'INF', 'REJ',
     ]
 
     # Define acceptance flags
@@ -303,6 +303,42 @@ class PathEnsemble(object):
 
         return new_pe
 
+    def prune_start_pe(self, ncut):
+        """
+        Samples the path ensemble by keeping only the specified cycle numbers.
+
+        Parameters
+        ----------
+        cycle_ids : list or np.ndarray
+            Indices of the cycles to keep in the sampled ensemble.
+
+        Returns
+        -------
+        :py:class:`.PathEnsemble`
+            A new :py:class:`.PathEnsemble` object containing only the specified cycles.
+        """
+        # A lot of functions require the first path to be ACC ...
+        
+        while self.flags[ncut] != "ACC":
+            ncut += 1
+        self.cyclenumbers = self.cyclenumbers[ncut:]
+        self.pathnumbers = self.pathnumbers[ncut:]
+        self.newpathnumbers = self.newpathnumbers[ncut:]
+        self.lmrs = self.lmrs[ncut:]
+        self.lengths = self.lengths[ncut:]
+        self.flags = self.flags[ncut:]
+        self.generation = self.generation[ncut:]
+        self.weights = self.weights[ncut:]
+        self.lambmins = self.lambmins[ncut:]
+        self.lambmaxs = self.lambmaxs[ncut:]
+        self.name = self.name
+        self.interfaces = self.interfaces
+        self.has_zero_minus_one = self.has_zero_minus_one
+        self.in_zero_minus = self.in_zero_minus
+        self.in_zero_plus = self.in_zero_plus
+        self.orders = self.orders[ncut:]
+        self.ncycle = len(self.orders)
+        
     def sample_pe(self, cycle_ids):
         """
         Samples the path ensemble by keeping only the specified cycle numbers.
@@ -408,12 +444,12 @@ class PathEnsemble(object):
         ValueError
             If there is a mismatch in accepted paths when `acc_only` is True.
         """
-        print("Setting orders for path ensemble", self.name)
+        # print("Setting orders for path ensemble", self.name)
         orders, cyclenumbers, lengths, flags, generation =\
             load_order_parameters(self.name + "/order.txt", load=load, acc_only=acc_only)
 
         if load:
-            print("Loaded orders from file, NOT CHECKING FOR CONSISTENCY.")
+            # print("Loaded orders from file, NOT CHECKING FOR CONSISTENCY.")
             self.orders = orders
             return
 
@@ -453,7 +489,7 @@ class PathEnsemble(object):
             idx_mismatch = np.where(el != pe_el)[0]
             if len(idx_mismatch) == 0:
                 continue
-            if (flags[idx_mismatch] == "REJ").all():
+            if (flags[idx_mismatch] != "REJ").all():
                 print(f"Mismatch in REJ paths for {typ}, ignoring.")
                 continue
             else:
