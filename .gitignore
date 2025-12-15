@@ -11,3 +11,6 @@ dist/
 *.egg*
 test/msm_pptis_mfpt_elias.ipynb
 test/msm_istar.ipynb
+test/features_cache/
+test/template_features_cache/
+test/classification_results.csv

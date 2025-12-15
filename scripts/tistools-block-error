@@ -1,0 +1,216 @@
+#!/usr/bin/env python
+"""
+tistools-block-error: Block error analysis for REPPTIS simulations.
+
+Computes block averages and error estimates for:
+  - tau_m, tau_p (pathlengths)
+  - flux, P_cross, rate, MFPT
+
+Both MSM-based and standard REPPTIS methods are computed.
+
+Usage:
+    tistools-block-error <simulation_dir> [options]
+
+Example:
+    tistools-block-error /path/to/repptis_sim --block-size 100000 --skip 25000 --final 325000
+"""
+
+import argparse
+import sys
+from pathlib import Path
+import copy
+
+import numpy as np
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Block error analysis for REPPTIS simulations.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument(
+        "simdir",
+        type=str,
+        help="Path to REPPTIS simulation directory",
+    )
+    parser.add_argument(
+        "--block-size", "-b",
+        type=int,
+        default=100000,
+        help="Block size in MC cycles (default: 100000)",
+    )
+    parser.add_argument(
+        "--skip", "-s",
+        type=int,
+        default=0,
+        help="Cycles to skip from beginning (default: 0)",
+    )
+    parser.add_argument(
+        "--final", "-f",
+        type=int,
+        default=None,
+        help="Final cycle to include (default: use all data)",
+    )
+    parser.add_argument(
+        "--load-orders",
+        action="store_true",
+        help="Load order parameters from .npy files",
+    )
+    parser.add_argument(
+        "--output", "-o",
+        type=str,
+        default=None,
+        help="Output file for results (default: stdout)",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    # Import tistools functions
+    try:
+        from tistools import load_path_ensembles, calculate_block_values
+    except ImportError as e:
+        print(f"Error: Could not import tistools: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Setup paths
+    simdir = Path(args.simdir).resolve()
+    if not simdir.exists():
+        print(f"Error: Directory {simdir} does not exist", file=sys.stderr)
+        sys.exit(1)
+
+    # Output setup
+    out = open(args.output, "w") if args.output else sys.stdout
+
+    def log(msg):
+        print(msg, file=out)
+
+    log("=" * 80)
+    log("BLOCK ERROR ANALYSIS")
+    log("=" * 80)
+    log(f"Simulation: {simdir}")
+    log(f"Block size: {args.block_size}")
+    log(f"Skip from start: {args.skip}")
+    log("")
+
+    # Load path ensembles
+    log("Loading path ensembles...")
+    path_ensembles_original, interfaces = load_path_ensembles(str(simdir), load=args.load_orders)
+
+    # Apply initial skip
+    for pe in path_ensembles_original:
+        pe.prune_start_pe(args.skip)
+
+    # Determine final cycle
+    max_cycles = min(len(pe.flags) for pe in path_ensembles_original)
+    final_cycle = args.final if args.final else max_cycles
+    log(f"Data range: {args.skip} to {args.skip + final_cycle} cycles")
+    log(f"Available after skip: {max_cycles} cycles")
+    log("")
+
+    # Storage for block values
+    tau_ms, MSM_tau_ps, MSM_fluxs, MSM_pcrosss, MSM_rates, MSM_MFPTs = [], [], [], [], [], []
+    REPPTIS_tau_mps, REPPTIS_fluxs, REPPTIS_Pcrosss, REPPTIS_rates, REPPTIS_MFPTs = [], [], [], [], []
+
+    # Header
+    log("BLOCK VALUES")
+    log("-" * 80)
+    header = (
+        f"{'Block':>6} {'Cyc_s':>8} {'Cyc_e':>8} "
+        f"{'tau_m':>12} {'MSM_tau_p':>12} {'REP_tau_p':>12} "
+        f"{'MSM_flux':>12} {'REP_flux':>12} "
+        f"{'MSM_Pcross':>12} {'REP_Pcross':>12}"
+    )
+    log(header)
+    log("-" * len(header))
+
+    # Process blocks
+    block_num = 0
+    for nskip in range(0, final_cycle - args.block_size + 1, args.block_size):
+        # Deep copy to avoid modifying original
+        path_ensembles = [copy.deepcopy(pe) for pe in path_ensembles_original]
+        for pe in path_ensembles:
+            pe.prune_start_pe(nskip)
+
+        try:
+            (tau_m, MSM_tau_p, MSM_flux, MSM_pcross, MSM_rate, MSM_MFPT,
+             REPPTIS_tau_pm, REPPTIS_flux, REPPTIS_Pcross, REPPTIS_rate, REPPTIS_MFPT) = \
+                calculate_block_values(path_ensembles, interfaces, args.block_size)
+
+            # Store values
+            tau_ms.append(tau_m)
+            MSM_tau_ps.append(MSM_tau_p)
+            MSM_fluxs.append(MSM_flux)
+            MSM_pcrosss.append(MSM_pcross)
+            MSM_rates.append(MSM_rate)
+            MSM_MFPTs.append(MSM_MFPT)
+            REPPTIS_tau_mps.append(REPPTIS_tau_pm)
+            REPPTIS_fluxs.append(REPPTIS_flux)
+            REPPTIS_Pcrosss.append(REPPTIS_Pcross)
+            REPPTIS_rates.append(REPPTIS_rate)
+            REPPTIS_MFPTs.append(REPPTIS_MFPT)
+
+            # Print block result
+            cyc_start = args.skip + nskip
+            cyc_end = cyc_start + args.block_size
+            log(
+                f"{block_num:>6} {cyc_start:>8} {cyc_end:>8} "
+                f"{tau_m:>12.2f} {MSM_tau_p:>12.2f} {REPPTIS_tau_pm:>12.2f} "
+                f"{MSM_flux:>12.4e} {REPPTIS_flux:>12.4e} "
+                f"{MSM_pcross:>12.4e} {REPPTIS_Pcross:>12.4e}"
+            )
+            block_num += 1
+
+        except Exception as e:
+            log(f"Error in block {block_num} (skip={nskip}): {e}")
+            continue
+
+    if block_num == 0:
+        log("Error: No blocks computed. Check block size and data length.")
+        sys.exit(1)
+
+    # Compute statistics
+    log("")
+    log("=" * 80)
+    log("ERROR ANALYSIS")
+    log("=" * 80)
+
+    properties = {
+        "tau_m (steps)": tau_ms,
+        "MSM_tau_p (steps)": MSM_tau_ps,
+        "REPPTIS_tau_p (steps)": REPPTIS_tau_mps,
+        "MSM_flux (1/ps)": MSM_fluxs,
+        "REPPTIS_flux (1/ps)": REPPTIS_fluxs,
+        "MSM_Pcross": MSM_pcrosss,
+        "REPPTIS_Pcross": REPPTIS_Pcrosss,
+        "MSM_rate (1/s)": MSM_rates,
+        "REPPTIS_rate (1/s)": REPPTIS_rates,
+        "MSM_MFPT (s)": MSM_MFPTs,
+        "REPPTIS_MFPT (s)": REPPTIS_MFPTs,
+    }
+
+    log(f"\n{'Property':<25} {'Mean':>15} {'Std Err':>15} {'Rel Err (%)':>12} {'N blocks':>10}")
+    log("-" * 80)
+
+    for name, arr in properties.items():
+        arr = np.asarray(arr)
+        if len(arr) == 0:
+            continue
+        mean_val = np.mean(arr)
+        std_err = np.sqrt(np.var(arr) / len(arr))
+        rel_err = 100 * std_err / abs(mean_val) if mean_val != 0 else float('nan')
+        log(f"{name:<25} {mean_val:>15.6e} {std_err:>15.6e} {rel_err:>12.1f} {len(arr):>10}")
+
+    log("")
+    log("=" * 80)
+
+    if args.output:
+        out.close()
+        print(f"Results written to {args.output}")
+
+
+if __name__ == "__main__":
+    main()
