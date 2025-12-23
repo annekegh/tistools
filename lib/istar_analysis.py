@@ -837,6 +837,7 @@ def compute_weight_matrices(pes, interfaces, n_int=None, tr=False, weights=None,
             elif i == len(interfaces)-1 and X[i][-1, -2] == 0:
                 X[i][-2, -1] *= 2
             X[i] = (X[i] + X[i].T) / 2.0   # Properly symmetrize the matrix
+        # this is not right
         if norm:
             X[i] /= np.sum(X[i]) if np.sum(X[i]) > 0 else np.zeros_like(X[i])
 
@@ -1471,8 +1472,8 @@ def display_data(pes, interfaces, n_int=None, weights=None, correct_ha=False):
         X_tr_norm[i] = np.zeros([len(interfaces), len(interfaces)])
         C[i] = np.zeros([len(interfaces), len(interfaces)])
         C_md[i] = np.zeros([len(interfaces), len(interfaces)])
-        X_val = compute_weight_matrix(pe, i, interfaces, tr=False, weights=weights, correct_ha=True)
-        X_val_tr = compute_weight_matrix(pe, i, interfaces, tr=True, weights=weights, correct_ha=True)
+        X_val = compute_weight_matrix(pe, i, interfaces, tr=False, weights=weights)
+        X_val_tr = compute_weight_matrix(pe, i, interfaces, tr=True, weights=weights)
 
         # 1. Displaying raw data, only unweighted X_ijk
         # 2. Displaying weighted data W_ijk
@@ -2039,23 +2040,15 @@ def ploc_memory(pathensembles, interfaces, trr=True, correct_ha=False):
 
         # APPTIS p_loc (without HA correction)
         if i < len(pathensembles)-1:
-            wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], len(interfaces), tr=trr, correct_ha=False, norm=True)
+            wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], len(interfaces), tr=trr, correct_ha=False, norm=False)
             pi, _ = get_transition_probs_weights(wi)
             Mi = construct_M_istar(pi, max(4, 2*len(interfaces[:i+2])), len(interfaces[:i+2]))
             z1, z2, y1, y2 = global_pcross_msm_star(Mi)
             plocs["apptis"].append(y1[0][0])
         
-        # APPTIS p_loc (without HA correction)
-        if i < len(pathensembles)-1:
-            wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], len(interfaces), tr=trr, correct_ha=True, norm=False)
-            pi, _ = get_transition_probs_weights(wi)
-            Mi = construct_M_istar(pi, max(4, 2*len(interfaces[:i+2])), len(interfaces[:i+2]))
-            z1, z2, y1, y2 = global_pcross_msm_star(Mi)
-            plocs["apptis_ha"].append(y1[0][0])
-
         # APPTIS p_loc (with HA correction)
         if i < len(pathensembles)-1:
-            wi_ha = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], len(interfaces), tr=trr, correct_ha=True, norm=True)
+            wi_ha = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], len(interfaces), tr=trr, correct_ha=True, norm=False)
             pi_ha, _ = get_transition_probs_weights(wi_ha)
             Mi_ha = construct_M_istar(pi_ha, max(4, 2*len(interfaces[:i+2])), len(interfaces[:i+2]))
             z1_ha, z2_ha, y1_ha, y2_ha = global_pcross_msm_star(Mi_ha)
