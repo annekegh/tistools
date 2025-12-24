@@ -17,6 +17,205 @@ ACCFLAGS, REJFLAGS = set_flags_ACC_REJ()
 #======================================
 # Mean first passage times
 #======================================
+def mfpt_to_absorbing_staple_balanced(M, tau1, taum, tau2, absor, kept, 
+                                       weights=None, doprint=False):
+    """
+    Compute MFPT using M-weighted and MC-weighted balanced boundary times.
+    
+    This version uses both the transition matrix M and MC weights to properly
+    average tau1 and tau2 for each transition, giving a physically accurate 
+    estimate without arbitrary averaging or remove_initial_m corrections.
+    
+    Parameters
+    ----------
+    M : np.ndarray
+        Transition matrix of shape (NS, NS).
+    tau1 : np.ndarray
+        tau1 matrix in interface space, shape (n_intf+1, n_intf).
+    taum : np.ndarray
+        taum matrix in interface space, shape (n_intf+1, n_intf).
+    tau2 : np.ndarray
+        tau2 matrix in interface space, shape (n_intf+1, n_intf).
+    absor : list
+        Indices of absorbing states.
+    kept : list
+        Indices of non-absorbing states.
+    weights : np.ndarray, optional
+        MC weights for each (start, end) pair, shape (n_intf+1, n_intf).
+        From collect_weights_staple(). If None, uses M as weights only.
+    doprint : bool
+        Print debug information.
+    
+    Returns
+    -------
+    g1, g2, h1, h2 : np.ndarray
+        MFPT results.
+    
+    Notes
+    -----
+    The path time for each transition is: taum + tau_boundary
+    where tau_boundary = weighted_average(tau1, tau2) for that specific transition.
+    
+    This approach:
+    - Avoids the arbitrary choice between tau1 and tau2
+    - Uses both measurements weighted by their sampling quality (MC weights)
+    - Weights by transition probabilities (M) to reflect actual dynamics
+    - No need for remove_initial_m correction
+    """
+    NS = len(M)
+    N = NS // 2
+    
+    if NS < 3:
+        raise ValueError(f"Transition matrix must have at least 3 states, got {NS}.")
+    
+    check_valid_indices(M, absor, kept)
+    
+    # Construct tau matrices in MSM space
+    tau_boundary = construct_tau_boundary_matrix_staple(tau1, tau2, M, N, weights)
+    taum_msm = construct_tau_matrix_staple(taum, N)
+    
+    # Total time per transition = taum + tau_boundary
+    tau_total = taum_msm + tau_boundary
+    
+    # Compute effective times weighted by transition probabilities
+    t1 = np.sum(M[np.ix_(absor, range(NS))] * tau_total[np.ix_(absor, range(NS))], axis=1).reshape(-1, 1)
+    tp = np.sum(M[np.ix_(kept, range(NS))] * tau_total[np.ix_(kept, range(NS))], axis=1).reshape(-1, 1)
+    
+    # Extract submatrices
+    Mp = np.take(np.take(M, kept, axis=0), kept, axis=1)
+    D = np.take(np.take(M, kept, axis=0), absor, axis=1)
+    E = np.take(np.take(M, absor, axis=0), kept, axis=1)
+    M11 = np.take(np.take(M, absor, axis=0), absor, axis=1)
+    
+    a = np.identity(len(Mp)) - Mp
+    
+    # Solve for G (unconditional MFPT)
+    g1 = np.zeros((len(absor), 1))
+    g2 = np.linalg.solve(a, np.dot(D, g1) + tp)
+    
+    # Compute H (conditional MFPT)
+    h1 = np.dot(M11, g1) + np.dot(E, g2) + t1
+    h2 = np.dot(D, g1) + np.dot(Mp, g2) + tp
+    
+    if doprint:
+        print("Using mfpt_to_absorbing_staple_balanced (M + MC weighted)")
+        print(f"tau_boundary sample values:")
+        for i in range(min(5, NS)):
+            for j in range(min(5, NS)):
+                if tau_boundary[i, j] > 0:
+                    print(f"  tau_boundary[{i},{j}] = {tau_boundary[i,j]:.4f}")
+        print(f"h1: {h1.T}")
+        print(f"h2: {h2.T}")
+    
+    return g1, g2, h1, h2
+
+
+def mfpt_to_first_last_staple_balanced(M, tau1, taum, tau2, weights=None, doprint=False):
+    """
+    Compute MFPT to reach state 0 or state -1 using balanced boundary times.
+    
+    This version averages tau1 and tau2 per transition using both M and MC weights
+    for a balanced estimate, avoiding the need to choose between them or apply 
+    remove_initial_m corrections.
+    
+    Parameters
+    ----------
+    M : np.ndarray
+        Transition matrix of shape (NS, NS).
+    tau1 : np.ndarray
+        tau1 matrix in interface space, shape (n_intf+1, n_intf).
+    taum : np.ndarray
+        taum matrix in interface space, shape (n_intf+1, n_intf).
+    tau2 : np.ndarray
+        tau2 matrix in interface space, shape (n_intf+1, n_intf).
+    weights : np.ndarray, optional
+        MC weights for each (start, end) pair, shape (n_intf+1, n_intf).
+        From collect_weights_staple(). If None, uses M as weights only.
+    doprint : bool
+        Print debug information.
+    
+    Returns
+    -------
+    g1, g2, h1, h2 : np.ndarray
+        MFPT results. h1[0] is MFPT from [0+] to A or B.
+    
+    See Also
+    --------
+    mfpt_to_first_last_staple : Original version using tau2 only.
+    collect_weights_staple : Function to collect MC weights from path ensembles.
+    """
+    NS = len(M)
+    if NS < 3:
+        raise ValueError(f"Transition matrix must have at least 3 states, got {NS}.")
+    
+    absor = np.array([0, NS - 1])
+    kept = np.array([i for i in range(NS) if i not in absor])
+    
+    return mfpt_to_absorbing_staple_balanced(
+        M, tau1, taum, tau2, absor, kept,
+        weights=weights, doprint=doprint
+    )
+
+
+def mfpt_istar_balanced(M, tau_interface, pathensembles, interfaces, doprint=False):
+    """
+    Compute MFPT for iSTAR model using balanced boundary times with MC weights.
+    
+    This is a convenience function that:
+    1. Collects MC weights from path ensembles
+    2. Uses balanced averaging of tau1 and tau2 per transition
+    3. Weights by both M (transition probabilities) and MC weights
+    
+    Parameters
+    ----------
+    M : np.ndarray
+        Transition matrix of shape (2N, 2N) from construct_M_istar.
+    tau_interface : dict
+        Dictionary with keys 'tau1', 'tau2', and either 'taum' or 'tau'.
+        Each contains an (N+1, N) matrix of path lengths indexed by (start+1, end).
+        If 'taum' is not present, it will be computed as tau - tau1 - tau2.
+    pathensembles : list of :py:class:`.PathEnsemble`
+        List of path ensemble objects (for MC weights).
+    interfaces : list of float
+        Interface values sorted in ascending order.
+    doprint : bool, optional
+        If True, print intermediate results. Default is False.
+    
+    Returns
+    -------
+    g1, g2, h1, h2 : np.ndarray
+        MFPT results. h1[0] is the key result: MFPT from state A.
+    
+    Example
+    -------
+    >>> # Compute tau matrices from path ensembles
+    >>> tau_data = set_taus_staple(pathensembles, interfaces)
+    >>> # Build MSM transition matrix
+    >>> M = construct_M_istar(P, 2*N, N)
+    >>> # Compute MFPT with balanced boundary times
+    >>> g1, g2, h1, h2 = mfpt_istar_balanced(M, tau_data, pathensembles, interfaces)
+    >>> print(f"MFPT from A: {h1[0]}")
+    """
+    # Collect MC weights
+    weights = collect_weights_staple(pathensembles, interfaces)
+    
+    # Extract tau components
+    tau1 = tau_interface['tau1']
+    tau2 = tau_interface['tau2']
+    
+    # Get taum - either provided directly or compute from tau - tau1 - tau2
+    if 'taum' in tau_interface:
+        taum = tau_interface['taum']
+    elif 'tau' in tau_interface:
+        # Compute from provided values to ensure consistency
+        taum = tau_interface['tau'] - tau1 - tau2
+    else:
+        raise ValueError("tau_interface must contain either 'taum' or 'tau'")
+    
+    return mfpt_to_first_last_staple_balanced(
+        M, tau1, taum, tau2, weights=weights, doprint=doprint
+    )
+
 
 def mfpt_to_absorbing_staple(M, tau1, taum, tau2, absor, kept, doprint=False, remove_initial_m=True):
     """
@@ -325,36 +524,37 @@ def construct_tau_matrix_staple(tau_interface, N):
     
     for s_from in range(NS):
         for s_to in range(NS):
-            # Determine the interface indices for source and target states
-            if s_from == 0:
-                intf_from = -1
-            elif 2 <= s_from < N+1:
-                # Left turn states (0 to N-1) - turn happened at interface s_from
-                intf_from = s_from - 2
-            elif s_from == NS-1:
-                intf_from = -2
-            elif s_from >= N+1:
-                # Right turn states (N to 2N-1) - turn happened at interface (s_from - N)
-                intf_from = s_from - N
-            else:
+            if (s_from == 0 and s_to == 1) or (abs(s_to - s_from) < N-2 and (s_from > 2 or s_to > 2)):
                 continue
-            
-            if s_to == 1:
-                intf_to = 0
-            elif s_to == NS-1:
-                intf_to = -1
-            elif s_to < N+1:
-                # Target is a left turn state - next turn at interface s_to
-                intf_to = s_to - 2
-            elif s_to >= N+1:
-                # Target is a right turn state - next turn at interface (s_to - N)
-                intf_to = s_to - N
             else:
-                continue
-            
-            # Get the tau value for this interface pair
-            if 0 <= intf_from < N and 0 <= intf_to < N:
-                tau_msm[s_from, s_to] = tau_interface[intf_from, intf_to]
+                # Determine the interface indices for source and target states
+                if s_from == 0:
+                    intf_from = -1
+                elif 2 <= s_from < N+1:
+                    # Left turn states (0 to N-1) - turn happened at interface s_from
+                    intf_from = s_from - 2
+                elif s_from == NS-1:
+                    intf_from = -2
+                elif s_from >= N+1:
+                    # Right turn states (N to 2N-1) - turn happened at interface (s_from - N)
+                    intf_from = s_from - N
+                else:
+                    continue
+                
+                if s_to == 1:
+                    intf_to = 0
+                elif s_to == NS-1:
+                    intf_to = -1
+                elif 2 < s_to < N+1:
+                    # Target is a left turn state - next turn at interface s_to
+                    intf_to = s_to - 2
+                elif s_to >= N+1:
+                    # Target is a right turn state - next turn at interface (s_to - N)
+                    intf_to = s_to - N
+                else:
+                    continue
+                
+                tau_msm[s_from, s_to] = tau_interface[intf_from+1, intf_to]
     
     return tau_msm
 
@@ -407,38 +607,62 @@ def construct_tau_vector_staple(N, NS, tau_matrix):
         Number of states in the MSM (should be 2*N).
     tau_matrix : np.ndarray
         Matrix of path lengths for (start, end) interface pairs.
-        Shape should be (N, N) where tau_matrix[i,j] is the path length
-        for transitions from interface i to interface j.
+        Shape should be (N+1, N) where tau_matrix[start+1, end] is the path length
+        for transitions from interface start to interface end (start ranges from -1 to N-1).
 
     Returns
     -------
     np.ndarray
-        If as_matrix=False: 1D array of shape (NS,) with average tau per state.
-        If as_matrix=True: 2D array of shape (NS, NS) with tau per transition.
+        1D array of shape (NS,) with average tau per MSM state.
 
     Raises
     ------
     ValueError
         If the dimensions don't match expected values.
+    
+    Notes
+    -----
+    The MSM state mapping follows construct_M_istar convention:
+    - State 0: [0-] (special state, maps to start=-1)
+    - States 1 to N: left turn states at interfaces 0 to N-1
+    - States N+1 to 2N-1: right turn states at interfaces 1 to N-1
+    - State 2N-1: [B] (reached state B, maps to interface N-1)
     """
     if N < 3:
         raise ValueError("N must be at least 3.")
     if NS != 2 * N:
         raise ValueError(f"NS must be 2 * N = {2 * N}.")
-    if tau_matrix.shape != (N, N):
-        raise ValueError(f"Input tau_matrix must have shape ({N}, {N}), got {tau_matrix.shape}.")
+    if tau_matrix.shape != (N+1, N):
+        raise ValueError(f"Input tau_matrix must have shape ({N+1}, {N}), got {tau_matrix.shape}.")
     
     # Return (NS,) vector with average tau per starting state
-    # Average over destination states weighted by uniform distribution
-    # (actual weighting should use transition probabilities)
+    # Average over destination states (actual weighting should use transition probabilities)
     tau = np.zeros(NS)
+    
     for s in range(NS):
-        if s < N:
-            intf = s  # Left turn at interface s
+        # Map MSM state to interface index, matching construct_tau_matrix_staple logic
+        if s == 0:
+            intf_from = -1  # [0-] state
+        elif 2 <= s < N + 1:
+            intf_from = s - 2  # Left turn states
+        elif s == NS - 1:
+            intf_from = -2  # [B] state - no valid tau
+        elif s >= N + 1:
+            intf_from = s - N  # Right turn states
         else:
-            intf = s - N  # Right turn at interface (s - N)
-        # Average over all possible destination interfaces
-        tau[s] = np.nanmean(tau_matrix[intf, :])
+            intf_from = -2  # Invalid
+        
+        if intf_from >= -1:
+            # Average over all possible destination interfaces
+            if intf_from < N+1:
+                row = tau_matrix[intf_from + 1, intf_from + 1:]
+            else:
+                row = tau_matrix[intf_from + 1, :intf_from + 1]
+            valid = row[row > 0]
+            tau[s] = np.mean(valid) if len(valid) > 0 else 0.0
+        else:
+            tau[s] = 0.0
+    
     return tau
 
 def set_tau_first_hit_interface_distrib(pe, interfaces, do_last=True):
@@ -484,7 +708,7 @@ def set_tau_first_hit_interface_distrib(pe, interfaces, do_last=True):
             )
         start_indices.append(start)
         end_indices.append(end)
-        pe.tau1.append(get_tau1_path(pe.orders[i], start, end, interfaces))
+        pe.tau1.append(get_tau1_staple(pe.orders[i], start, end, interfaces))
     
     pe.tau1 = np.array(pe.tau1)
     start_indices = np.array(start_indices)
@@ -511,7 +735,7 @@ def set_tau_first_hit_interface_distrib(pe, interfaces, do_last=True):
             pe.tau2.append(0)
             continue
         start, end = start_indices[i], end_indices[i]
-        pe.tau2.append(get_tau2_path(pe.orders[i], start, end, interfaces))
+        pe.tau2.append(get_tau2_staple(pe.orders[i], start, end, interfaces))
     pe.tau2 = np.array(pe.tau2)
 
     # Get the average tau2 for each (start, end) pair
@@ -522,7 +746,7 @@ def set_tau_first_hit_interface_distrib(pe, interfaces, do_last=True):
             if totweight > 0:
                 pe.tau2avg[start+1, end] = np.average(pe.tau2[mask], weights=pe.weights[mask])
 
-def get_tau1_path(orders, start, end, intfs):
+def get_tau1_staple(orders, start, end, intfs):
     """
     Return the number of steps it took for this path to cross to the next interface.
 
@@ -566,7 +790,7 @@ def get_tau1_path(orders, start, end, intfs):
     return b - a
 
 
-def get_tau2_path(orders, start, end, intfs):
+def get_tau2_staple(orders, start, end, intfs):
     """
     Return the number of steps in the path after the last crossing of the final interface.
 
@@ -609,7 +833,7 @@ def get_tau2_path(orders, start, end, intfs):
         raise ValueError(f"Unknown start/end combination: {start}, {end}")
     return b - a
 
-def get_tau_path(orders, start, end, intfs):
+def get_tau_staple(orders, start, end, intfs):
     """
     Return the total number of steps in the path, excluding the start and end points.
 
@@ -707,7 +931,7 @@ def set_tau_distrib(pe, interfaces):
             pe.tau.append(0)
             continue
         start, end = start_indices[i], end_indices[i]
-        pe.tau.append(get_tau_path(pe.orders[i], start, end, interfaces))
+        pe.tau.append(get_tau_staple(pe.orders[i], start, end, interfaces))
     pe.tau = np.array(pe.tau)
 
     # Get the average tau for each (start, end) pair
@@ -903,6 +1127,331 @@ def collect_taum_staple(pathensembles, interfaces):
     
     return taum_combined
 
+
+def average_tau2_with_tau1(tau1_matrix, tau2_matrix, weights_tau1=None, weights_tau2=None):
+    """
+    Average tau2 values with corresponding tau1 values from complementary paths.
+    
+    In iSTAR, tau2[start_A, end_A] measures the time after the last crossing of 
+    interface (end_A - 1) for paths going from start_A to end_A. Meanwhile, 
+    tau1[start_B, end_B] measures the time to cross interface (start_B + 1) for 
+    paths going from start_B to end_B.
+    
+    When end_A == start_B (and the directions are opposite), these two measurements
+    describe the same physical region around an interface, just measured from 
+    different path directions. Averaging them can provide a better estimate.
+    
+    The matching is:
+    - tau2[start_A, end_A] with tau1[end_A, end_B] (where start_A < end_A and end_A > end_B)
+    - tau2[start_A, end_A] with tau1[end_A, end_B] (where start_A > end_A and end_A < end_B)
+    
+    Parameters
+    ----------
+    tau1_matrix : np.ndarray
+        Matrix of tau1 values, shape (n_intf+1, n_intf).
+        tau1_matrix[start+1, end] is tau1 for paths from interface start to end.
+    tau2_matrix : np.ndarray
+        Matrix of tau2 values, shape (n_intf+1, n_intf).
+        tau2_matrix[start+1, end] is tau2 for paths from interface start to end.
+    weights_tau1 : np.ndarray, optional
+        Weight matrix for tau1 values, same shape as tau1_matrix.
+        If None, equal weights are assumed.
+    weights_tau2 : np.ndarray, optional
+        Weight matrix for tau2 values, same shape as tau2_matrix.
+        If None, equal weights are assumed.
+    
+    Returns
+    -------
+    np.ndarray
+        Averaged tau2 matrix of shape (n_intf+1, n_intf), where each tau2 value
+        is averaged with its corresponding tau1 value (if available).
+    
+    Notes
+    -----
+    The physical interpretation:
+    - For a path A going right (start < end), tau2_A is the time spent near 
+      interface (end - 1) after the last crossing.
+    - For a path B going left starting at that same interface (start_B = end_A), 
+      tau1_B is the time to cross interface (start_B - 1) = (end_A - 1).
+    - Both measure time near the same interface, so averaging can reduce noise.
+    
+    When tau1 and tau2 regions overlap (negative taum), this averaging helps
+    provide a consistent estimate of the boundary region time.
+    
+    Example
+    -------
+    >>> # tau2 for path (2 -> 4) measures time near interface 3 after last crossing
+    >>> # tau1 for path (4 -> 2) measures time to cross interface 3
+    >>> # These describe the same region, so we average them
+    >>> tau2_avg = average_tau2_with_tau1(tau1_matrix, tau2_matrix)
+    """
+    n_intf_plus1, n_intf = tau2_matrix.shape
+    
+    if weights_tau1 is None:
+        weights_tau1 = np.ones_like(tau1_matrix)
+    if weights_tau2 is None:
+        weights_tau2 = np.ones_like(tau2_matrix)
+    
+    # Set zero weights where values are zero
+    weights_tau1 = weights_tau1 * (tau1_matrix > 0)
+    weights_tau2 = weights_tau2 * (tau2_matrix > 0)
+    
+    tau2_averaged = np.zeros_like(tau2_matrix)
+    
+    for start_A in range(-1, n_intf):
+        for end_A in range(n_intf):
+            tau2_val = tau2_matrix[start_A + 1, end_A]
+            w2 = weights_tau2[start_A + 1, end_A]
+            
+            if tau2_val == 0:
+                # No tau2 for this (start, end) pair
+                continue
+            
+            # Find the matching tau1: paths that start at end_A and go in opposite direction
+            # For paths going right (start_A < end_A), match with paths going left from end_A
+            # For paths going left (start_A > end_A), match with paths going right from end_A
+            
+            start_B = end_A  # The matching path starts where path A ends
+            
+            # Find all tau1 values from paths starting at start_B going in opposite direction
+            matching_tau1 = []
+            matching_weights = []
+            
+            if start_A < end_A:
+                # Path A goes right, so path B should go left (end_B < start_B)
+                for end_B in range(start_B):
+                    if tau1_matrix[start_B + 1, end_B] > 0:
+                        matching_tau1.append(tau1_matrix[start_B + 1, end_B])
+                        matching_weights.append(weights_tau1[start_B + 1, end_B])
+            elif start_A > end_A:
+                # Path A goes left, so path B should go right (end_B > start_B)
+                for end_B in range(start_B + 1, n_intf):
+                    if tau1_matrix[start_B + 1, end_B] > 0:
+                        matching_tau1.append(tau1_matrix[start_B + 1, end_B])
+                        matching_weights.append(weights_tau1[start_B + 1, end_B])
+            
+            if len(matching_tau1) > 0:
+                # Compute weighted average of matching tau1 values
+                matching_tau1 = np.array(matching_tau1)
+                matching_weights = np.array(matching_weights)
+                avg_tau1 = np.average(matching_tau1, weights=matching_weights)
+                w1 = np.sum(matching_weights)
+                
+                # Average tau2 with the averaged tau1
+                total_weight = w1 + w2
+                if total_weight > 0:
+                    tau2_averaged[start_A + 1, end_A] = (avg_tau1 * w1 + tau2_val * w2) / total_weight
+                else:
+                    tau2_averaged[start_A + 1, end_A] = tau2_val
+            else:
+                # No matching tau1 found, keep original tau2
+                tau2_averaged[start_A + 1, end_A] = tau2_val
+    
+    return tau2_averaged
+
+
+def collect_tau2_averaged_staple(pathensembles, interfaces):
+    """
+    Collect tau2 values averaged with corresponding tau1 values from complementary paths.
+    
+    This function first collects tau1, tau2, and their weights from all path ensembles,
+    then calls average_tau2_with_tau1 to compute the averaged tau2 matrix.
+    
+    Parameters
+    ----------
+    pathensembles : list of :py:class:`.PathEnsemble`
+        List of path ensemble objects.
+    interfaces : list of float
+        Interface values sorted in ascending order.
+    
+    Returns
+    -------
+    np.ndarray
+        Averaged tau2 matrix of shape (n_intf+1, n_intf).
+    
+    See Also
+    --------
+    average_tau2_with_tau1 : The underlying averaging function.
+    collect_tau2_staple : Collect tau2 without averaging.
+    """
+    print("Collect tau2 (averaged with tau1)")
+    n_intf = len(interfaces)
+    n_ens = len(pathensembles)
+    
+    # Collect tau1 and tau2 matrices and weights from all ensembles
+    tau1_matrices = np.zeros((n_ens, n_intf+1, n_intf))
+    tau2_matrices = np.zeros((n_ens, n_intf+1, n_intf))
+    weights = np.zeros((n_ens, n_intf+1, n_intf))
+    
+    for i, pe in enumerate(pathensembles):
+        accmask = (pe.flags == "ACC") & (pe.generation != "ld")
+        start_indices, end_indices = _compute_start_end_indices(pe, interfaces)
+        
+        if hasattr(pe, 'tau1avg') and isinstance(pe.tau1avg, np.ndarray):
+            tau1_matrices[i] = np.nan_to_num(pe.tau1avg, nan=0.0)
+        if hasattr(pe, 'tau2avg') and isinstance(pe.tau2avg, np.ndarray):
+            tau2_matrices[i] = np.nan_to_num(pe.tau2avg, nan=0.0)
+        
+        for start in range(-1, n_intf):
+            for end in range(n_intf):
+                mask = accmask & (start_indices == start) & (end_indices == end)
+                weights[i, start+1, end] = np.sum(pe.weights[mask])
+    
+    # First compute the combined tau1 and tau2 matrices (weighted across ensembles)
+    tau1_combined = np.zeros((n_intf+1, n_intf))
+    tau2_combined = np.zeros((n_intf+1, n_intf))
+    weights_combined = np.zeros((n_intf+1, n_intf))
+    
+    for start in range(-1, n_intf):
+        for end in range(n_intf):
+            total_weight = np.sum(weights[:, start+1, end])
+            weights_combined[start+1, end] = total_weight
+            if total_weight > 0:
+                tau1_combined[start+1, end] = np.sum(
+                    tau1_matrices[:, start+1, end] * weights[:, start+1, end]
+                ) / total_weight
+                tau2_combined[start+1, end] = np.sum(
+                    tau2_matrices[:, start+1, end] * weights[:, start+1, end]
+                ) / total_weight
+    
+    # Now average tau2 with tau1
+    tau2_averaged = average_tau2_with_tau1(
+        tau1_combined, tau2_combined, 
+        weights_tau1=weights_combined, weights_tau2=weights_combined
+    )
+    
+    return tau2_averaged
+
+
+def collect_weights_staple(pathensembles, interfaces):
+    """
+    Collect total MC weights for each (start, end) interface pair across all ensembles.
+    
+    Parameters
+    ----------
+    pathensembles : list of :py:class:`.PathEnsemble`
+        List of path ensemble objects.
+    interfaces : list of float
+        Interface values sorted in ascending order.
+    
+    Returns
+    -------
+    np.ndarray
+        Weight matrix of shape (n_intf+1, n_intf) where weights[start+1, end]
+        is the total weight for paths from interface start to end.
+    """
+    n_intf = len(interfaces)
+    weights_combined = np.zeros((n_intf + 1, n_intf))
+    
+    for pe in pathensembles:
+        accmask = (pe.flags == "ACC") & (pe.generation != "ld")
+        start_indices, end_indices = _compute_start_end_indices(pe, interfaces)
+        
+        for start in range(-1, n_intf):
+            for end in range(n_intf):
+                mask = accmask & (start_indices == start) & (end_indices == end)
+                weights_combined[start + 1, end] += np.sum(pe.weights[mask])
+    
+    return weights_combined
+
+
+def construct_tau_boundary_matrix_staple(tau1_matrix, tau2_matrix, M, N, weights=None):
+    """
+    Construct boundary time matrix using M-weighted averaging of tau1 and tau2.
+    
+    For each MSM state s_from, the boundary time is computed by:
+    1. tau2 from paths that ARRIVED at s_from (weighted by incoming transition probabilities)
+    2. tau1 from paths that DEPART from s_from (weighted by outgoing transition probabilities)
+    
+    These are averaged using M and optionally MC weights, giving a physically accurate estimate.
+    
+    Parameters
+    ----------
+    tau1_matrix : np.ndarray
+        tau1 values in interface space, shape (n_intf+1, n_intf).
+    tau2_matrix : np.ndarray
+        tau2 values in interface space, shape (n_intf+1, n_intf).
+    M : np.ndarray
+        Transition matrix of shape (2N, 2N).
+    N : int
+        Number of interfaces.
+    weights : np.ndarray, optional
+        MC weights for each (start, end) pair, shape (n_intf+1, n_intf).
+        If None, uses transition matrix M as weights only.
+    
+    Returns
+    -------
+    np.ndarray
+        Boundary time matrix of shape (2N, 2N) in MSM state space.
+    
+    Notes
+    -----
+    The key insight is that tau2 from an arriving path and tau1 from a departing
+    path both measure time spent near the same interface (the turn point).
+    By averaging them weighted by transition probabilities and MC weights,
+    we get a more accurate and balanced estimate of the boundary region time.
+    """
+    NS = 2 * N
+    
+    # Convert tau1 and tau2 to MSM space
+    tau1_msm = construct_tau_matrix_staple(tau1_matrix, N)
+    tau2_msm = construct_tau_matrix_staple(tau2_matrix, N)
+    
+    # Convert weights to MSM space if provided
+    if weights is not None:
+        weights_msm = construct_tau_matrix_staple(weights, N)
+    else:
+        weights_msm = None
+    
+    tau_boundary = np.zeros((NS, NS))
+    
+    for s_from in range(NS):
+        # Compute weighted average of tau2 for paths arriving at s_from
+        # Weight by: M[s_prev, s_from] * weights_msm[s_prev, s_from]
+        incoming_M = M[:, s_from]
+        tau2_arriving = tau2_msm[:, s_from]
+        
+        if weights_msm is not None:
+            incoming_weights = incoming_M * weights_msm[:, s_from]
+        else:
+            incoming_weights = incoming_M.copy()
+        
+        # Mask for valid tau2 values
+        valid_tau2 = tau2_arriving > 0
+        total_incoming = np.sum(incoming_weights[valid_tau2])
+        
+        if total_incoming > 0:
+            tau2_avg = np.sum(incoming_weights[valid_tau2] * tau2_arriving[valid_tau2]) / total_incoming
+            w2_total = total_incoming
+        else:
+            tau2_avg = 0.0
+            w2_total = 0.0
+        
+        # For each outgoing transition, average tau2_avg with tau1
+        for s_to in range(NS):
+            tau1_val = tau1_msm[s_from, s_to]
+            
+            # Weight for tau1: M[s_from, s_to] * weights_msm[s_from, s_to]
+            if weights_msm is not None:
+                w1 = M[s_from, s_to] * weights_msm[s_from, s_to]
+            else:
+                w1 = M[s_from, s_to]
+            
+            # Only count if tau1 is valid
+            if tau1_val <= 0:
+                w1 = 0.0
+            
+            total_weight = w1 + w2_total
+            if total_weight > 0:
+                tau_boundary[s_from, s_to] = (tau1_val * w1 + tau2_avg * w2_total) / total_weight
+            elif tau1_val > 0:
+                tau_boundary[s_from, s_to] = tau1_val
+            elif tau2_avg > 0:
+                tau_boundary[s_from, s_to] = tau2_avg
+    
+    return tau_boundary
+
+
 def get_start_end_interfaces(lambmin, lambmax, direction, interfaces):
         """
         Extract the start and end interface indices for a path based on lambda bounds and direction.
@@ -1006,9 +1555,9 @@ def set_taus_staple(pathensembles, interfaces):
             end_indices.append(end)
             
             # Compute tau1, tau2, and total tau
-            tau1_value = get_tau1_path(pe.orders[i], start, end, interfaces)
-            tau2_value = get_tau2_path(pe.orders[i], start, end, interfaces)
-            tau_value = get_tau_path(pe.orders[i], start, end, interfaces)
+            tau1_value = get_tau1_staple(pe.orders[i], start, end, interfaces)
+            tau2_value = get_tau2_staple(pe.orders[i], start, end, interfaces)
+            tau_value = get_tau_staple(pe.orders[i], start, end, interfaces)
 
             # Append results
             pe.tau1.append(tau1_value)

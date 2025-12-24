@@ -187,7 +187,7 @@ def construct_M_istar(P, NS, N):
     
     # States [0-] and [0*+-]
     M[0, 2] = 1            # Transition from state 0 to state 2
-    M[2, 0] = P[0, 0]      # Transition from state 2 to state 0
+    M[2, 1] = P[0, 0]      # Transition from state 2 to state 0
     M[2, N+1:] = P[0, 1:]  # Transitions from state 2 to states N+1 and beyond
     M[1, 0] = 1            # Transition from state 1 to state 0
     M[-1, 0] = 1           # Transition from last state to state 0
