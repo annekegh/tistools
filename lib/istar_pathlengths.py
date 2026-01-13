@@ -75,7 +75,7 @@ def mfpt_to_absorbing_staple_balanced(M, tau1, taum, tau2, absor, kept, use_tau1
     check_valid_indices(M, absor, kept)
     
     # Construct tau matrices in MSM space
-    if use_tau1:
+    if not use_tau1:
         tau_boundary = construct_tau_boundary_matrix_staple(tau1, tau2, M, N)
     else:
         tau_boundary = construct_tau_boundary_matrix_staple_fw(tau1, tau2, M, N)
@@ -158,7 +158,7 @@ def mfpt_to_first_last_staple_balanced(M, tau1, taum, tau2, doprint=False):
     if NS < 3:
         raise ValueError(f"Transition matrix must have at least 3 states, got {NS}.")
     
-    absor = np.array([0, NS - 1])
+    absor = np.array([0, 1, NS - 1])
     kept = np.array([i for i in range(NS) if i not in absor])
     
     return mfpt_to_absorbing_staple_balanced(
@@ -423,7 +423,7 @@ def mfpt_to_first_last_staple(M, tau1, taum, tau2, doprint=False):
     if NS < 3:
         raise ValueError(f"Transition matrix must have at least 3 states, but got {NS}.")
 
-    absor = np.array([0, NS - 1])
+    absor = np.array([0, 1, NS - 1])
     kept = np.array([i for i in range(NS) if i not in absor])
 
     return mfpt_to_absorbing_staple(M, tau1, taum, tau2, absor, kept, doprint=doprint, remove_initial_m="m")
@@ -490,17 +490,22 @@ def construct_tau_matrix_staple(tau_interface, N):
     Construct a tau matrix indexed by MSM states from interface-pair tau values.
     
     The iSTAR MSM has 2N states representing turns at N interfaces:
-    - States 0 to N-1: "left turns" (arriving from the left) at interfaces 0 to N-1
-    - States N to 2N-1: "right turns" (arriving from the right) at interfaces 0 to N-1
+    - State 0: [0-] absorbing state (returned to A)
+    - State 1: [0*+-] transition state back to A
+    - States 2 to N: left turn states at interfaces 0 to N-2 (paths going right)
+    - States N+1 to 2N-2: right turn states at interfaces 1 to N-2 (paths going left)
+    - State 2N-1: [B] absorbing state (reached B)
     
-    The input tau_interface[i,j] contains path lengths for transitions between 
-    interface i and interface j. This function maps these to the MSM state space.
+    The input tau_interface[start+1, end] contains path lengths for transitions 
+    from interface start to interface end. This function maps these to the MSM state space.
     
     Parameters
     ----------
     tau_interface : np.ndarray
-        Matrix of shape (N, N) where tau_interface[i,j] is the path length for 
-        transitions from interface i to interface j.
+        Matrix of shape (N+1, N) where tau_interface[start+1, end] is the path length
+        for transitions from interface start to interface end.
+        start ranges from -1 to N-1 (row index = start + 1).
+        end ranges from 0 to N-1.
     N : int
         Number of interfaces.
     
@@ -532,13 +537,28 @@ def construct_tau_matrix_staple(tau_interface, N):
     
     for s_from in range(NS):
         for s_to in range(NS):
-            if (s_from == 0 and s_to == 1) or (abs(s_to - s_from) < N-2 and (s_from > 2 or s_to > 2)):
-                continue
+            if s_to == 1:
+                if s_from == 2:
+                    intf_from = 0
+                    intf_to = 0
+                elif s_from > N:
+                    intf_from = s_from - N
+                    intf_to = 0
+                else: continue
+            elif (abs(s_to - s_from) < N-1 and (s_from > 1 or s_to > 1)):
+                if s_to == 1 and s_from == 2:
+                    intf_from = 0
+                    intf_to = 0
+                else: continue
+            elif (s_from < 2 and s_to < 2):
+                if (s_from == 1 and s_to == 0):
+                    tau_msm[s_from, s_to] = tau_interface[0, 0]
+                    continue
+                else:
+                    continue
             else:
                 # Determine the interface indices for source and target states
-                if s_from == 0:
-                    intf_from = -1
-                elif 2 <= s_from < N+1:
+                if 2 <= s_from < N+1:
                     # Left turn states (0 to N-1) - turn happened at interface s_from
                     intf_from = s_from - 2
                 elif s_from == NS-1:
@@ -549,10 +569,10 @@ def construct_tau_matrix_staple(tau_interface, N):
                 else:
                     continue
                 
-                if s_to == 1:
-                    intf_to = 0
-                elif s_to == NS-1:
+                if s_to == NS-1:
                     intf_to = -1
+                elif s_to == 1:
+                    intf_to = 0
                 elif 2 < s_to < N+1:
                     # Target is a left turn state - next turn at interface s_to
                     intf_to = s_to - 2
@@ -562,7 +582,7 @@ def construct_tau_matrix_staple(tau_interface, N):
                 else:
                     continue
                 
-                tau_msm[s_from, s_to] = tau_interface[intf_from+1, intf_to]
+            tau_msm[s_from, s_to] = tau_interface[intf_from+1, intf_to]
     
     return tau_msm
 
@@ -648,28 +668,31 @@ def construct_tau_vector_staple(N, NS, tau_matrix):
     tau = np.zeros(NS)
     
     for s in range(NS):
-        # Map MSM state to interface index, matching construct_tau_matrix_staple logic
+        # Map MSM state to interface index and direction
+        # matching construct_tau_matrix_staple logic
         if s == 0:
-            intf_from = -1  # [0-] state
+            # [0-] state: start=-1, only destination is interface 0
+            tau[s] = tau_matrix[0, 0]
+        elif s == 1:
+            # [0*+-] state: transition back to A, no tau
+            tau[s] = 0.0
         elif 2 <= s < N + 1:
-            intf_from = s - 2  # Left turn states
-        elif s == NS - 1:
-            intf_from = -2  # [B] state - no valid tau
-        elif s >= N + 1:
-            intf_from = s - N  # Right turn states
-        else:
-            intf_from = -2  # Invalid
-        
-        if intf_from > -1:
-            # Average over all possible destination interfaces
-            if intf_from < N+1:
-                row = tau_matrix[intf_from + 1, intf_from:]
-            else:
-                row = tau_matrix[intf_from + 1, :intf_from]
+            # Left turn states at interfaces 0 to N-2 (paths going RIGHT)
+            # Valid destinations: interfaces intf_from to N-1
+            intf_from = s - 2
+            row = tau_matrix[intf_from + 1, intf_from:]
             valid = row[row > 0]
             tau[s] = np.mean(valid) if len(valid) > 0 else 0.0
-        elif intf_from == -1:
-            tau[s] = tau_matrix[0, 0]
+        elif s == NS - 1:
+            # [B] absorbing state: no outgoing transitions
+            tau[s] = 0.0
+        elif s >= N + 1:
+            # Right turn states at interfaces 1 to N-2 (paths going LEFT)
+            # Valid destinations: interfaces 0 to intf_from
+            intf_from = s - N
+            row = tau_matrix[intf_from + 1, :intf_from + 1]
+            valid = row[row > 0]
+            tau[s] = np.mean(valid) if len(valid) > 0 else 0.0
         else:
             tau[s] = 0.0
     

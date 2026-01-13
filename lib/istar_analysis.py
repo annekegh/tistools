@@ -1447,7 +1447,8 @@ def display_data(pes, interfaces, n_int=None, weights=None, correct_ha=False):
         n_int = len(pes)
     for i, pe in enumerate(pes):
         print(10*'-')
-        print(f"ENSEMBLE [{i-1 if i>0 else 0}{"*" if i>0 else "-"}] | ID {i}")
+        star_or_minus = "*" if i > 0 else "-"
+        print(f"ENSEMBLE [{i-1 if i>0 else 0}{star_or_minus}] | ID {i}")
         print(10*'-')
         # Get the lmr masks, weights, ACCmask, and loadmask of the paths
         masks[i] = get_lmr_masks(pe)
