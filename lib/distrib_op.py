@@ -194,6 +194,14 @@ def create_distrib(folders, interfaces_input, outputfile, do_pdf, dt, dlambda, d
                     plt.tight_layout()
                     for ext in extensions:
                         plt.savefig(f"{outputfile}.time.01.{ext}" if do_time else f"{outputfile}.dens.01.{ext}", transparent=(ext == "pdf"))
+                # save a txt file
+                a = np.array([centers,hist]).T
+                label = "01"
+                if do_time: label = "time.01"
+                elif do_density: label = "dens.01"
+                else: label = "01"
+                np.savetxt(outputfile+"."+label+".csv", a, delimiter=" ", 
+                    header="lambda "+label)
 
         plt.figure(1)
         plt.legend()

@@ -158,7 +158,7 @@ def mfpt_to_first_last_staple_balanced(M, tau1, taum, tau2, doprint=False):
     if NS < 3:
         raise ValueError(f"Transition matrix must have at least 3 states, got {NS}.")
     
-    absor = np.array([0, 1, NS - 1])
+    absor = np.array([0, NS - 1])
     kept = np.array([i for i in range(NS) if i not in absor])
     
     return mfpt_to_absorbing_staple_balanced(
@@ -602,6 +602,12 @@ def _compute_start_end_indices(pe, interfaces):
     -------
     tuple of np.ndarray
         (start_indices, end_indices) arrays for all paths.
+
+    Notes
+    -----
+    Zero-minus trajectories are assigned ``start==-1`` and ``end==0``.
+    Additional ``lm1`` information is **not** required here; it is only
+    used later when computing tau values.
     """
     start_indices = []
     end_indices = []
@@ -698,7 +704,7 @@ def construct_tau_vector_staple(N, NS, tau_matrix):
     
     return tau
 
-def set_tau_first_hit_interface_distrib(pe, interfaces, do_last=True):
+def set_tau_first_hit_interface_distrib(pe, interfaces, do_last=True, lm1=None):
     """
     Set the average path length before the next interface is reached for each (start, end) pair.
 
@@ -713,6 +719,8 @@ def set_tau_first_hit_interface_distrib(pe, interfaces, do_last=True):
         Interface values sorted in ascending order.
     do_last : bool, optional
         If True, also compute tau2 (time after last interface crossing). Default is True.
+    lm1 : float, optional
+        Lower boundary for zero-minus paths; passed through to the ``get_tau*`` helpers.
 
     Returns
     -------
@@ -741,7 +749,9 @@ def set_tau_first_hit_interface_distrib(pe, interfaces, do_last=True):
             )
         start_indices.append(start)
         end_indices.append(end)
-        pe.tau1.append(get_tau1_staple(pe.orders[i], start, end, interfaces))
+        pe.tau1.append(
+            get_tau1_staple(pe.orders[i], start, end, interfaces, lm1=lm1)
+        )
     
     pe.tau1 = np.array(pe.tau1)
     start_indices = np.array(start_indices)
@@ -768,7 +778,9 @@ def set_tau_first_hit_interface_distrib(pe, interfaces, do_last=True):
             pe.tau2.append(0)
             continue
         start, end = start_indices[i], end_indices[i]
-        pe.tau2.append(get_tau2_staple(pe.orders[i], start, end, interfaces))
+        pe.tau2.append(
+            get_tau2_staple(pe.orders[i], start, end, interfaces, lm1=lm1)
+        )
     pe.tau2 = np.array(pe.tau2)
 
     # Get the average tau2 for each (start, end) pair
@@ -779,21 +791,30 @@ def set_tau_first_hit_interface_distrib(pe, interfaces, do_last=True):
             if totweight > 0:
                 pe.tau2avg[start+1, end] = np.average(pe.tau2[mask], weights=pe.weights[mask])
 
-def get_tau1_staple(orders, start, end, intfs):
+def get_tau1_staple(orders, start, end, intfs, lm1=None):
     """
-    Return the number of steps it took for this path to cross to the next interface.
 
-    In iSTAR, this measures the time from one interface turn to reaching the next
-    interface in the path trajectory.
+    Compute the number of steps to reach the next interface from the
+    current turning point.
+
+    The zero-minus case (``start == -1``) normally returns ``0`` since no
+    further interface is crossed.  When ``lm1`` is provided we instead
+    measure the time taken to travel from ``lm1`` to the first interface
+    (``intfs[0]``) which is the appropriate definition for 0-minus
+    trajectories in the presence of a lower boundary.
 
     Parameters
     ----------
     orders : np.ndarray
         Order parameters for the path.
-    ptype : str
-        Path type (e.g., "LMR", "LML", "RML", "RMR").
+    start : int
+        Starting interface index.
+    end : int
+        Ending interface index.
     intfs : list of float
         Interface values.
+    lm1 : float, optional
+        Value of the lower boundary used for zero-minus paths.
 
     Returns
     -------
@@ -803,19 +824,21 @@ def get_tau1_staple(orders, start, end, intfs):
     Raises
     ------
     ValueError
-        If the path type is unknown.
+        If the start/end combination is unknown.
     """
     if start in (-1, 0, len(intfs)-1):
+        # zero-minus paths: when lm1 provided return count of points between
+        # lm1 and first interface; otherwise return 0 as before
         return 0  # No next interface to cross
     
     elif start < end:
         s_idx = np.where(orders[:, 0] <= intfs[start])[-1][0]  # Last index at or before starting interface
-        a = np.where(orders[:, 0] <= intfs[start+1])[0][0]  # Next crossing of start interface
+        a = np.where(orders[:, 0] < intfs[start+1])[0][0]  # Next crossing of start interface
         b = np.where(orders[s_idx:, 0] >= intfs[start+1])[0][0] + s_idx  # Next crossing of end interface
     
     elif start > end:
         s_idx = np.where(orders[:, 0] >= intfs[start])[-1][0]  # Last index at or before starting interface
-        a = np.where(orders[:, 0] >= intfs[start-1])[0][0]  # Next crossing of start interface
+        a = np.where(orders[:, 0] > intfs[start-1])[0][0]  # Next crossing of start interface
         b = np.where(orders[s_idx:, 0] <= intfs[start-1])[0][0] + s_idx  # Next crossing of end interface
     
     else:
@@ -823,20 +846,27 @@ def get_tau1_staple(orders, start, end, intfs):
     return b - a
 
 
-def get_tau2_staple(orders, start, end, intfs):
+def get_tau2_staple(orders, start, end, intfs, lm1=None):
     """
     Return the number of steps in the path after the last crossing of the final interface.
 
     In iSTAR, this measures the time from the last interface crossing to the path endpoint.
 
+    The ``lm1`` argument is ignored for this quantity; it is provided solely
+    for API consistency with the other ``get_tau*`` helpers.
+
     Parameters
     ----------
     orders : np.ndarray
         Order parameters for the path.
-    ptype : str
-        Path type (e.g., "LMR", "LML", "RML", "RMR").
+    start : int
+        Starting interface index.
+    end : int
+        Ending interface index.
     intfs : list of float
         Interface values.
+    lm1 : float, optional
+        Lower boundary value (unused).
 
     Returns
     -------
@@ -866,20 +896,31 @@ def get_tau2_staple(orders, start, end, intfs):
         raise ValueError(f"Unknown start/end combination: {start}, {end}")
     return b - a
 
-def get_tau_staple(orders, start, end, intfs):
+def get_tau_staple(orders, start, end, intfs, lm1=None):
     """
     Return the total number of steps in the path, excluding the start and end points.
+
+    The behaviour for the special zero-minus (
+    ``start == -1``) case can depend on an extra ``lm1``
+    boundary.  When ``lm1`` is supplied the tau is measured
+    between crossing **lm1** and the first crossing of the
+    first interface; otherwise the original fallback logic is
+    used (which effectively treated ``lm1`` as ``-\u221e``).
 
     Parameters
     ----------
     orders : np.ndarray
         Order parameters for the path.
-    lambmin : float
-        Minimum order parameter value of the path.
-    lambmax : float
-        Maximum order parameter value of the path.
+    start : int
+        Starting interface index (``-1`` for zero-minus paths).
+    end : int
+        Ending interface index.
     intfs : list of float
         Interface values.
+    lm1 : float, optional
+        Position of the lower boundary for zero-minus paths.  If
+        provided and ``start == -1`` and ``end == 0`` the returned
+        tau counts the steps between ``lm1`` and ``intfs[0]``.
 
     Returns
     -------
@@ -895,7 +936,12 @@ def get_tau_staple(orders, start, end, intfs):
         a1 = np.where(orders[:, 0] >= intfs[0])[0][0]  
         a2 = np.where(orders[::-1, 0] >= intfs[0])[0][0]  
     elif start == -1:
-        # TODO implement l_-1?
+        # zero-minus paths; if lm1 is given compute tau as the number
+        # of points lying between the lower boundary and the first
+        # interface.  This handles LR, LL, RR, RL and other types
+        # uniformly by simply counting phasepoints in [lm1, intfs[0]].
+        if lm1 is not None and end == 0:
+            return np.sum((orders[:, 0] >= lm1) & (orders[:, 0] <= intfs[0]))
         a1 = np.where(orders[:, 0] <= intfs[0])[0][0]  
         a2 = np.where(orders[::-1, 0] <= intfs[0])[0][0]  
     elif start < end:
@@ -920,7 +966,7 @@ def get_tau_staple(orders, start, end, intfs):
     b = len(orders)  # len(pe.orders[i]) = path length of path i
     return b - a1 - a2
 
-def set_tau_distrib(pe, interfaces):
+def set_tau_distrib(pe, interfaces, lm1=None):
     """
     Set the average total path length for each (start, end) interface pair.
 
@@ -930,6 +976,10 @@ def set_tau_distrib(pe, interfaces):
         The path ensemble object.
     interfaces : list of float
         Interface values sorted in ascending order.
+    lm1 : float, optional
+        Lower boundary value for zero-minus paths.  When provided, the
+        tau value for ``start == -1`` and ``end == 0`` will be computed
+        between ``lm1`` and ``interfaces[0]``.
 
     Returns
     -------
@@ -948,7 +998,7 @@ def set_tau_distrib(pe, interfaces):
             end_indices.append(-1)
         elif pe.in_zero_minus:
             start_indices.append(-1)
-            end_indices.append(0)  # Special case for paths in the zero-minus state TODO: implement l_-1?
+            end_indices.append(0)  # Special case for paths in the zero-minus state
         else:
             start, end = get_start_end_interfaces(
                 pe.lambmins[i], pe.lambmaxs[i], pe.dirs[i], interfaces
@@ -964,7 +1014,9 @@ def set_tau_distrib(pe, interfaces):
             pe.tau.append(0)
             continue
         start, end = start_indices[i], end_indices[i]
-        pe.tau.append(get_tau_staple(pe.orders[i], start, end, interfaces))
+        pe.tau.append(
+            get_tau_staple(pe.orders[i], start, end, interfaces, lm1=lm1)
+        )
     pe.tau = np.array(pe.tau)
 
     # Get the average tau for each (start, end) pair
@@ -980,6 +1032,12 @@ def collect_tau_staple(pathensembles, interfaces):
     """
     Compute average path lengths for all path ensembles as a matrix.
 
+    This routine assumes each ``PathEnsemble`` already has ``pe.tauavg``
+    computed (e.g. via :func:`set_tau_distrib` or :func:`set_taus_staple`).
+    The ``lm1`` argument is accepted for API consistency and is passed
+    through to any helper routines if recomputation ever becomes necessary;
+    it is otherwise ignored.
+
     Parameters
     ----------
     pathensembles : list of :py:class:`.PathEnsemble`
@@ -990,8 +1048,8 @@ def collect_tau_staple(pathensembles, interfaces):
     Returns
     -------
     np.ndarray
-        Combined average path lengths matrix of shape (n_interfaces, n_interfaces),
-        where tau_combined[start, end] is the weighted average across all ensembles.
+        Combined average path lengths matrix of shape (n_interfaces+1, n_interfaces),
+        where tau_combined[start+1, end] is the weighted average across all ensembles.
     """
     print("Collect tau")
     n_intf = len(interfaces)
@@ -1042,8 +1100,8 @@ def collect_tau1_staple(pathensembles, interfaces):
     Returns
     -------
     np.ndarray
-        Combined average tau1 matrix of shape (n_interfaces, n_interfaces),
-        where tau1_combined[start, end] is the weighted average across all ensembles.
+        Combined average tau1 matrix of shape (n_interfaces+1, n_interfaces),
+        where tau1_combined[start+1, end] is the weighted average across all ensembles.
     """
     print("Collect tau1")
     n_intf = len(interfaces)
@@ -1093,8 +1151,8 @@ def collect_tau2_staple(pathensembles, interfaces):
     Returns
     -------
     np.ndarray
-        Combined average tau2 matrix of shape (n_interfaces, n_interfaces),
-        where tau2_combined[start, end] is the weighted average across all ensembles.
+        Combined average tau2 matrix of shape (n_interfaces+1, n_interfaces),
+        where tau2_combined[start+1, end] is the weighted average across all ensembles.
     """
     print("Collect tau2")
     n_intf = len(interfaces)
@@ -1144,8 +1202,8 @@ def collect_taum_staple(pathensembles, interfaces):
     Returns
     -------
     np.ndarray
-        Combined average taum matrix of shape (n_interfaces, n_interfaces),
-        where taum_combined[start, end] is the weighted average across all ensembles.
+        Combined average taum matrix of shape (n_interfaces+1, n_interfaces),
+        where taum_combined[start+1, end] is the weighted average across all ensembles.
     """
     print("Collect taum")
     n_intf = len(interfaces)
@@ -1602,7 +1660,7 @@ def get_start_end_interfaces(lambmin, lambmax, direction, interfaces):
         
         return start, end
 
-def set_taus_staple(pathensembles, interfaces):
+def set_taus_staple(pathensembles, interfaces, lm1=None):
     """
     Set the average path lengths before and after interface crossings, and the average total path length.
 
@@ -1617,6 +1675,9 @@ def set_taus_staple(pathensembles, interfaces):
         List of path ensemble objects.
     interfaces : list of float
         Interface values sorted in ascending order.
+    lm1 : float, optional
+        Lower boundary for zero-minus paths; passed through to the
+        underlying ``get_tau*`` helper functions.
 
     Returns
     -------
@@ -1651,7 +1712,7 @@ def set_taus_staple(pathensembles, interfaces):
             
             if pe.in_zero_minus:
                 start = -1
-                end = 0  # Special case for paths in the zero-minus state TODO: implement l_-1?
+                end = 0  # Special case for paths in the zero-minus state
             else:
                 # Determine start and end interface indices
                 start, end = get_start_end_interfaces(
@@ -1660,10 +1721,16 @@ def set_taus_staple(pathensembles, interfaces):
             start_indices.append(start)
             end_indices.append(end)
             
-            # Compute tau1, tau2, and total tau
-            tau1_value = get_tau1_staple(pe.orders[i], start, end, interfaces)
-            tau2_value = get_tau2_staple(pe.orders[i], start, end, interfaces)
-            tau_value = get_tau_staple(pe.orders[i], start, end, interfaces)
+            # Compute tau1, tau2, and total tau (pass lm1 through)
+            tau1_value = get_tau1_staple(
+                pe.orders[i], start, end, interfaces, lm1=lm1
+            )
+            tau2_value = get_tau2_staple(
+                pe.orders[i], start, end, interfaces, lm1=lm1
+            )
+            tau_value = get_tau_staple(
+                pe.orders[i], start, end, interfaces, lm1=lm1
+            )
 
             # Append results
             pe.tau1.append(tau1_value)

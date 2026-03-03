@@ -2075,7 +2075,7 @@ def ploc_memory(pathensembles, interfaces, trr=True, correct_ha=False):
     fig, ax = plt.subplots()
     ax.set_yscale("log")
     ax.errorbar([i for i in range(len(interfaces))], plocs["apptis"], fmt="-o", c = "b", ecolor="r", capsize=6, label="APPTIS")
-    ax.errorbar([i for i in range(len(interfaces))], plocs["apptis_ha"], fmt="-s", c = "cyan", ecolor="r", capsize=6, label="APPTIS (HA corrected)")
+    # ax.errorbar([i for i in range(len(interfaces))], plocs["apptis_ha"], fmt="-s", c = "cyan", ecolor="r", capsize=6, label="APPTIS (HA corrected)")
     ax.errorbar([i for i in range(len(interfaces))], plocs["repptis"], fmt="-o", c = "orange", ecolor="r", capsize=6., label="REPPTIS")
     ax.errorbar([i for i in range(len(interfaces))], plocs["mlst"], fmt="-o", c = "r", ecolor="r", capsize=6., label="Milestoning")
     ax.set_xlabel(r"Interface index")
