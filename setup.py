@@ -1,13 +1,14 @@
-#!/bin/env/python
+#!/usr/bin/env python
 
 from glob import glob
-from distutils.core import setup
+from setuptools import setup
 
 setup(
+    name='tistools',
     version='0.1',
-    #package_dir = {'tistools': 'lib'},
-    #packages = ['tistools',],  #'mcdiff.tools','mcdiff.permeability'],
-    scripts=glob("scripts/*"),
+    package_dir={'tistools': 'lib'},
+    packages=['tistools'],
+    scripts=glob('scripts/*'),
 )
 
 

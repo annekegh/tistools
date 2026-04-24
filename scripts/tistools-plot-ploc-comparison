@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+import argparse
+import logging
+import numpy as np
+from pathlib import Path
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+# Prefer local tistools repository modules if available.
+repo_root = Path(__file__).resolve().parents[1]
+local_lib = repo_root / "lib"
+if local_lib.exists():
+    sys.path.insert(0, str(local_lib))
+
+try:
+    from reading import read_inputfile, get_LMR_interfaces, read_pathensemble, get_weights, set_flags_ACC_REJ
+    from istar_analysis import ploc_memory
+    ACCFLAGS, REJFLAGS = set_flags_ACC_REJ()
+except ImportError:
+    try:
+        # Fall back to an installed tistools package if available.
+        from tistools.reading import read_inputfile, get_LMR_interfaces, read_pathensemble, get_weights, set_flags_ACC_REJ
+        from tistools.istar_analysis import ploc_memory
+        ACCFLAGS, REJFLAGS = set_flags_ACC_REJ()
+    except ImportError as e:
+        message = str(e)
+        if 'deeptime' in message:
+            print(
+                "Error: tistools requires the `deeptime` dependency for ploc_memory. "
+                "Install it in your environment and rerun.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"Error: Could not import tistools internals: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def setup_plotting_style():
+    """Setup a stylish plotting style."""
+    import matplotlib.pyplot as plt
+    plt.rcParams.update({
+        'font.size': 14,
+        'axes.labelsize': 16,
+        'axes.titlesize': 18,
+        'xtick.labelsize': 14,
+        'ytick.labelsize': 14,
+        'legend.fontsize': 12,
+        'lines.linewidth': 2,
+        'lines.markersize': 8,
+    })
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Compare ploc probabilities from different simulations.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "-f", "--folders", nargs="+", required=True,
+        help="Directories representing the different simulations to compare. They should have the same interfaces."
+    )
+    parser.add_argument(
+        "-l", "--labels", nargs="+",
+        help="Labels for each folder. Must be the same length as --folders. Optionally use folder names if omitted."
+    )
+    parser.add_argument(
+        "-i", "--input", default=None,
+        help="The input configuration file (e.g., retis.rst, repptis.rst). If not provided, it will search the folder."
+    )
+    parser.add_argument(
+        "-o", "--output", default="ploc_comparison.pdf",
+        help="Name of the output figure file (e.g. ploc_comparison.pdf). A PNG will also be generated."
+    )
+    parser.add_argument(
+        "--zero-minus-one",
+        action="store_true",
+        default=False,
+        help="Set if lambda_-1 interface is defined",
+    )
+    parser.add_argument(
+        "-m", "--methods", nargs="+", default=["apptis"],
+        help="Comma-separated method(s) per folder (e.g. apptis,repptis). If only one string is provided, it applies to all."
+    )
+    return parser.parse_args()
+
+
+def extract_report_pcross(path):
+    pcross = []
+    with open(path, 'r') as f:
+        in_table = False
+        for line in f:
+            if "robabilities" in line:
+                in_table = True
+            if in_table and "^+]" in line and "|" in line:
+                parts = [p.strip() for p in line.split('|')]
+                print(parts)
+                if len(parts) > 2:
+                    try:
+                        pcross.append(float(parts[2]))
+                    except ValueError:
+                        pass
+            if in_table and "|Pathensemble" in line:
+                in_table = False
+    return [1.0] + [pcross[0]] + [np.prod(pcross[:i+1]) for i in range(1, len(pcross))]
+
+def plot_ploc_comparison(args):
+    import matplotlib.pyplot as plt
+
+    setup_plotting_style()
+    
+    fig, ax = plt.subplots(figsize=(8.27 / 2.5 * 0.97 * 2, 8.27 / 2.5 * 0.97 * 1.3), facecolor='white', layout='constrained')
+    ax.set_yscale('log')
+    
+    labels = args.labels
+    if labels is None or len(labels) != len(args.folders):
+        if labels is not None:
+            logging.warning("Mismatching labels provided, falling back to folder names.")
+        labels = [os.path.basename(os.path.normpath(f)) or f for f in args.folders]
+        
+    methods_list = args.methods
+    if methods_list is None or len(methods_list) == 0:
+        methods_list = ["apptis"] * len(args.folders)
+    elif len(methods_list) == 1:
+        methods_list = [methods_list[0]] * len(args.folders)
+    elif len(methods_list) != len(args.folders):
+        logging.warning("Mismatching length for --methods, using the first parameter for all.")
+        methods_list = [methods_list[0]] * len(args.folders)
+        
+    markers = ['o', 's', '^', 'v', 'D', 'p', '*', 'h']
+    cmap = plt.cm.tab10(np.linspace(0, 1, 10))
+    
+    ref_intfs = None
+    
+    import glob
+    from pathlib import Path
+    
+    for idx, (folder, label) in enumerate(zip(args.folders, labels)):
+        logging.info(f"Processing folder: {folder}")
+        simdir = Path(folder)
+        current_methods = methods_list[idx].split(',')
+        
+        # Resolve config file
+        inputfile = args.input
+        if not inputfile:
+            inputfile = str(simdir / "repptis.rst")
+        else:
+            inputfile = str(simdir / inputfile)
+            
+        config_found = os.path.exists(inputfile)
+        if not config_found:
+            for alt in ["retis.rst", "retis3.rst", "infretis.rst", "retis.toml", "infretis.toml", "logging.log"]:
+                alt_path = simdir / alt
+                if alt_path.exists():
+                    inputfile = str(alt_path)
+                    config_found = True
+                    break
+        
+        intfs = None
+        LMR_interfaces = None
+        LMR_strings = None
+        
+        if config_found:
+            try:
+                interfaces, zero_left, timestep = read_inputfile(inputfile)
+                LMR_interfaces, LMR_strings = get_LMR_interfaces(interfaces, zero_left)
+                intfs = interfaces
+                if ref_intfs is None:
+                    ref_intfs = intfs
+            except Exception as e:
+                logging.error(f"Failed parsing input config {inputfile}: {e}")
+                
+        # 1. Check for report files first
+        report_files = [simdir / "report.txt"]
+        if (simdir / "report").exists():
+            report_files += list((simdir / "report").glob("*_report.rst"))
+            
+        y_report = None
+        for r in report_files:
+            if r.exists():
+                pcross = extract_report_pcross(str(r))
+                if pcross:
+                    y_report = np.array(pcross)
+                    if intfs is None:
+                        intfs = np.arange(len(pcross) + 1)
+                        if ref_intfs is None:
+                            ref_intfs = intfs
+                    break
+                    
+        color = cmap[idx % len(cmap)]
+        marker = markers[idx % len(markers)]
+        
+        if y_report is not None:
+            logging.info(f"Found report file in {simdir}, plotting ONLY report plocs.")
+            y_vals = y_report
+            x_vals = np.array(intfs)[:min(len(intfs), len(y_vals))]
+            y_vals = y_vals[:len(x_vals)]
+            
+            ax.errorbar(
+                x_vals, y_vals, yerr=np.zeros_like(y_vals), 
+                fmt=f"-{marker}", color=color, 
+                capsize=5, elinewidth=1.5, 
+                markersize=8, label=f"{label} (report)"
+            )
+            continue
+            
+        # 2. Extract from ensembles using ploc_memory
+        plocs_dict = {}
+        try:
+            if config_found and intfs is not None:
+                ens_folders = sorted(glob.glob(str(simdir / "0[0-9][0-9]")))
+                if ens_folders:
+                    pathensembles = []
+                    for i, fol in enumerate(ens_folders):
+                        pe = read_pathensemble(fol + "/pathensemble.txt")
+                        pe.set_name(fol)
+                        pe.set_interfaces([LMR_interfaces[i], LMR_strings[i]])
+                        
+                        if i == 0:
+                            pe.set_zero_minus_one(args.zero_minus_one)
+                            pe.set_in_zero_minus(True)
+                        if i == 1:
+                            pe.set_in_zero_plus(True)
+
+                        w, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose=False)
+                        pe.set_weights(w)
+                        pathensembles.append(pe)
+                    
+                    pre_figs = plt.get_fignums()
+                    plocs_dict = ploc_memory(pathensembles, intfs)
+                    post_figs = plt.get_fignums()
+                    for f in post_figs:
+                        if f not in pre_figs and f != fig.number:
+                            plt.close(f)
+                            
+        except Exception as e:
+            logging.error(f"Failed processing ensembles in {folder}: {e}")
+            
+        linestyles = ['-', '--', '-.', ':']
+        found_any = False
+        
+        for m_idx, method in enumerate(current_methods):
+            method = method.strip()
+            query_method = method
+            if method == "apptis_ha" and "apptis_ha, norm" in plocs_dict:
+                query_method = "apptis_ha, norm"
+                
+            y_method = plocs_dict.get(query_method)
+            
+            if y_method is not None:
+                found_any = True
+                y_vals = np.array(y_method)
+                x_vals = np.array(intfs)[:min(len(intfs), len(y_vals))]
+                y_vals = y_vals[:len(x_vals)]
+                
+                fmt_line = linestyles[m_idx % len(linestyles)]
+                mfc = 'none' if m_idx > 0 else color
+                
+                lbl_suffix = f" ({method})" if len(current_methods) > 1 else ""
+                ax.errorbar(
+                    x_vals, y_vals, yerr=np.zeros_like(y_vals), 
+                    fmt=f"{fmt_line}{marker}", color=color, 
+                    capsize=5, elinewidth=1.5, 
+                    markersize=8, mfc=mfc, label=f"{label}{lbl_suffix}"
+                )
+            else:
+                logging.warning(f"Method '{method}' not found for folder {folder}")
+
+        if not found_any:
+            logging.error(f"No suitable input files, reports, or plocs found in {simdir}. Skipping...")
+            
+    ax.set_xlabel(r"Interface $\lambda$")
+    ax.set_ylabel(r"$P_A(\lambda_i|\lambda_A)$")
+    
+    if ref_intfs is not None:
+        ax.set_xticks(ref_intfs)
+    
+    ax.legend(frameon=False, loc='best')
+    ax.grid(True, alpha=0.3, ls='--')
+    
+    fig.savefig(args.output, dpi=300, bbox_inches='tight')
+    
+    png_output = os.path.splitext(args.output)[0] + '.png'
+    fig.savefig(png_output, dpi=300, bbox_inches='tight')
+    
+    logging.info(f"Saved comparison plot to {args.output} and {png_output}")
+    plt.close(fig)
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    plot_ploc_comparison(args)

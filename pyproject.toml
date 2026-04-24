@@ -39,8 +39,8 @@ Repository = "https://github.com/annekegh/tistools.git"
 #Issues = "https://github.com/annekegh/tistools/issues"
 #Documentation = "https://readthedocs.org"
 
-#[tool.setuptools.packages.find]
-#where = ["lib"]
+[tool.setuptools]
+packages = ["tistools"]
 
 #https://setuptools.pypa.io/en/latest/userguide/package_discovery.html
 [tool.setuptools.package-dir]

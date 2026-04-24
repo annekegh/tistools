@@ -1,0 +1,702 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+import argparse
+import logging
+import re
+import copy
+import io
+from contextlib import redirect_stdout, redirect_stderr
+from time import sleep
+import numpy as np
+from pathlib import Path
+import matplotlib.colors as mcolors
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+repo_root = Path(__file__).resolve().parents[1]
+local_lib = repo_root / "lib"
+if local_lib.exists():
+    sys.path.insert(0, str(local_lib))
+
+try:
+    from reading import read_inputfile, get_LMR_interfaces, read_pathensemble, get_weights, set_flags_ACC_REJ
+    from istar_analysis import ploc_memory
+    from istar_analysis import construct_M_istar, get_transition_probs_weights, compute_weight_matrices, global_pcross_msm_star
+    from repptis_analysis import get_local_probs, get_global_probs_from_dict
+    ACCFLAGS, REJFLAGS = set_flags_ACC_REJ()
+except ImportError:
+    try:
+        from tistools.reading import read_inputfile, get_LMR_interfaces, read_pathensemble, get_weights, set_flags_ACC_REJ
+        from tistools.istar_analysis import ploc_memory
+        from tistools.istar_analysis import construct_M_istar, get_transition_probs_weights, compute_weight_matrices, global_pcross_msm_star
+        from tistools.repptis_analysis import get_local_probs, get_global_probs_from_dict
+        ACCFLAGS, REJFLAGS = set_flags_ACC_REJ()
+    except ImportError as e:
+        print(f"Error: Could not import tistools internals: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def setup_plotting_style():
+    import matplotlib.pyplot as plt
+    plt.rcParams.update({
+        'text.usetex': True,
+        'font.family': 'serif',
+        'font.serif': ['Computer Modern Roman', 'DejaVu Serif'],
+        'font.size': 14,
+        'axes.labelsize': 15,
+        'axes.titlesize': 18,
+        'xtick.labelsize': 15,
+        'ytick.labelsize': 15,
+        'legend.fontsize': 15,
+        'lines.linewidth': 1.5,
+        'lines.markersize': 8,
+    })
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Plot Ptot probabilities as a function of gamma.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "-f", "--folders", nargs="+", required=True,
+        help="Directories representing the different simulations."
+    )
+    parser.add_argument(
+        "-g", "--gammas", nargs="+", required=True, type=float,
+        help="Gamma values corresponding to each folder (length must match -f)."
+    )
+    parser.add_argument(
+        "--x-axis", choices=["gamma", "delta-lambda"], default="gamma",
+        help="Choose whether x-axis values represent gamma or interface spacing Delta lambda."
+    )
+    parser.add_argument(
+        "-m", "--methods", nargs="+", default=["apptis"],
+        help="Comma-separated method(s) to plot globally (or specify comma-sep list per folder)."
+    )
+    parser.add_argument(
+        "-i", "--input", default=None,
+        help="The input configuration file (e.g., retis.rst). Default: searches for common config files."
+    )
+    parser.add_argument(
+        "-o", "--output", default="ptot_gamma.pdf",
+        help="Name of the output figure file."
+    )
+    parser.add_argument(
+        "--zero-minus-one",
+        action="store_true",
+        default=False,
+    )
+    return parser.parse_args()
+
+
+def extract_report_pcross_and_error(path):
+    global_pcross = None
+    global_rel_error_pct = None
+
+    pcross = []
+    with open(path, 'r', encoding='utf-8') as f:
+        in_table = False
+        for line in f:
+            # print(line.strip())
+            # sleep(1)
+            patterns = [
+                r"P_\\text\{cross\}\s*=\s*([0-9eE.+\-]+)\s*\\pm\s*([0-9eE.+\-]+)\s*(?:\\)?%",
+                r"P_\{\\text\{cross\}\}\s*=\s*([0-9eE.+\-]+)\s*\\pm\s*([0-9eE.+\-]+)\s*(?:\\)?%",
+            ]
+            main_match = None
+            for pattern in patterns:
+                main_match = re.search(pattern, line)
+                # print(f"Trying pattern: {pattern} - Match: {main_match}")
+                if main_match:
+                    break
+            if main_match:
+                # print(f"Extracted global Pcross and error from report: {main_match.group(1)} ± {main_match.group(2)}%")
+                # sleep(5)
+                global_pcross = float(main_match.group(1))
+                global_rel_error_pct = float(main_match.group(2))
+                break
+
+            if "robabilities" in line:
+                in_table = True
+            if in_table and "^+]" in line and "|" in line:
+                parts = [p.strip() for p in line.split('|')]
+                if len(parts) > 2:
+                    try:
+                        pcross.append(float(parts[2]))
+                    except ValueError:
+                        pass
+            if in_table and "|Pathensemble" in line:
+                in_table = False
+    if not pcross:
+        if global_pcross is None:
+            return None, None
+        abs_err = None if global_rel_error_pct is None else global_pcross * global_rel_error_pct / 100.0
+        return np.array([global_pcross]), abs_err
+
+    pcross_curve = np.array([1.0] + [pcross[0]] + [np.prod(pcross[:i + 1]) for i in range(1, len(pcross))], dtype=float)
+    ptot = pcross_curve[-1]
+    abs_err = None
+    if global_rel_error_pct is not None:
+        abs_err = ptot * global_rel_error_pct / 100.0
+    return pcross_curve, abs_err
+
+
+def style_axes(ax):
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_linewidth(1.0)
+    ax.spines['bottom'].set_linewidth(1.0)
+    ax.grid(True, alpha=0.18, linestyle='--', linewidth=0.5)
+
+
+def pathensembles_nskip(obj, nskip):
+    keys = [
+        'cyclenumbers', 'flags', 'generation', 'lambmaxs', 'lambmins',
+        'lengths', 'lmrs', 'newpathnumbers', 'pathnumbers',
+        'shootlinks', 'weights', 'dirs', 'istar_idx',
+    ]
+    for key in keys:
+        if hasattr(obj, key):
+            attr = getattr(obj, key)
+            setattr(obj, key, attr[:nskip])
+
+
+def _compute_absolute_error_from_runav(runavfull, minblocks=5):
+    runavfull = np.asarray(runavfull, dtype=float)
+    runavfull = runavfull[~np.isnan(runavfull)]
+    if runavfull.size < max(10, minblocks * 2):
+        return None, None
+
+    maxbll = int(len(runavfull) / minblocks)
+    if maxbll < 2:
+        return None, None
+
+    bestav = runavfull[-1]
+    sizes = np.arange(1, maxbll + 1)
+    rel_errors = np.zeros(len(sizes), dtype=float)
+
+    for i, n in enumerate(sizes):
+        runav_red = runavfull[n - 1::n]
+        nb = len(runav_red)
+        if nb <= 1:
+            rel_errors[i] = np.nan
+            continue
+        blocks = np.zeros(nb, dtype=float)
+        for k in range(nb):
+            if k == 0:
+                blocks[k] = runav_red[k]
+            else:
+                blocks[k] = (k + 1) * runav_red[k] - k * runav_red[k - 1]
+        aerr2 = np.sum((blocks - bestav) ** 2) / (nb * (nb - 1))
+        aerr = np.sqrt(max(aerr2, 0.0))
+        rel_errors[i] = aerr / abs(bestav) if bestav != 0 else np.nan
+
+    finite = np.isfinite(rel_errors)
+    if not np.any(finite):
+        return None, None
+
+    rel_errors = rel_errors[finite]
+    if rel_errors.size == 0:
+        return None, None
+    second_half = rel_errors[len(rel_errors) // 2:]
+    if second_half.size == 0:
+        return None, None
+
+    avg_rel_err = float(np.mean(second_half))
+    abs_err = abs(bestav) * avg_rel_err
+    return abs_err, avg_rel_err
+
+
+def find_saved_running_average_file(simdir, method, nstep):
+    method = method.lower().strip()
+    candidates = []
+    if method.startswith('apptis'):
+        candidates.extend([
+            simdir / f"plocMSM_vs_cycle_interval_{nstep}_full.npy",
+            simdir / "plocMSM_vs_cycle_interval_1_full.npy",
+        ])
+    if method.startswith('repptis'):
+        candidates.extend([
+            simdir / f"plocREPPTIS_vs_cycle_interval_{nstep}_full.npy",
+            simdir / "plocREPPTIS_vs_cycle_interval_1_full.npy",
+        ])
+    for c in candidates:
+        if c.exists():
+            return c
+    return None
+
+
+def find_saved_error_summary(simdir, method):
+    method = method.lower().strip()
+    summary_glob = simdir.glob(f"block_error_analysis_ptot_{method}_interval_*.txt")
+    for summary_file in sorted(summary_glob):
+        abs_err = parse_error_summary(summary_file)
+        if abs_err is not None:
+            logging.info("Using existing error summary %s for %s", summary_file, method)
+            return abs_err
+    return None
+
+
+def parse_error_summary(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("abs_error="):
+                    try:
+                        return float(line.split("=", 1)[1].strip())
+                    except ValueError:
+                        continue
+    except OSError:
+        pass
+    return None
+
+
+def default_running_file(simdir, method, nstep):
+    method = method.lower().strip()
+    if method.startswith('repptis'):
+        return simdir / f"plocREPPTIS_vs_cycle_interval_{nstep}_full.npy"
+    return simdir / f"plocMSM_vs_cycle_interval_{nstep}_full.npy"
+
+
+def save_error_summary(simdir, method, settings, abs_err, rel_err):
+    summary_file = simdir / f"block_error_analysis_ptot_{method}_interval_{settings['nstep']}.txt"
+    with open(summary_file, "w", encoding="utf-8") as f:
+        f.write("# Ptot block error analysis summary\n")
+        f.write(f"method={method}\n")
+        f.write(f"start_cyc={settings['start_cyc']}\n")
+        f.write(f"n_cycle={settings['n_cycle']}\n")
+        f.write(f"nstep={settings['nstep']}\n")
+        f.write(f"minblocks={settings['minblocks']}\n")
+        f.write(f"abs_error={abs_err}\n")
+        f.write(f"rel_error={rel_err}\n")
+    logging.info("Saved error summary to %s", summary_file)
+
+
+def _prompt_int(name, default):
+    answer = input(f"{name} [{default}]: ").strip()
+    if answer == "":
+        return default
+    try:
+        return int(answer)
+    except ValueError:
+        logging.warning("Invalid integer for %s, using default %d", name, default)
+        return default
+
+
+def get_interactive_error_settings(settings_cache):
+    if settings_cache.get("initialized", False):
+        return settings_cache
+
+    print("No saved error file found. Provide running-analysis settings (Enter keeps defaults):")
+    settings_cache["start_cyc"] = _prompt_int("start_cyc", 1)
+    settings_cache["n_cycle"] = _prompt_int("n_cycle", 100000)
+    settings_cache["nstep"] = _prompt_int("nstep", 1)
+    settings_cache["minblocks"] = _prompt_int("minblocks", 5)
+    settings_cache["initialized"] = True
+    return settings_cache
+
+
+def compute_running_ptot_series(pathensembles, interfaces, method, start_cyc, n_cycle, nstep):
+    method = method.lower().strip()
+    values = []
+    dummy_out = io.StringIO()
+    for nskip in range(start_cyc, n_cycle, nstep):
+        if nskip % 1000 == 0:
+            logging.info("Computing running error for %s: cycle %d/%d...", method, nskip, n_cycle)
+        with redirect_stdout(dummy_out), redirect_stderr(dummy_out):
+            pathensembles_i = copy.deepcopy(pathensembles)
+            for pe in pathensembles_i:
+                pathensembles_nskip(pe, nskip)
+
+            if method.startswith('repptis'):
+                psfull = []
+                for i, pe in enumerate(pathensembles_i):
+                    if i == 0:
+                        continue
+                    plocfull = get_local_probs(pe, tr=False)
+                    psfull.append({
+                        "LMR": plocfull["LMR"],
+                        "RML": plocfull["RML"],
+                        "RMR": plocfull["RMR"],
+                        "LML": plocfull["LML"],
+                    })
+                _, _, pcross = get_global_probs_from_dict(psfull)
+                values.append(float(pcross[-1]))
+            else:
+                wi = compute_weight_matrices(pathensembles_i, interfaces, len(interfaces), True)
+                pi, _ = get_transition_probs_weights(wi)
+                m = construct_M_istar(pi, max(4, 2 * len(interfaces)), len(interfaces))
+                _, _, y1, _ = global_pcross_msm_star(m)
+                values.append(float(y1[0][0]))
+    return np.asarray(values, dtype=float)
+
+
+def get_error_for_folder_method(simdir, method, ptot, pathensembles, interfaces, settings_cache, compute_missing_errors=None):
+    nstep_guess = settings_cache.get("nstep", 1)
+    running_file = find_saved_running_average_file(simdir, method, nstep_guess)
+    if running_file is not None:
+        runav = np.load(running_file)
+        if np.ndim(runav) == 2:
+            runav = runav[:, -1]
+        abs_err, rel_err = _compute_absolute_error_from_runav(runav, minblocks=settings_cache.get("minblocks", 5))
+        if abs_err is not None:
+            logging.info(
+                "Using saved running data for %s in %s (rel err ~ %.3f%%)",
+                method,
+                simdir,
+                rel_err * 100.0,
+            )
+            return abs_err, compute_missing_errors
+
+    abs_err = find_saved_error_summary(simdir, method)
+    if abs_err is not None:
+        return abs_err, compute_missing_errors
+
+    if method.lower().startswith(("apptis", "repptis")):
+        settings_cache = get_interactive_error_settings(settings_cache)
+        if compute_missing_errors is None:
+            question = (
+                f"No saved error file found for any method yet. "
+                f"Compute missing running-error series automatically for all methods? [y/N]: "
+            )
+            answer = input(question).strip().lower()
+            compute_missing_errors = answer in ("y", "yes")
+        if not compute_missing_errors:
+            return None, compute_missing_errors
+
+        series = compute_running_ptot_series(
+            pathensembles,
+            interfaces,
+            method,
+            start_cyc=settings_cache["start_cyc"],
+            n_cycle=settings_cache["n_cycle"],
+            nstep=settings_cache["nstep"],
+        )
+        save_file = default_running_file(simdir, method, settings_cache["nstep"])
+        np.save(save_file, series)
+        logging.info("Saved running series to %s", save_file)
+
+        abs_err, rel_err = _compute_absolute_error_from_runav(series, minblocks=settings_cache["minblocks"])
+        if abs_err is not None:
+            save_error_summary(simdir, method, settings_cache, abs_err, rel_err)
+            logging.info("Computed %s error (rel err ~ %.3f%%)", method, rel_err * 100.0)
+            return abs_err, compute_missing_errors
+        logging.warning("Could not compute robust error estimate for %s in %s", method, simdir)
+
+    return None, compute_missing_errors
+
+
+def plot_ptot_gamma(args):
+    import matplotlib.pyplot as plt
+
+    setup_plotting_style()
+    fig, ax = plt.subplots(figsize=(6, 5), facecolor='white', layout='constrained')
+    ax.set_yscale('log')
+
+    if len(args.folders) != len(args.gammas):
+        logging.error("--gammas must have exactly the same number of elements as --folders.")
+        sys.exit(1)
+
+    methods_list = args.methods
+    if methods_list is None or len(methods_list) == 0:
+        methods_list = ["apptis"] * len(args.folders)
+    elif len(methods_list) == 1:
+        methods_list = [methods_list[0]] * len(args.folders)
+    elif len(methods_list) != len(args.folders):
+        logging.warning("Mismatching length for --methods, using the first parameter for all.")
+        methods_list = [methods_list[0]] * len(args.folders)
+        
+    # Dictionary to collect results { method_name: { x_value: [ {ptot, err} ] } }
+    results_by_method = {}
+    interactive_error_settings = {"initialized": False, "nstep": 1, "minblocks": 5}
+    compute_missing_errors = None
+
+    import glob
+    for idx, (folder, x_value) in enumerate(zip(args.folders, args.gammas)):
+        logging.info(f"Processing folder: {folder} (x={x_value})")
+        simdir = Path(folder)
+        current_methods = methods_list[idx].split(',')
+
+        inputfile = args.input
+        if not inputfile:
+            inputfile = str(simdir / "repptis.rst")
+        else:
+            inputfile = str(simdir / inputfile)
+
+        config_found = os.path.exists(inputfile)
+        if not config_found:
+            for alt in ["retis.rst", "retis3.rst", "infretis.rst", "retis.toml", "infretis.toml", "logging.log"]:
+                alt_path = simdir / alt
+                if alt_path.exists():
+                    inputfile = str(alt_path)
+                    config_found = True
+                    break
+
+        intfs = None
+        LMR_interfaces = None
+        LMR_strings = None
+
+        if config_found:
+            try:
+                interfaces, zero_left, timestep = read_inputfile(inputfile)
+                LMR_interfaces, LMR_strings = get_LMR_interfaces(interfaces, zero_left)
+                intfs = interfaces
+            except Exception as e:
+                logging.error(f"Failed parsing input config {inputfile}: {e}")
+
+        # 1. Report files priority
+        # report_files = [simdir / "report.txt"]
+        report_files = []
+        if (simdir / "report").exists():
+            report_files += list((simdir / "report").glob("*_report.rst"))
+
+        y_report = None
+        y_report_err = None
+        for r in report_files:
+            if r.exists():
+                pcross, abs_err = extract_report_pcross_and_error(str(r))
+                if pcross is not None:
+                    y_report = np.array(pcross)
+                    y_report_err = abs_err
+                    break
+
+        if y_report is not None:
+            logging.info(f"Found report file in {simdir}, plotting ONLY report plocs.")
+            ptot = y_report[-1]
+            if "report" not in results_by_method:
+                results_by_method["report"] = {}
+            results_by_method["report"].setdefault(x_value, []).append({
+                "ptot": float(ptot),
+                "err": None if y_report_err is None else float(y_report_err),
+            })
+            continue
+
+        # 2. Extract from ensembles
+        plocs_dict = {}
+        try:
+            if config_found and intfs is not None:
+                ens_folders = sorted(glob.glob(str(simdir / "0[0-9][0-9]")))
+                if ens_folders:
+                    pathensembles = []
+                    for i, fol in enumerate(ens_folders):
+                        pe = read_pathensemble(fol + "/pathensemble.txt")
+                        pe.set_name(fol)
+                        pe.set_interfaces([LMR_interfaces[i], LMR_strings[i]])
+
+                        if i == 0:
+                            pe.set_zero_minus_one(args.zero_minus_one)
+                            pe.set_in_zero_minus(True)
+                        if i == 1:
+                            pe.set_in_zero_plus(True)
+
+                        w, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose=False)
+                        pe.set_weights(w)
+                        pathensembles.append(pe)
+
+                    pre_figs = plt.get_fignums()
+                    plocs_dict = ploc_memory(pathensembles, intfs)
+                    post_figs = plt.get_fignums()
+                    for f in post_figs:
+                        if f not in pre_figs and f != fig.number:
+                            plt.close(f)
+        except Exception as e:
+            logging.error(f"Failed processing ensembles in {folder}: {e}")
+
+        for method in current_methods:
+            method = method.strip()
+            query_method = method
+            if method == "apptis_ha" and "apptis_ha, norm" in plocs_dict:
+                query_method = "apptis_ha, norm"
+
+            y_method = plocs_dict.get(query_method)
+            if y_method is not None:
+                ptot = y_method[-1]
+                if method not in results_by_method:
+                    results_by_method[method] = {}
+                abs_err, compute_missing_errors = get_error_for_folder_method(
+                    simdir,
+                    method,
+                    ptot,
+                    pathensembles,
+                    intfs,
+                    interactive_error_settings,
+                    compute_missing_errors,
+                )
+                results_by_method[method].setdefault(x_value, []).append({
+                    "ptot": float(ptot),
+                    "err": None if abs_err is None else float(abs_err),
+                })
+            else:
+                logging.warning(f"Method '{method}' not found for folder {folder}")
+
+    # -------- PLOT 1: Absolute Ptot vs Gamma --------
+    # Colors/markers map to standard cell 22 layout
+    default_colors = ["#6429b1", '#03505E', '#1f77b4', '#8c564b', '#2ca02c', '#d62728', '#9467bd', '#e377c2', '#7f7f7f', '#bcbd22']
+    default_markers = ['D', 'D', 'o', 's', '^', 'v']
+    
+    unique_methods = list(results_by_method.keys())
+    
+    LABEL_MAP = {
+        "report": "RETIS",
+        "apptis": "StapleTIS",
+        "repptis": "REPPTIS"
+    }
+
+    for i, method in enumerate(unique_methods):
+        mapped_method = LABEL_MAP.get(method.lower(), method)
+        
+        if mapped_method == "RETIS":
+            color = "#000000"
+            marker = "o"
+        elif mapped_method == "StapleTIS":
+            color = "#E97414"
+            marker = "o"
+        elif mapped_method == "REPPTIS":
+            color = "#d62728"
+            marker = "D"
+        else:
+            color = default_colors[i % len(default_colors)]
+            marker = default_markers[i % len(default_markers)]
+            
+        rgb = mcolors.to_rgb(color)
+        light_rgb = tuple(0.7 * c + 0.3 * 1.0 for c in rgb)
+        
+        xvals = sorted(list(results_by_method[method].keys()))
+        means = []
+        stds = []
+        for xv in xvals:
+            entries = results_by_method[method][xv]
+            vals = np.array([e["ptot"] for e in entries], dtype=float)
+            explicit_errs = np.array([e["err"] for e in entries if e["err"] is not None], dtype=float)
+            means.append(np.mean(vals))
+            if explicit_errs.size == len(entries):
+                stds.append(np.sqrt(np.mean(explicit_errs ** 2)))
+            else:
+                stds.append(np.std(vals))
+        
+        ax.errorbar(xvals, means, yerr=stds, fmt=marker, color=color, label=mapped_method,
+                    markersize=7, alpha=0.95, capsize=4, elinewidth=1.5,
+                    markeredgewidth=1.0, markeredgecolor=color,
+                    markerfacecolor=light_rgb, zorder=3)
+
+    if args.x_axis == "gamma":
+        ax.set_xlabel(r"$\gamma$", fontsize=15)
+    else:
+        ax.set_xlabel(r"$\Delta\lambda$ interfaces", fontsize=15)
+    ax.set_ylabel(r"$P_{\mathrm{cross}}$", fontsize=15)
+    style_axes(ax)
+
+    legend = ax.legend(frameon=True, fontsize=12)
+    if legend:
+        legend.get_frame().set_facecolor('white')
+        legend.get_frame().set_edgecolor('none')
+
+    fig.savefig(args.output, dpi=300, bbox_inches='tight')
+    png_output = os.path.splitext(args.output)[0] + '.png'
+    fig.savefig(png_output, dpi=300, bbox_inches='tight')
+    logging.info(f"Saved Ptot vs gamma plot to {args.output} and {png_output}")
+    plt.close(fig)
+
+    # -------- PLOT 2: Relative Difference --------
+    fig2, ax2 = plt.subplots(figsize=(6, 5), facecolor='white', layout='constrained')
+    
+    all_xvals = sorted(list(set(g for method in results_by_method for g in results_by_method[method])))
+    ref_values = {}
+    ref_errs = {}
+    for g in all_xvals:
+        if "report" in results_by_method and g in results_by_method["report"]:
+            ref_src = results_by_method["report"][g]
+        elif "apptis" in results_by_method and g in results_by_method["apptis"]:
+            ref_src = results_by_method["apptis"][g]
+        else:
+            ref_src = None
+            
+        if ref_src:
+            ref_values[g] = np.mean([e["ptot"] for e in ref_src])
+            valid_errs = [e["err"] for e in ref_src if e["err"] is not None]
+            if len(valid_errs) == len(ref_src) and len(valid_errs) > 0:
+                ref_errs[g] = np.sqrt(np.mean(np.array(valid_errs)**2))
+            else:
+                ref_errs[g] = 0.0
+        else:
+            ref_values[g] = None
+            ref_errs[g] = 0.0
+            
+    for i, method in enumerate(unique_methods):
+        mapped_method = LABEL_MAP.get(method.lower(), method)
+        
+        if mapped_method == "RETIS":
+            color = "#000000"
+            marker = "o"
+        elif mapped_method == "StapleTIS":
+            color = "#E97414"
+            marker = "o"
+        elif mapped_method == "REPPTIS":
+            color = "#d62728"
+            marker = "D"
+        else:
+            color = default_colors[i % len(default_colors)]
+            marker = default_markers[i % len(default_markers)]
+            
+        rgb = mcolors.to_rgb(color)
+        light_rgb = tuple(0.7 * c + 0.3 * 1.0 for c in rgb)
+        
+        xvals = sorted(list(results_by_method[method].keys()))
+        rel_diff_means = []
+        rel_diff_stds = []
+        valid_xvals = []
+        
+        for g in xvals:
+            ref = ref_values.get(g)
+            ref_err = ref_errs.get(g, 0.0)
+            if ref is not None and ref != 0:
+                vals = np.array([e["ptot"] for e in results_by_method[method][g]], dtype=float)
+                errs = np.array([e["err"] if e["err"] is not None else 0.0 for e in results_by_method[method][g]], dtype=float)
+                
+                rel_vals = (vals - ref) / ref * 100.0
+                rel_diff_means.append(np.mean(rel_vals))
+
+                has_explicit = all(e["err"] is not None for e in results_by_method[method][g])
+                if has_explicit and mapped_method == "RETIS":
+                    rel_errs = np.array([e["err"] / ref for e in results_by_method[method][g]], dtype=float)
+                    rel_diff_stds.append(100.0 * np.sqrt(np.mean(rel_errs**2)))
+                elif has_explicit:
+                    prop_errs = 100.0 * np.sqrt((errs / ref)**2 + (vals * ref_err / ref**2)**2)
+                    rel_diff_stds.append(np.sqrt(np.mean(prop_errs**2)))
+                else:
+                    rel_diff_stds.append(np.std(rel_vals))
+                valid_xvals.append(g)
+                
+        if valid_xvals:
+            ax2.errorbar(valid_xvals, rel_diff_means, yerr=rel_diff_stds, fmt=marker, color=color, label=mapped_method,
+                         markersize=7, alpha=0.95, capsize=4, elinewidth=1.5,
+                         markeredgewidth=1.0, markeredgecolor=color,
+                         markerfacecolor=light_rgb, zorder=3)
+                         
+    if args.x_axis == "gamma":
+        ax2.set_xlabel(r"$\gamma$", fontsize=15)
+    else:
+        ax2.set_xlabel(r"$\Delta\lambda$ interfaces", fontsize=15)
+    ax2.set_ylabel(r"Relative Difference (\%)", fontsize=15)
+    style_axes(ax2)
+
+    legend2 = ax2.legend(frameon=True, fontsize=12)
+    if legend2:
+        legend2.get_frame().set_facecolor('white')
+        legend2.get_frame().set_edgecolor('none')
+
+    base, ext = os.path.splitext(args.output)
+    reldiff_pdf = f"{base}_reldiff{ext}"
+    reldiff_png = f"{base}_reldiff.png"
+    
+    fig2.savefig(reldiff_pdf, dpi=300, bbox_inches='tight')
+    fig2.savefig(reldiff_png, dpi=300, bbox_inches='tight')
+    logging.info(f"Saved Ptot vs gamma relative difference plot to {reldiff_pdf} and {reldiff_png}")
+    plt.close(fig2)
+
+if __name__ == "__main__":
+    args = parse_args()
+    plot_ptot_gamma(args)

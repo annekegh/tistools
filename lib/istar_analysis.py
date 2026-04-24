@@ -1330,7 +1330,7 @@ def plot_rv_comp(pes, interfaces, n_repptis, n_staple, pe_idxs=None):
     cycle_nrs_repptis = {}
     cycle_nrs_staple = {}
     fig, ax = plt.subplots()
-    ax.set_xlabel("Position x (=$\lambda$)")
+    ax.set_xlabel(r"Position x (=$\lambda$)")
     ax.set_ylabel("Momentum p")
 
     for i, pe in enumerate(pes):
@@ -2367,7 +2367,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
             #         color=forward_colors[idx], alpha=0.5)
     
     # Configure the forward plot
-    ax4.set_xlabel('Starting interface Position (λ$\\subset$)')
+    ax4.set_xlabel('Starting interface Position ($\lambda$$\\subset$)')
     ax4.set_ylabel('Probability q(i,k)')
     ax4.set_title('Forward Transition Probabilities (L→R)', fontsize=12)
     ax4.set_ylim(0, 1.05)
@@ -2421,7 +2421,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                     color=backward_colors[idx], alpha=0.5)
     
     # Configure the backward plot
-    ax5.set_xlabel('Starting interface Position (λ)$\\supset$')
+    ax5.set_xlabel('Starting interface Position ($\lambda$)$\\supset$')
     ax5.set_ylabel('Probability q(i,k)')
     ax5.set_title('Backward Transition Probabilities (R→L)', fontsize=12)
     ax5.set_ylim(0, 1.05)
@@ -2487,7 +2487,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         
         # Add line plot for mean differences
         line = ax6_twin.plot(valid_positions_fwd, valid_mean_diff_fwd, 'o--', color='red', 
-                                    linewidth=2, markersize=8, label='Mean |Δq|')
+                                    linewidth=2, markersize=8, label=r'Mean |$\Delta$q|')
         
         # Add annotations showing variation and sample size
         for pos, var, count, label in zip(valid_positions_fwd, valid_variation_fwd, valid_counts_fwd, valid_state_labels_fwd):
@@ -2502,7 +2502,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ax6.set_title('Forward Memory Retention: Variation in Crossing Probabilities', fontsize=12)
         
         # Configure twin axis
-        ax6_twin.set_ylabel('Mean |Δq| (%)', color='red')
+        ax6_twin.set_ylabel(r'Mean |$\Delta$q| (%)', color='red')
         ax6_twin.tick_params(axis='y', labelcolor='red')
         
         # Set reasonable y-limits
@@ -2522,7 +2522,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 Line2D([0], [0], color='black', lw=0, marker='s', markersize=10, markerfacecolor='C0', alpha=0.7),
                 Line2D([0], [0], color='red', lw=2, marker='o', markersize=6)
         ]
-        ax6.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left')
+        ax6.legend(custom_lines, ['Std. Dev. (%)', r'Mean |$\Delta$q| (%)'], loc='upper left')
         
     else:
         ax6.text(0.5, 0.5, "Insufficient data for forward memory retention analysis", 
@@ -2571,7 +2571,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         
         # Add line plot for mean differences
         line = ax7_twin.plot(valid_positions_bwd, valid_mean_diff_bwd, 'o--', color='red', 
-                                    linewidth=2, markersize=8, label='Mean |Δq|')
+                                    linewidth=2, markersize=8, label=r'Mean |$\Delta$q|')
         
         # Add annotations showing variation and sample size
         for pos, var, count, label in zip(valid_positions_bwd, valid_variation_bwd, valid_counts_bwd, valid_state_labels_bwd):
@@ -2586,7 +2586,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ax7.set_title('Backward Memory Retention: Variation in Crossing Probabilities', fontsize=12)
         
         # Configure twin axis
-        ax7_twin.set_ylabel('Mean |Δq| (%)', color='red')
+        ax7_twin.set_ylabel(r'Mean |$\Delta$q| (%)', color='red')
         ax7_twin.tick_params(axis='y', labelcolor='red')
         
         # Set reasonable y-limits
@@ -2606,7 +2606,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 Line2D([0], [0], color='black', lw=0, marker='s', markersize=10, markerfacecolor='C0', alpha=0.7),
                 Line2D([0], [0], color='red', lw=2, marker='o', markersize=6)
         ]
-        ax7.legend(custom_lines, ['Std. Dev. (%)', 'Mean |Δq| (%)'], loc='upper left')
+        ax7.legend(custom_lines, ['Std. Dev. (%)', r'Mean |$\Delta$q| (%)'], loc='upper left')
         
     else:
         ax7.text(0.5, 0.5, "Insufficient data for backward memory retention analysis", 
@@ -2655,8 +2655,8 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                     bbox=dict(facecolor='white', alpha=0.7, boxstyle='round,pad=0.2'))
     
     # Enhance the appearance
-    ax8.set_xlabel('Interface Position (λ)', fontsize=12)
-    ax8.set_ylabel('Free Energy G(λ) (kT)', fontsize=12)
+    ax8.set_xlabel(r'Interface Position ($\lambda$)', fontsize=12)
+    ax8.set_ylabel(r'Free Energy G($\lambda$) (kT)', fontsize=12)
     ax8.set_title('Free Energy Profile Along Interface Coordinate', fontsize=14)
     ax8.grid(True, alpha=0.3, linestyle='--')
     
@@ -3100,7 +3100,7 @@ def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, min_samp
                         geo_q = dist_km2_to_km1 / (dist_km1_to_k + dist_km2_to_km1) if (dist_km1_to_k + dist_km2_to_km1) > 0 else 0.5
                         
                         # Combine geometric factor with free energy difference
-                        # For forward transitions: P = 1/(1 + exp(ΔG))
+                        # For forward transitions: P = 1/(1 + exp($\Delta$G))
                         ref_prob = 1.0 / (1.0 + np.exp(delta_G[k-1, k]) * (1-geo_q)/geo_q)
                     else:
                         # Without geometry, just use free energy
@@ -3128,7 +3128,7 @@ def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, min_samp
                         geo_q = dist_kp1_to_kp2 / (dist_k_to_kp1 + dist_kp1_to_kp2) if (dist_k_to_kp1 + dist_kp1_to_kp2) > 0 else 0.5
                         
                         # Combine geometric factor with free energy difference
-                        # For backward transitions: P = 1/(1 + exp(-ΔG))
+                        # For backward transitions: P = 1/(1 + exp(-$\Delta$G))
                         ref_prob = 1.0 / (1.0 + np.exp(-delta_G[k, k+1]) * (1-geo_q)/geo_q)
                     else:
                         # Without geometry, just use free energy
@@ -3308,7 +3308,7 @@ def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_sa
                         geo_q = dist_km2_to_km1 / (dist_km1_to_k + dist_km2_to_km1) if (dist_km1_to_k + dist_km2_to_km1) > 0 else 0.5
                         
                         # Combine geometric factor with free energy difference
-                        # For forward transitions: P = 1/(1 + exp(ΔG))
+                        # For forward transitions: P = 1/(1 + exp($\Delta$G))
                         ref_prob = 1.0 / (1.0 + np.exp(delta_G[k-1, k]) * (1-geo_q)/geo_q)
                     else:
                         # Without geometry, just use free energy
@@ -3336,7 +3336,7 @@ def analyze_momentum_vs_free_energy(interfaces, q_matrix, q_weights=None, min_sa
                         geo_q = dist_kp1_to_kp2 / (dist_k_to_kp1 + dist_kp1_to_kp2) if (dist_k_to_kp1 + dist_kp1_to_kp2) > 0 else 0.5
                         
                         # Combine geometric factor with free energy difference
-                        # For backward transitions: P = 1/(1 + exp(-ΔG))
+                        # For backward transitions: P = 1/(1 + exp(-$\Delta$G))
                         ref_prob = 1.0 / (1.0 + np.exp(delta_G[k+1, k]) * (1-geo_q)/geo_q)
                     else:
                         # Without geometry, just use free energy
@@ -3497,7 +3497,7 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
                     dG = -np.log(q_fw / (1 - q_fw))
                 
                 forward_estimate = np.nan_to_num(dG, posinf=6.0, neginf=-6.0)
-                print(f"Forward ΔG estimate for interfaces {i}-{i+1}: {dG:.4f} using q[{start},{i+1}]={q_fw:.4f}, weight={weight:.1f}")
+                print(rf"Forward $\Delta$G estimate for interfaces {i}-{i+1}: {dG:.4f} using q[{start},{i+1}]={q_fw:.4f}, weight={weight:.1f}")
                 break  # Take only the first valid estimate
         
         # Backward cascade: try q[i+2,i], then q[i+3,i], etc.
@@ -3520,7 +3520,7 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
                     dG = np.log(q_bw / (1 - q_bw))
                 
                 backward_estimate = np.nan_to_num(dG, posinf=6.0, neginf=-6.0)
-                print(f"Backward ΔG estimate for interfaces {i}-{i+1}: {dG:.4f} using q[{start},{i}]={q_bw:.4f}, weight={weight:.1f}")
+                print(rf"Backward $\Delta$G estimate for interfaces {i}-{i+1}: {dG:.4f} using q[{start},{i}]={q_bw:.4f}, weight={weight:.1f}")
                 break  # Take only the first valid estimate
         
         # Combine forward and backward estimates if available
@@ -3531,7 +3531,7 @@ def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_s
             
             # Report the difference to highlight any systematic bias
             bias = forward_estimate - backward_estimate
-            print(f"Combined ΔG for interfaces {i}-{i+1}: {combined_dG:.4f} (forward-backward bias: {bias:.4f})")
+            print(rf"Combined $\Delta$G for interfaces {i}-{i+1}: {combined_dG:.4f} (forward-backward bias: {bias:.4f})")
             
             delta_G[i, i+1] = combined_dG
             delta_G[i+1, i] = -combined_dG
