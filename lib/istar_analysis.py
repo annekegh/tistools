@@ -1972,7 +1972,7 @@ def memory_analysis(w_path, tr=False):
 
     return q_k, q_tot
 
-def ploc_memory(pathensembles, interfaces, trr=True, correct_ha=False):
+def ploc_memory(pathensembles, interfaces, trr=True):
     """
     Calculate global crossing probabilities using multiple methods and compare their results.
     
@@ -1994,9 +1994,6 @@ def ploc_memory(pathensembles, interfaces, trr=True, correct_ha=False):
     trr : bool, optional
         If True, enforces time-reversal symmetry in the APPTIS calculation.
         Default is True.
-    correct_ha : bool, optional
-        If True, applies high acceptance correction to the APPTIS calculation.
-        Default is False.
     
     Returns
     -------
@@ -2004,7 +2001,6 @@ def ploc_memory(pathensembles, interfaces, trr=True, correct_ha=False):
         Dictionary containing global crossing probabilities calculated with different methods:
         - "mlst": Milestoning probabilities
         - "apptis": APPTIS probabilities using iSTAR without HA correction
-        - "apptis_ha": APPTIS probabilities using iSTAR with HA correction
         - "repptis": REPPTIS probabilities
         
     Notes
@@ -2012,7 +2008,6 @@ def ploc_memory(pathensembles, interfaces, trr=True, correct_ha=False):
     This function also generates a logarithmic plot comparing the four methods, showing:
     - How estimates of crossing probabilities vary between methods
     - Whether the system exhibits significant memory effects (differences between methods)
-    - Impact of high acceptance correction on APPTIS results
     - Which method might be most appropriate for the system under study
     
     Significant differences between methods usually indicate memory effects or
@@ -2047,14 +2042,6 @@ def ploc_memory(pathensembles, interfaces, trr=True, correct_ha=False):
             z1, z2, y1, y2 = global_pcross_msm_star(Mi)
             plocs["apptis"].append(y1[0][0])
         
-        # APPTIS p_loc (with HA correction)
-        if i < len(pathensembles)-1:
-            wi_ha = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], len(interfaces), tr=trr, correct_ha=True, norm=False)
-            pi_ha, _ = get_transition_probs_weights(wi_ha)
-            Mi_ha = construct_M_istar(pi_ha, max(4, 2*len(interfaces[:i+2])), len(interfaces[:i+2]))
-            z1_ha, z2_ha, y1_ha, y2_ha = global_pcross_msm_star(Mi_ha)
-            plocs["apptis_ha, norm"].append(y1_ha[0][0])
-
     _, _, plocs["repptis"] = get_global_probs_from_dict(repptisploc)
 
     print("\n=== Global Crossing Probability Analysis ===")
@@ -2064,11 +2051,8 @@ def ploc_memory(pathensembles, interfaces, trr=True, correct_ha=False):
     print("\nREPPTIS p_loc:")
     print(np.array2string(np.array(plocs["repptis"]), precision=4, suppress_small=True))
     
-    print("\nAPPTIS p_loc (no HA correction):")
+    print("\nAPPTIS p_loc:")
     print(np.array2string(np.array(plocs["apptis"]), precision=4, suppress_small=True))
-    
-    print("\nAPPTIS p_loc (with HA correction):")
-    print(np.array2string(np.array(plocs["apptis_ha"]), precision=4, suppress_small=True))
 
     # Make a figure of the global crossing probabilities
     plt.rcParams['text.usetex'] = True
