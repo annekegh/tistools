@@ -1701,7 +1701,7 @@ def ploc_repptis_from_staples(pes, interfaces, n_int=None, staple_weights=None):
     ploc_istar = {}
     
     # Compute weight matrices for all path ensembles
-    X = compute_weight_matrices(pes, interfaces, n_int=n_int, weights=staple_weights, tr=True)
+    X = compute_weight_matrices(pes, interfaces, n_int=n_int, weights=staple_weights, tr=False)
     
     if n_int is None:
         n_int = len(pes)
@@ -1972,7 +1972,7 @@ def memory_analysis(w_path, tr=False):
 
     return q_k, q_tot
 
-def ploc_memory(pathensembles, interfaces, trr=True):
+def ploc_memory(pathensembles, interfaces, trr=False):
     """
     Calculate global crossing probabilities using multiple methods and compare their results.
     
@@ -2022,7 +2022,7 @@ def ploc_memory(pathensembles, interfaces, trr=True):
 
     for i, pe in enumerate(pathensembles):
         # REPPTIS p_loc
-        repptisploc.append(get_local_probs(pe, tr=False))
+        repptisploc.append(get_local_probs(pe, tr=trr))
 
         # Milestoning p_loc
         if i == 1:

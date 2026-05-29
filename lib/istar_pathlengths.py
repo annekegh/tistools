@@ -1770,10 +1770,34 @@ def set_taus_staple(pathensembles, interfaces, lm1=None):
     tau2_matrices = np.array([np.nan_to_num(pe.tau2avg, nan=0.0) for pe in pathensembles])
     tau_matrices = np.array([np.nan_to_num(pe.tauavg, nan=0.0) for pe in pathensembles])
     
-    tau_avg['tau1'] = np.average(tau1_matrices, axis=0, weights=totweights)
-    tau_avg['tau2'] = np.average(tau2_matrices, axis=0, weights=totweights)
-    tau_avg['tau'] = np.average(tau_matrices, axis=0, weights=totweights)
-    
+    tau_avg['tau1'] = np.zeros((n_intf+1, n_intf), dtype=float)
+    tau_avg['tau2'] = np.zeros((n_intf+1, n_intf), dtype=float)
+    tau_avg['tau'] = np.zeros((n_intf+1, n_intf), dtype=float)
+
+    for start in range(-1, n_intf):
+        for end in range(n_intf):
+            idx = start + 1
+            vals = tau1_matrices[:, idx, end]
+            valid = vals != 0
+            if np.any(valid):
+                w = totweights[valid]
+                if w.sum() > 0:
+                    tau_avg['tau1'][idx, end] = np.sum(vals[valid] * w) / np.sum(w)
+
+            vals = tau2_matrices[:, idx, end]
+            valid = vals != 0
+            if np.any(valid):
+                w = totweights[valid]
+                if w.sum() > 0:
+                    tau_avg['tau2'][idx, end] = np.sum(vals[valid] * w) / np.sum(w)
+
+            vals = tau_matrices[:, idx, end]
+            valid = vals != 0
+            if np.any(valid):
+                w = totweights[valid]
+                if w.sum() > 0:
+                    tau_avg['tau'][idx, end] = np.sum(vals[valid] * w) / np.sum(w)
+
     return tau_avg
 
 

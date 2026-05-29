@@ -13,3 +13,5 @@ from .block_error_analysis import *
 from .istar_analysis import *
 from .istar_pathlengths import *
 from .repptis_pathlengths import *
+from .tica import *
+from .block_error_analysis import *

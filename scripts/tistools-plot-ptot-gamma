@@ -585,7 +585,8 @@ def plot_ptot_gamma(args):
     if args.x_axis == "gamma":
         ax.set_xlabel(r"$\gamma$", fontsize=15)
     else:
-        ax.set_xlabel(r"$\Delta\lambda$ interfaces", fontsize=15)
+        # ax.set_xlabel(r"$\Delta\lambda$ interfaces", fontsize=15)
+        ax.set_xlabel(r"\# interfaces", fontsize=15)
     ax.set_ylabel(r"$P_{\mathrm{cross}}$", fontsize=15)
     style_axes(ax)
 
@@ -679,7 +680,7 @@ def plot_ptot_gamma(args):
     if args.x_axis == "gamma":
         ax2.set_xlabel(r"$\gamma$", fontsize=15)
     else:
-        ax2.set_xlabel(r"$\Delta\lambda$ interfaces", fontsize=15)
+        ax2.set_xlabel(r"\# interfaces", fontsize=15)
     ax2.set_ylabel(r"Relative Difference (\%)", fontsize=15)
     style_axes(ax2)
 
@@ -696,6 +697,37 @@ def plot_ptot_gamma(args):
     fig2.savefig(reldiff_png, dpi=300, bbox_inches='tight')
     logging.info(f"Saved Ptot vs gamma relative difference plot to {reldiff_pdf} and {reldiff_png}")
     plt.close(fig2)
+    
+    # -------- EXPORT REPORT --------
+    report_txt = os.path.splitext(args.output)[0] + '_report.txt'
+    with open(report_txt, 'w', encoding='utf-8') as f:
+        f.write("Ptot vs Gamma Report\n")
+        f.write("====================\n\n")
+        
+        for method in unique_methods:
+            mapped_method = LABEL_MAP.get(method.lower(), method)
+            f.write(f"Method: {mapped_method}\n")
+            f.write("-" * (8 + len(mapped_method)) + "\n")
+            
+            xvals = sorted(list(results_by_method[method].keys()))
+            f.write(f"{'Gamma/Delta L':<15} | {'Ptot':<20} | {'Error':<20}\n")
+            f.write("-" * 60 + "\n")
+            
+            for xv in xvals:
+                entries = results_by_method[method][xv]
+                vals = np.array([e["ptot"] for e in entries], dtype=float)
+                explicit_errs = np.array([e["err"] for e in entries if e["err"] is not None], dtype=float)
+                
+                mean_ptot = np.mean(vals)
+                if explicit_errs.size == len(entries):
+                    mean_err = np.sqrt(np.mean(explicit_errs ** 2))
+                else:
+                    mean_err = np.std(vals)
+                
+                f.write(f"{xv:<15.6g} | {mean_ptot:<20.6e} | {mean_err:<20.6e}\n")
+            f.write("\n")
+            
+    logging.info(f"Saved textual report to {report_txt}")
 
 if __name__ == "__main__":
     args = parse_args()

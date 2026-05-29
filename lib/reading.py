@@ -431,51 +431,62 @@ class PathEnsemble(object):
             self.orders = orders
             return
 
-        check_cycnum = (self.cyclenumbers == cyclenumbers).all()
-        check_length = (self.lengths == lengths).all()
-        check_flag = (self.flags == flags).all()
-        check_generation = (self.generation == generation).all()
+        ACCFLAGS, REJFLAGS = set_flags_ACC_REJ()
+        common_len = min(len(self.cyclenumbers), len(cyclenumbers))
 
         if not acc_only:
-            assert check_cycnum, "cyclenumbers do not match"
-            assert check_length, "lengths do not match"
-            assert check_flag, "flags do not match"
-            assert check_generation, "generations do not match"
-            print("Everything matches, setting orders.")
-            self.orders = orders
-            if save:
-                print(f"Saving orders to {self.name}/order.npy")
-                np.save(self.name + "/order.npy", np.array(orders, dtype=object),
-                        allow_pickle=True)
-            return
+            assert (self.cyclenumbers[:common_len] == cyclenumbers[:common_len]).all(), "cyclenumbers do not match"
+            assert (self.lengths[:common_len] == lengths[:common_len]).all(), "lengths do not match"
+            assert (self.flags[:common_len] == flags[:common_len]).all(), "flags do not match"
+            assert (self.generation[:common_len] == generation[:common_len]).all(), "generations do not match"
+        else:
+            if common_len > 0:
+                acc_idx = np.where(
+                    np.isin(self.flags[:common_len], ACCFLAGS) | \
+                    np.isin(flags[:common_len], ACCFLAGS)
+                )[0]
+                if len(acc_idx) > 0:
+                    if not np.all(self.cyclenumbers[acc_idx] == cyclenumbers[acc_idx]):
+                        diff_idx = acc_idx[self.cyclenumbers[acc_idx] != cyclenumbers[acc_idx]][0]
+                        window_start = max(0, diff_idx - 3)
+                        window_end = min(common_len, diff_idx + 4)
+                        print("Mismatch in accepted cyclenumbers near index", diff_idx)
+                        print("  self cyclenumbers [start:end]:", self.cyclenumbers[window_start:window_end])
+                        print("  file cyclenumbers [start:end]:", cyclenumbers[window_start:window_end])
+                        raise ValueError(
+                            "Mismatch in accepted cyclenumbers. "
+                            f"First differing accepted index: {diff_idx}."
+                        )
+                    if not np.all(self.lengths[acc_idx] == lengths[acc_idx]):
+                        raise ValueError("Mismatch in accepted lengths.")
+                    if not np.all(self.flags[acc_idx] == flags[acc_idx]):
+                        raise ValueError("Mismatch in accepted flags.")
+                    if not np.all(self.generation[acc_idx] == generation[acc_idx]):
+                        diff_idx = acc_idx[self.generation[acc_idx] != generation[acc_idx]][0]
+                        window_start = max(0, diff_idx - 3)
+                        window_end = min(common_len, diff_idx + 4)
+                        print("Mismatch in accepted generation types near index", diff_idx)
+                        print("  self generation [start:end]:", self.generation[window_start:window_end])
+                        print("  file generation [start:end]:", generation[window_start:window_end])
+                        raise ValueError("Mismatch in accepted generation types.")
 
-        if check_cycnum and check_length and check_flag and check_generation:
-            print("Everything matches, setting orders.")
-            self.orders = orders
-            if save:
-                print(f"Saving orders to {self.name}/order.npy")
-                np.save(self.name + "/order.npy", np.array(orders, dtype=object),
-                        allow_pickle=True)
-            return
+        if len(self.cyclenumbers) > common_len:
+            extra_flags = self.flags[common_len:]
+            if not np.all(np.isin(extra_flags, REJFLAGS)):
+                raise ValueError(
+                    "Unexpected extra accepted cycles in path ensemble beyond order file."
+                )
+            print("Ignored trailing rejected cycles in path ensemble beyond order file.")
 
-        # Check for mismatches in rejected paths only
-        for el, pe_el, typ in zip([cyclenumbers, lengths, flags, generation],
-                                  [self.cyclenumbers, self.lengths, self.flags,
-                                   self.generation],
-                                  ["cyclenumbers", "lengths", "flags",
-                                   "generation"]):
-            idx_mismatch = np.where(el != pe_el)[0]
-            if len(idx_mismatch) == 0:
-                continue
-            if (flags[idx_mismatch] != "REJ").all():
-                print(f"Mismatch in REJ paths for {typ}, ignoring.")
-                continue
-            else:
-                msg = f"Mismatch in {typ} for accepted paths.\n"
-                msg += f"Mismatching ids: {idx_mismatch}"
-                raise ValueError(msg)
+        if len(cyclenumbers) > common_len:
+            extra_flags = flags[common_len:]
+            if not np.all(np.isin(extra_flags, REJFLAGS)):
+                raise ValueError(
+                    "Unexpected extra accepted cycles in order file beyond path ensemble."
+                )
+            print("Ignored trailing rejected cycles in order file beyond path ensemble.")
 
-        print("Everything matched for the ACC paths, setting orders.")
+        print("Everything matched for the paths, setting orders.")
         self.orders = orders
         if save:
             print(f"Saving orders to {self.name}/order.npy")
@@ -864,6 +875,8 @@ def load_order_parameters(fn, load=False, acc_only=True):
     tuple
         A tuple containing:
         - subdata_list (list of np.ndarray): A list of numpy arrays containing the order parameter trajectories.
+          Placeholder empty arrays are inserted for any skipped cycle numbers so that the list keeps
+          one entry per expected cycle position.
         - cyclenumbers (np.ndarray): Array of cycle numbers.
         - lengths (np.ndarray): Array of path lengths.
         - flags (np.ndarray): Array of flags indicating the status of each trajectory.
@@ -893,10 +906,11 @@ def load_order_parameters(fn, load=False, acc_only=True):
     # Initialize lists to store data
     cyclenumbers, lengths, flags, generations = [], [], ["ACC"], []
     subdata_list, subdata = [], []
+    prev_cycle_num = None
     ntraj, ntraj_started, last_length = 0, 0, 0
 
     # Check first line
-    with open(fn, "r+") as f:
+    with open(fn, "r") as f:
         if not f.readline().startswith("# Cycle:"):
             raise ValueError(f"First line of {fn} does not start with `# Cycle:`.")
 
@@ -941,10 +955,36 @@ def load_order_parameters(fn, load=False, acc_only=True):
 
                 # Extract the time, cyclenumber, flag, generation
                 words = line.split()
-                cyclenumbers.append(int(words[2][:-1]))  # Remove the last character, which is a comma
+                cycle_num = int(words[2][:-1])  # Remove the last character, which is a comma
+                if prev_cycle_num is None:
+                    if cycle_num < 0:
+                        raise ValueError(
+                            f"Cycle numbers must be non-negative, but found {cycle_num} in {fn}"
+                        )
+                    missing_cycles = cycle_num
+                    start_missing = 0
+                else:
+                    if cycle_num <= prev_cycle_num:
+                        raise ValueError(
+                            f"Cycle numbers must increase, but found {cycle_num} after {prev_cycle_num} in {fn}"
+                        )
+                    missing_cycles = cycle_num - prev_cycle_num - 1
+                    start_missing = prev_cycle_num + 1
+
+                if missing_cycles > 0:
+                    for missing_cycle in range(start_missing, cycle_num):
+                        subdata_list.append(np.array([]))
+                        cyclenumbers.append(missing_cycle)
+                        lengths.append(0)
+                        flags.append("REJ")
+                        generations.append("")
+                        ntraj += 1
+
+                cyclenumbers.append(cycle_num)
                 flags.append(words[4][:-1])  # Remove the last character, which is a comma: ACC,
-                generations.append(words[6][2:4])  # Remove characters: ('sh',
+                generations.append(words[6][:-1])  # Remove characters: ('sh',
                 lengths.append(0)  # Length to be updated
+                prev_cycle_num = cycle_num
 
             # Collect order parameter of traj
             else:

@@ -1,19 +1,19 @@
 #!/usr/bin/env python
 """
-tistools-running-error: Running estimate error analysis for REPPTIS simulations.
+tistools-running-error-staple: Running estimate error analysis for APPTIS (STAPLE) simulations.
 
 Computes running estimates at regular intervals using recursive formulas.
 Useful for monitoring convergence and computing error when block error is large.
 
 Outputs:
-  - Running estimates of tau, flux, P_cross, rate, MFPT
+  - Running estimates of P_staple, Q_staple, P_cross
   - Both MSM-based and standard REPPTIS methods
 
 Usage:
-    tistools-running-error <simulation_dir> [options]
+    tistools-running-error-staple <simulation_dir> [options]
 
 Example:
-    tistools-running-error /path/to/repptis_sim --interval 10000 --skip 25000
+    tistools-running-error-staple /path/to/repptis_sim --interval 10000 --skip 25000
 """
 
 import argparse
@@ -28,7 +28,7 @@ import numpy as np
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Running estimate error analysis for REPPTIS simulations.",
+        description="Running estimate error analysis for APPTIS (STAPLE) simulations.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -73,7 +73,7 @@ def main():
 
     # Import tistools functions
     try:
-        from tistools import load_path_ensembles, block_error_analysis
+        from tistools import load_path_ensembles, block_error_analysis_staple
     except ImportError as e:
         print(f"Error: Could not import tistools: {e}", file=sys.stderr)
         sys.exit(1)
@@ -114,11 +114,8 @@ def main():
         log("RUNNING ESTIMATES")
         log("-" * 80)
         header = (
-            f"{'Cycle':>8} "
-            f"{'tau_m':>12} {'MSM_tau_p':>12} {'REP_tau_p':>12} "
-            f"{'MSM_flux':>12} {'REP_flux':>12} "
-            f"{'MSM_Pcross':>12} {'REP_Pcross':>12} "
-            f"{'MSM_rate':>12} {'REP_rate':>12}"
+            f"{'Cycle':>8} {'P_staple':>15} {'Q_staple':>15} "
+            f"{'REP_Pcross':>15} {'MSM_Pcross_REP':>20} {'MSM_Pcross_STAPLE':>20}"
         )
         log(header)
         log("-" * len(header))
@@ -126,7 +123,7 @@ def main():
     # Run block error analysis (which prints running estimates)
     # We capture and parse the output, or run our own loop
     # For simplicity, call the existing function with interval
-    block_error_analysis(path_ensembles, interfaces, interval=args.interval, load=False)
+    block_error_analysis_staple(path_ensembles, interfaces, interval=args.interval, load=False)
 
     log("")
     log("=" * 80)

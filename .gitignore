@@ -13,3 +13,5 @@ tistools.egg-info/
 test/features_cache/
 test/classification_results.csv
 test/template_features_cache/
+.vscode/*
+lightning_logs/*

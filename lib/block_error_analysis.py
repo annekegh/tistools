@@ -16,11 +16,11 @@ from .repptis_pathlengths import set_taus, collect_tau, collect_tau1, collect_ta
 from .repptis_analysis import ACCFLAGS, REJFLAGS
 
 # REPPTIS analysis
-from tistools import get_local_probs, get_global_probs_from_dict, get_global_probs_from_local
+from .repptis_analysis import get_local_probs, get_global_probs_from_dict, get_global_probs_from_local
 
 # MSM functions
 from .repptis_msm import construct_M, construct_M_N3, global_pcross_msm
-from .repptis_msm import mfpt_to_first_last_state, construct_tau_vector
+from .repptis_msm import mfpt_to_first_last_state, construct_tau_vector, mfpt_to_absorbing_states
 from .istar_analysis import construct_M_istar, compute_weight_matrices, compute_weight_matrix, get_transition_probs_weights, global_pcross_msm_star
 
 # Writing output
@@ -123,18 +123,19 @@ def block_error_analysis(path_ensembles, interfaces, interval, load=False):
 
         # Validate the loaded data: check for empty values or NaNs
         # if taus is None or pcross is None or np.isnan(taus).any() or np.isnan(pcross).any():
-        if taus is None or pcross is None:
+        if taups is None or pcross is None:
             print("Invalid data in file, recalculating...")
 
             # If data is invalid, recalculate running estimates
-            _, taus, pcross, _, _, _, _, _ = calculate_running_estimate(path_ensembles, interfaces, interval)
+            _, taups, pcross, _, _, _, _, _ = calculate_running_estimate(path_ensembles, interfaces, interval)
     else:
         # If loading is disabled or the file doesn't exist, calculate running estimates
         # print("First time calculating the data file ...")
         _, taups, pcross, _, _, _, _, _, taums, fluxs, mfpts, rates = calculate_running_estimate(path_ensembles, interfaces, interval)
 
-    block_error_calculation(taus, interval, "Tau")
+    block_error_calculation(taups, interval, "Tau")
     block_error_calculation(pcross, interval, "Pcross")
+    block_error_calculation(fluxs, interval, "Flux")
 
 def block_error_analysis_staple(path_ensembles, interfaces, interval, load=False, pl=True):
     """
@@ -169,19 +170,19 @@ def block_error_analysis_staple(path_ensembles, interfaces, interval, load=False
     if load and os.path.exists(filename):
         # Attempt to load data from the file
         print("The data file exists, reading...")
-        _, taus, pcross = load_txt_data(filename)
+        _, taups, pcross = load_txt_data(filename)
 
         # Validate the loaded data: check for empty values or NaNs
-        # if taus is None or pcross is None or np.isnan(taus).any() or np.isnan(pcross).any():
-        if taus is None or pcross is None:
+        # if taups is None or pcross is None or np.isnan(taups).any() or np.isnan(pcross).any():
+        if taups is None or pcross is None:
             print("Invalid data in file, recalculating...")
 
             # If data is invalid, recalculate running estimates
-            _, _, p_staple, q_staple, pmms, pmps, ppms, ppps, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl)
+            _, _, p_staple, q_staple, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl)
     else:
         # If loading is disabled or the file doesn't exist, calculate running estimates
         print("First time calculating the data file ...")
-        _, _, p_staple, q_staple, pmms, pmps, ppms, ppps, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl)
+        _, _, p_staple, q_staple, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl)
 
     block_error_calculation(np.array(Pcrossfulls_repptis)[:,-1], interval, "Pcross_repptis")
     block_error_calculation(pcrepptis_MSM, interval, "Pcross_repp_MSM")
@@ -418,6 +419,7 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1, t
 
     # Prepare result storage
     cycles, taus, pcross = [], [], []
+    taups, taums, fluxs, mfpts, rates = [], [], [], [], []
     pmms, pmps, ppms, ppps, Pcrossfulls = [], [], [], [], []
     pathtypes = ("LML", "LMR", "RML", "RMR")
     
@@ -485,15 +487,20 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1, t
         _, _, _, h2 = mfpt_to_absorbing_states(M, np.nan_to_num(tau1), np.nan_to_num(tau_m), np.nan_to_num(tau2), absor, kept, remove_initial_m=False) #, doprint=True)
 
         MSM_tau_p = h1[0][0]
-        MSM_flux = (1 / (tau_m[0] + MSM_tau_p)) / time_conv
+        # MSM_flux = (1 / (tau_m[0] + MSM_tau_p)) / time_conv
+        MSM_flux = (1 / (tau_m[0] + MSM_tau_p))
         MSM_pcross = y1[0][0]
-        MSM_rate = MSM_flux * MSM_pcross * 1e12
-        MSM_MFPT = h2[0][0] * time_conv * 1e-12
+        # MSM_rate = MSM_flux * MSM_pcross * 1e12
+        MSM_rate = MSM_flux * MSM_pcross
+        # MSM_MFPT = h2[0][0] * time_conv * 1e-12
+        MSM_MFPT = h2[0][0] 
 
         REPPTIS_tau_pm = tau[1]
-        REPPTIS_flux = (1 / (tau_m[0] + REPPTIS_tau_pm)) / time_conv
+        # REPPTIS_flux = (1 / (tau_m[0] + REPPTIS_tau_pm)) / time_conv
+        REPPTIS_flux = (1 / (tau_m[0] + REPPTIS_tau_pm))
         REPPTIS_Pcross = Pcross_from_local[-1]
-        REPPTIS_rate = REPPTIS_flux * REPPTIS_Pcross * 1e12
+        # REPPTIS_rate = REPPTIS_flux * REPPTIS_Pcross * 1e12
+        REPPTIS_rate = REPPTIS_flux * REPPTIS_Pcross
         REPPTIS_MFPT = 1 / REPPTIS_rate
 
         # Print cycle information
@@ -524,6 +531,158 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1, t
     )
     return cycles, taups, pcross, pmms, pmps, ppms, ppps, Pcrossfulls, taums, fluxs, mfpts, rates
     
+
+def calculate_running_estimate_staple(pathensembles_original, interfaces, interval=1, pl=True, trr=False):
+    """
+    Computes running estimates of key parameters using APPTIS (staple) and REPPTIS local probabilities.
+    """
+    cycles = []
+    p_staple_list, q_staple_list = [], []
+    Pcrossfulls_repptis = []
+    pcrepptis_MSM_list = []
+    pcstaple_MSM_list = []
+    
+    max_cycle = max(pe.cyclenumbers[-1] for pe in pathensembles_original)
+    
+    for nskip in range(interval, max_cycle + interval, interval):
+        pathensembles = [shallow_copy(pe) for pe in pathensembles_original]
+        
+        repptisploc = []
+        for i, pe in enumerate(pathensembles):
+            pathensembles_nskip(pe, nskip)
+            if i==0:
+                cycles.append(pe.cyclenumbers[-1])
+            repptisploc.append(get_local_probs(pe, tr=trr))
+            
+        _, _, pcross_repptis = get_global_probs_from_dict(repptisploc)
+        Pcrossfulls_repptis.append(pcross_repptis)
+        
+        # MSM for repptis
+        pcrepptis_MSM_val = np.nan
+        try:
+            pmp, pmm, ppp, ppm = zip(*[
+                (repptisploc[i]["LMR"], repptisploc[i]["LML"],
+                 repptisploc[i]["RMR"], repptisploc[i]["RML"])
+                for i in range(1, len(pathensembles))
+            ])
+            N = len(interfaces)
+            NS = 4 * N - 5
+            if N > 3:
+                M_repptis = construct_M(pmm, pmp, ppm, ppp, N)
+            else:
+                M_repptis = construct_M_N3(pmm, pmp, ppm, ppp, N)
+            _, _, y1_repptis, _ = global_pcross_msm(M_repptis)
+            pcrepptis_MSM_val = y1_repptis[0][0]
+        except Exception:
+            pass
+        pcrepptis_MSM_list.append(pcrepptis_MSM_val)
+        
+        # APPTIS (STAPLE) notebook implementation
+        pcstaple_MSM_val = np.nan
+        try:
+            N = len(interfaces)
+            NS = 2 * N
+            wi = compute_weight_matrices(pathensembles, interfaces, N, tr=trr, correct_ha=False, norm=False)
+            pi, q_tot = get_transition_probs_weights(wi)
+            M = construct_M_istar(pi, max(4, 2 * N), N)
+            
+            plocMSM = np.ones(N)
+            for lint in range(1, N):
+                Mi = M[np.r_[0:2+lint, 1+N:N+lint, -1]]
+                Mi = Mi[:, np.r_[0:2+lint, 1+N:N+lint+1]]
+                Msum = M[np.r_[0:2+lint, 1+N:N+lint+1]]
+                Mi[:, -1] = np.sum(Msum[:, N+lint:], axis=1)
+                
+                z1, z2, y1_staple, y2 = global_pcross_msm_star(Mi)
+                plocMSM[lint] = y1_staple[0][0]
+                
+            pcrosslocMSM = np.empty(len(plocMSM))
+            for i in range (len(pcrosslocMSM)):
+                pcrosslocMSM[i] = plocMSM[i]/np.prod(pcrosslocMSM[:i])
+                
+            pcstaple_MSM_val = plocMSM
+            
+            p_staple_list.append(pi)
+            q_staple_list.append(q_tot)
+            p_rep, q_rep = pi[0][1], np.min(q_tot)
+            
+        except Exception:
+            try:
+                nan_mat = np.full((N, N), np.nan)
+                pcstaple_MSM_val = np.full(N, np.nan)
+            except NameError:
+                nan_mat = np.nan
+                pcstaple_MSM_val = np.nan
+            p_staple_list.append(nan_mat)
+            q_staple_list.append(nan_mat)
+            p_rep, q_rep = np.nan, np.nan
+            
+        pcstaple_MSM_list.append(pcstaple_MSM_val)
+        
+        # Determine scalar value for printing
+        try:
+            pcstaple_print = pcstaple_MSM_list[-1][-1]
+        except (TypeError, IndexError):
+            pcstaple_print = pcstaple_MSM_list[-1]
+            
+        print(f"{cycles[-1]:8d} {p_rep:15.8e} {q_rep:15.8e} {Pcrossfulls_repptis[-1][-1]:15.8e} {pcrepptis_MSM_list[-1]:20.8e} {pcstaple_print:20.8e}")
+            
+    return cycles, cycles, p_staple_list, q_staple_list, Pcrossfulls_repptis, pcrepptis_MSM_list, pcstaple_MSM_list
+
+def calculate_block_values_staple(pathensembles_original, interfaces, nskip, pl=True, trr=False):
+    pathensembles = [shallow_copy(pe) for pe in pathensembles_original]
+    
+    repptisploc = []
+    for i, pe in enumerate(pathensembles):
+        pathensembles_nskip(pe, nskip)
+        repptisploc.append(get_local_probs(pe, tr=trr))
+        
+    _, _, pcross_repptis = get_global_probs_from_dict(repptisploc)
+    pcross_repptis_val = pcross_repptis[-1]
+    
+    pcrepptis_MSM_val = np.nan
+    try:
+        pmp, pmm, ppp, ppm = zip(*[
+            (repptisploc[i]["LMR"], repptisploc[i]["LML"],
+             repptisploc[i]["RMR"], repptisploc[i]["RML"])
+            for i in range(1, len(pathensembles))
+        ])
+        N = len(interfaces)
+        NS = 4 * N - 5
+        if N > 3:
+            M_repptis = construct_M(pmm, pmp, ppm, ppp, N)
+        else:
+            M_repptis = construct_M_N3(pmm, pmp, ppm, ppp, N)
+        _, _, y1_repptis, _ = global_pcross_msm(M_repptis)
+        pcrepptis_MSM_val = y1_repptis[0][0]
+    except Exception:
+        pass
+        
+    pcstaple_MSM_val = np.nan
+    try:
+        N = len(interfaces)
+        NS = 2 * N
+        wi = compute_weight_matrices(pathensembles, interfaces, N, tr=trr, correct_ha=False, norm=False)
+        pi, q_tot = get_transition_probs_weights(wi)
+        M = construct_M_istar(pi, max(4, 2 * N), N)
+        
+        plocMSM = np.ones(N)
+        for lint in range(1, N):
+            Mi = M[np.r_[0:2+lint, 1+N:N+lint, -1]]
+            Mi = Mi[:, np.r_[0:2+lint, 1+N:N+lint+1]]
+            Msum = M[np.r_[0:2+lint, 1+N:N+lint+1]]
+            Mi[:, -1] = np.sum(Msum[:, N+lint:], axis=1)
+            
+            z1, z2, y1_staple, y2 = global_pcross_msm_star(Mi)
+            plocMSM[lint] = y1_staple[0][0]
+            
+            pcstaple_MSM_val = plocMSM
+    except Exception:
+        try:
+            pcstaple_MSM_val = np.full(len(interfaces), np.nan)
+        except Exception:
+            pass
+
 def calculate_block_values(path_ensembles_original, interfaces, nskip, time_conv=0.02):
     """
     Computes running estimates of key parameters from path ensembles.
