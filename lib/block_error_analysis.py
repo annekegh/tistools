@@ -606,7 +606,9 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
             q_staple_list.append(q_tot)
             p_rep, q_rep = pi[0][1], np.min(q_tot)
             
-        except Exception:
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
             try:
                 nan_mat = np.full((N, N), np.nan)
                 pcstaple_MSM_val = np.full(N, np.nan)

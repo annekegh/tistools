@@ -123,8 +123,8 @@ class PathEnsemble(object):
 
             self.weights = []
             self.shootlinks = np.array([float(dat[16]) for dat in data])
-            print(f"{data[5]}")
-            print(self.shootlinks)
+            # print(f"{data[5]}")
+            # print(self.shootlinks)
             # self.shootlinks = np.full_like(self.cyclenumbers, None, dtype=object)
             self.name = ""
             self.interfaces = []  # [ [L, M, R], string([L,M,R]) ] 2 lists in a list
@@ -303,6 +303,8 @@ class PathEnsemble(object):
         self.lmrs = self.lmrs[ncut:]
         self.lengths = self.lengths[ncut:]
         self.flags = self.flags[ncut:]
+        self.dirs = self.dirs[ncut:]
+        self.istar_idx = self.istar_idx[ncut:]
         self.generation = self.generation[ncut:]
         self.weights = self.weights[ncut:]
         self.lambmins = self.lambmins[ncut:]
