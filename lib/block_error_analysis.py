@@ -178,11 +178,11 @@ def block_error_analysis_staple(path_ensembles, interfaces, interval, load=False
             print("Invalid data in file, recalculating...")
 
             # If data is invalid, recalculate running estimates
-            _, _, p_staple, q_staple, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl)
+            _, p_staple, q_staple, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl)
     else:
         # If loading is disabled or the file doesn't exist, calculate running estimates
         print("First time calculating the data file ...")
-        _, _, p_staple, q_staple, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl)
+        _, p_staple, q_staple, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl)
 
     block_error_calculation(np.array(Pcrossfulls_repptis)[:,-1], interval, "Pcross_repptis")
     block_error_calculation(pcrepptis_MSM, interval, "Pcross_repp_MSM")
@@ -551,7 +551,7 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
         for i, pe in enumerate(pathensembles):
             pathensembles_nskip(pe, nskip)
             if i==0:
-                cycles.append(pe.cyclenumbers[-1])
+                continue
             repptisploc.append(get_local_probs(pe, tr=trr))
             
         _, _, pcross_repptis = get_global_probs_from_dict(repptisploc)
@@ -627,9 +627,14 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
         except (TypeError, IndexError):
             pcstaple_print = pcstaple_MSM_list[-1]
             
+        cycles.append(nskip)
+        
         print(f"{cycles[-1]:8d} {p_rep:15.8e} {q_rep:15.8e} {Pcrossfulls_repptis[-1][-1]:15.8e} {pcrepptis_MSM_list[-1]:20.8e} {pcstaple_print:20.8e}")
+    
+    write_running_estimates(f"staple_interval_{interval}.txt", cycles, Pcrossfulls_repptis[-1], "Pcross_repptis", pcrepptis_MSM_list[-1], "Pcross_repp_MSM", pcstaple_MSM_list[-1], "Pcross_staple_MSM")
+    write_running_estimates(f"staple_pi_q_interval_{interval}.txt", cycles, p_staple_list, "p_staple", q_staple_list, "q_staple")
             
-    return cycles, cycles, p_staple_list, q_staple_list, Pcrossfulls_repptis, pcrepptis_MSM_list, pcstaple_MSM_list
+    return cycles, p_staple_list, q_staple_list, Pcrossfulls_repptis, pcrepptis_MSM_list, pcstaple_MSM_list
 
 def calculate_block_values_staple(pathensembles_original, interfaces, nskip, pl=True, trr=False):
     pathensembles = [shallow_copy(pe) for pe in pathensembles_original]
