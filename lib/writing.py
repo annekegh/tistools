@@ -203,6 +203,7 @@ def write_running_estimates(filename, cycles, *args):
 
             for j in range(len(labels)):
                 array = running_estimates[j]
+                print(labels[j], array, array.shape, flush=True)  # Debugging print to check array shapes
                 if len(array.shape) > 1:
                     for col in range(array[i].size):
                         value = array[i, col] if len(array.shape) == 2 else array.reshape(array.shape[0], -1)[i, col]

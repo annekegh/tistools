@@ -543,15 +543,14 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
     pcstaple_MSM_list = []
     
     max_cycle = max(pe.cyclenumbers[-1] for pe in pathensembles_original)
+    min_cycle = min(pe.cyclenumbers[0] for pe in pathensembles_original)
     
-    for nskip in range(interval, max_cycle + interval, interval):
+    for nskip in range(max(min_cycle, interval), max_cycle + interval, interval):
         pathensembles = [shallow_copy(pe) for pe in pathensembles_original]
         
         repptisploc = []
         for i, pe in enumerate(pathensembles):
             pathensembles_nskip(pe, nskip)
-            if i==0:
-                continue
             repptisploc.append(get_local_probs(pe, tr=trr))
             
         _, _, pcross_repptis = get_global_probs_from_dict(repptisploc)
@@ -631,7 +630,7 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
         
         print(f"{cycles[-1]:8d} {p_rep:15.8e} {q_rep:15.8e} {Pcrossfulls_repptis[-1][-1]:15.8e} {pcrepptis_MSM_list[-1]:20.8e} {pcstaple_print:20.8e}")
     
-    write_running_estimates(f"staple_interval_{interval}.txt", cycles, Pcrossfulls_repptis[-1], "Pcross_repptis", pcrepptis_MSM_list[-1], "Pcross_repp_MSM", pcstaple_MSM_list[-1], "Pcross_staple_MSM")
+    write_running_estimates(f"staple_interval_{interval}.txt", cycles, np.array(Pcrossfulls_repptis)[:,-1], "Pcross_repptis", np.array(pcrepptis_MSM_list), "Pcross_repp_MSM", np.array(pcstaple_MSM_list), "Pcross_staple_MSM")
     write_running_estimates(f"staple_pi_q_interval_{interval}.txt", cycles, p_staple_list, "p_staple", q_staple_list, "q_staple")
             
     return cycles, p_staple_list, q_staple_list, Pcrossfulls_repptis, pcrepptis_MSM_list, pcstaple_MSM_list

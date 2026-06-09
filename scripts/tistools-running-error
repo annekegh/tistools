@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 sys.path = [p for p in sys.path if 'inftools' not in p]
 sys.path.insert(0, os.path.abspath('..'))
+import contextlib
 
 import numpy as np
 
@@ -100,38 +101,27 @@ def main():
 
     # Load path ensembles
     log("Loading path ensembles...")
-    path_ensembles, interfaces = load_path_ensembles(str(simdir), load=args.load_orders)
+    with open(out, "a") as f:
+        with contextlib.redirect_stdout(f):
+            path_ensembles, interfaces = load_path_ensembles(str(simdir), load=args.load_orders)
 
-    # Apply initial skip
-    for pe in path_ensembles:
-        pe.prune_start_pe(args.skip)
+            # Apply initial skip
+            for pe in path_ensembles:
+                pe.prune_start_pe(args.skip)
 
-    max_cycles = min(len(pe.flags) for pe in path_ensembles)
-    log(f"Available cycles after skip: {max_cycles}")
-    log("")
+            max_cycles = min(len(pe.flags) for pe in path_ensembles)
+            log(f"Available cycles after skip: {max_cycles}")
+            log("")
 
-    if not args.quiet:
-        log("RUNNING ESTIMATES")
-        log("-" * 80)
-        header = (
-            f"{'Cycle':>8} "
-            f"{'tau_m':>12} {'MSM_tau_p':>12} {'REP_tau_p':>12} "
-            f"{'MSM_flux':>12} {'REP_flux':>12} "
-            f"{'MSM_Pcross':>12} {'REP_Pcross':>12} "
-            f"{'MSM_rate':>12} {'REP_rate':>12}"
-        )
-        log(header)
-        log("-" * len(header))
+            # Run block error analysis (which prints running estimates)
+            # We capture and parse the output, or run our own loop
+            # For simplicity, call the existing function with interval
+            block_error_analysis(path_ensembles, interfaces, interval=args.interval, load=False)
 
-    # Run block error analysis (which prints running estimates)
-    # We capture and parse the output, or run our own loop
-    # For simplicity, call the existing function with interval
-    block_error_analysis(path_ensembles, interfaces, interval=args.interval, load=False)
-
-    log("")
-    log("=" * 80)
-    log("Analysis complete. See running estimates above for convergence.")
-    log("=" * 80)
+            log("")
+            log("=" * 80)
+            log("Analysis complete. See running estimates above for convergence.")
+            log("=" * 80)
 
     if args.output:
         out.close()

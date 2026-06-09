@@ -110,16 +110,6 @@ def main():
     log(f"Available cycles after skip: {max_cycles}")
     log("")
 
-    if not args.quiet:
-        log("RUNNING ESTIMATES")
-        log("-" * 80)
-        header = (
-            f"{'Cycle':>8} {'P_staple':>15} {'Q_staple':>15} "
-            f"{'REP_Pcross':>15} {'MSM_Pcross_REP':>20} {'MSM_Pcross_STAPLE':>20}"
-        )
-        log(header)
-        log("-" * len(header))
-
     # Run block error analysis (which prints running estimates)
     # We capture and parse the output, or run our own loop
     # For simplicity, call the existing function with interval
