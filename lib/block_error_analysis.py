@@ -165,16 +165,18 @@ def block_error_analysis_staple(path_ensembles, interfaces, interval, load=False
         The function performs block error analysis but does not return a value.
     """
 
-    filename = f"pcross_tau_interval_{interval}.txt"
+    filename = f"err_100kcycles/staple_interval_{interval}.txt"
 
     if load and os.path.exists(filename):
         # Attempt to load data from the file
         print("The data file exists, reading...")
-        _, taups, pcross = load_txt_data(filename)
+        _, pcrepptis, pcrepptis_MSM, st0, st1, st2, st3, st4 = np.loadtxt(filename, skiprows=1, unpack=True, max_rows=50000)
+        pcstaple_MSM = np.column_stack((st0, st1, st2, st3, st4))
+        Pcrossfulls_repptis = [[pcrepptis[i]] for i in range(len(pcrepptis))]
 
         # Validate the loaded data: check for empty values or NaNs
         # if taups is None or pcross is None or np.isnan(taups).any() or np.isnan(pcross).any():
-        if taups is None or pcross is None:
+        if pcrepptis is None or st0 is None:
             print("Invalid data in file, recalculating...")
 
             # If data is invalid, recalculate running estimates

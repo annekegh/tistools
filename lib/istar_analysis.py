@@ -1897,7 +1897,7 @@ def generate_state_labels(n_interfaces):
     
     return state_labels
 
-def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples=5):
+def calculate_memory_effect_std(q_probs, q_weights, q_errors=None, min_samples=5):
     """
     Calculate a simplified memory effect index based solely on the variation in conditional 
     crossing probabilities without normalizing or weighting by sample size.
@@ -2068,6 +2068,185 @@ def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples
             backward_variation[k] = np.nan
             backward_variation_error[k] = np.nan
             backward_sample_sizes[k] = 0
+            
+    memory_index = {
+        'forward_variation': forward_variation,
+        'forward_variation_error': forward_variation_error, 
+        'backward_variation': backward_variation,
+        'backward_variation_error': backward_variation_error, 
+        'forward_sample_sizes': forward_sample_sizes,
+        'backward_sample_sizes': backward_sample_sizes
+    }
+    
+    return memory_index
+
+import numpy as np
+
+def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples=5):
+    """
+    Calculate a normalized memory effect index based on the variation in conditional 
+    crossing probabilities, weighted by the theoretical binomial standard deviation.
+    
+    Formula: Normalized STD = std(q) / sqrt(mean(q) * (1 - mean(q)))
+    
+    Parameters:
+    -----------
+    q_probs : numpy.ndarray
+        Matrix of conditional crossing probabilities where q_probs[i,k] is the probability
+        that a path starting at interface i and reaching k-1 (for i<k) or k+1 (for i>k)
+        will reach interface k.
+    q_weights : numpy.ndarray
+        Matrix of sample counts for each q value.
+    min_samples : int, optional
+        Minimum number of samples required to consider a q value valid.
+        
+    Returns:
+    --------
+    memory_index : dict
+        Dictionary containing:
+        - 'forward_variation': Normalized std of forward probabilities for each target
+        - 'backward_variation': Normalized std of backward probabilities for each target
+        - 'forward_sample_sizes': Number of samples used for forward calculations
+        - 'backward_sample_sizes': Number of samples used for backward calculations
+    """
+    n_interfaces = q_probs.shape[0]
+
+    if q_errors is not None:
+        if isinstance(q_errors, str):
+            try:
+                loaded_q_errors = read_block_errors(q_errors, q_probs.shape)
+                if loaded_q_errors.shape != q_probs.shape:
+                    raise RuntimeWarning(
+                        f"Shape of q_errors loaded from file '{q_errors}' ({loaded_q_errors.shape}) "
+                        f"does not match q_probs shape ({q_probs.shape})."
+                    )
+                q_errors = loaded_q_errors
+            except FileNotFoundError:
+                q_errors = None  
+                raise RuntimeWarning(f"q_errors file not found: {q_errors}")
+            except Exception as e:
+                q_errors = None 
+                raise RuntimeWarning(f"Error loading q_errors from file '{q_errors}': {e}")
+        elif not (isinstance(q_errors, np.ndarray) and q_errors.shape == q_probs.shape):
+            q_errors = None 
+            raise RuntimeWarning(
+                f"If provided, q_errors must be a NumPy array with shape {q_probs.shape} "
+                f"or a path to a loadable text file. "
+                f"Got type {type(q_errors)} with shape {getattr(q_errors, 'shape', 'N/A')}."
+            )
+    
+    # Initialize result arrays
+    forward_variation = np.full(n_interfaces, np.nan)
+    forward_variation_error = np.full(n_interfaces, np.nan)              
+    forward_sample_sizes = np.zeros(n_interfaces, dtype=int)
+    
+    backward_variation = np.full(n_interfaces, np.nan)
+    backward_variation_error = np.full(n_interfaces, np.nan)              
+    backward_sample_sizes = np.zeros(n_interfaces, dtype=int)
+    
+    # Calculate forward memory effect index (for targets k > 0)
+    for k in range(1, n_interfaces):
+        q_values = []
+        weights = []
+        q_errors_k = []
+
+        for i in range(max(1, k-1)):  # Skip adjacent interface (i=k-1)
+            if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples:
+                q_values.append(q_probs[i, k])
+                weights.append(q_weights[i, k])
+                if q_errors is not None and not np.isnan(q_errors[i, k]):
+                    q_errors_k.append(q_errors[i, k])
+                else:
+                    # Fallback to binomial error
+                    binomial_error = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
+                    q_errors_k.append(binomial_error)
+        
+        if len(q_values) >= 2:
+            q_values = np.array(q_values)
+            weights = np.array(weights)
+            q_errors_arr = np.array(q_errors_k)
+            
+            total_samples = np.sum(weights)
+            forward_sample_sizes[k] = total_samples
+            
+            n = len(q_values)
+            mean_q = np.average(q_values, weights=weights)
+            std_dev = np.sqrt(np.cov(q_values, aweights=weights))
+            
+            var_binomial = mean_q * (1 - mean_q)
+            
+            # Ensure we don't divide by zero if mean_q is 0 or 1
+            if var_binomial > 1e-12:
+                denom = np.sqrt(var_binomial)
+                
+                # 1. Calculate Normalized STD
+                norm_index = std_dev / denom
+                forward_variation[k] = norm_index * 100  # Convert to percentage
+                
+                # 2. Error Propagation for Normalized STD
+                if std_dev > 0 and not np.any(np.isnan(q_errors_arr)):
+                    # Term 1: Derivative of std_dev wrt q_i, scaled by 1/denom
+                    term1 = (q_values - mean_q) / (denom * (n - 1) * std_dev)
+                    
+                    # Term 2: Derivative of 1/denom wrt q_i, scaled by std_dev
+                    term2 = (std_dev * (1 - 2 * mean_q)) / (2 * n * (denom ** 3))
+                    
+                    partial_derivs = term1 - term2
+                    
+                    # σ_total = sqrt( Σ( (∂I/∂q_i * σ_qi)² ) )
+                    std_error_squared = np.sum((partial_derivs * q_errors_arr) ** 2)
+                    norm_error = np.sqrt(std_error_squared)
+                    
+                    forward_variation_error[k] = norm_error * 100
+            
+    # Calculate backward memory effect index (for targets k < n_interfaces-1)
+    for k in range(n_interfaces - 1):
+        q_values = []
+        weights = []
+        q_errors_k = []
+        
+        for i in range(k+2, n_interfaces):  # Skip adjacent interface (i=k+1)
+            if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples:
+                q_values.append(q_probs[i, k])
+                weights.append(q_weights[i, k])
+                if q_errors is not None and not np.isnan(q_errors[i, k]):
+                    q_errors_k.append(q_errors[i, k])
+                else:
+                    binomial_error = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
+                    q_errors_k.append(binomial_error)
+        
+        if len(q_values) >= 2:
+            q_values = np.array(q_values)
+            weights = np.array(weights)
+            q_errors_arr = np.array(q_errors_k)
+
+            total_samples = np.sum(weights)
+            backward_sample_sizes[k] = total_samples
+            
+            n = len(q_values)
+            mean_q = np.average(q_values, weights=weights)
+            std_dev = np.sqrt(np.cov(q_values, aweights=weights))
+            
+            var_binomial = mean_q * (1 - mean_q)
+            
+            # Ensure we don't divide by zero
+            if var_binomial > 1e-12:
+                denom = np.sqrt(var_binomial)
+                
+                # 1. Calculate Normalized STD
+                norm_index = std_dev / denom
+                backward_variation[k] = norm_index * 100
+                
+                # 2. Error Propagation for Normalized STD
+                if std_dev > 0 and not np.any(np.isnan(q_errors_arr)):
+                    term1 = (q_values - mean_q) / (denom * (n - 1) * std_dev)
+                    term2 = (std_dev * (1 - 2 * mean_q)) / (2 * n * (denom ** 3))
+                    
+                    partial_derivs = term1 - term2
+                    std_error_squared = np.sum((partial_derivs * q_errors_arr) ** 2)
+                    norm_error = np.sqrt(std_error_squared)
+                    
+                    backward_variation_error[k] = norm_error * 100
             
     memory_index = {
         'forward_variation': forward_variation,

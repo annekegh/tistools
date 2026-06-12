@@ -12,6 +12,7 @@ and rates between different states in complex molecular systems.
 """
 
 from json import load
+from matplotlib import colors
 import numpy as np
 from .reading import *
 from .istar_analysis import *
@@ -604,9 +605,11 @@ def plot_hist_rv_overlap(pe1, pe2, interfaces):
     end_cond2 = np.full_like(pe2.lambmaxs, True)
 
     cycle_nrs1 = select_with_masks(pe1.cyclenumbers, [np.logical_or(pe1.lmrs == "LMR", pe1.lmrs == "LMR"), start_cond1, end_cond1, accmask1, ~loadmask1])
-    cycle_nrs2 = select_with_masks(pe2.cyclenumbers, [np.logical_or(pe2.lmrs == "LMR", pe2.lmrs == "LML"), start_cond2, end_cond2, accmask2, ~loadmask2])
+    cycle_nrs2 = select_with_masks(pe2.cyclenumbers, [np.logical_or(pe2.lmrs == "LML", pe2.lmrs == "LMR"), start_cond2, end_cond2, accmask2, ~loadmask2])
+    cycle_nrs3 = select_with_masks(pe1.cyclenumbers, [np.logical_or(pe1.lmrs == "LML", pe1.lmrs == "LML"), start_cond1, end_cond1, accmask1, ~loadmask1])
+    cycle_nrs4 = select_with_masks(pe2.cyclenumbers, [np.logical_or(pe2.lmrs == "LML", pe2.lmrs == "LML"), start_cond2, end_cond2, accmask2, ~loadmask2])
     cycle_nrs1b = select_with_masks(pe1.cyclenumbers, [np.logical_or(pe1.lmrs == "RML", pe1.lmrs == "RMR"), start_cond1, end_cond1, accmask1, ~loadmask1])
-    cycle_nrs2b = select_with_masks(pe2.cyclenumbers, [np.logical_or(pe2.lmrs == "RML", pe2.lmrs == "LML"), start_cond2, end_cond2, accmask2, ~loadmask2])
+    cycle_nrs2b = select_with_masks(pe2.cyclenumbers, [np.logical_or(pe2.lmrs == "RML", pe2.lmrs == "RML"), start_cond2, end_cond2, accmask2, ~loadmask2])
     
     avg_momenta1 = []
     momentum_at_r1 = []
@@ -689,19 +692,21 @@ def plot_hist_rv_overlap(pe1, pe2, interfaces):
 
     # Keyword arguments for histogram styling to keep it DRY
     hist_kwargs = {'bins': 40, 'alpha': 0.5, 'density': True, 'edgecolor': None, 'linewidth': 1.0, 'zorder': 3}
+    p = np.arange(0, 4, 0.05)
     
     # Plot histograms
-    ax[0, 0].hist(avg_momenta1, color=color_all, label=r'M-R = $\lambda_{%s}-\lambda_{%s}$ $[%s^*]$' % (int(pe1.name[-1]) - 1, int(pe1.name[-1]), int(pe1.name[-1]) - 1), weights=pe1.weights[cycle_nrs1], **hist_kwargs)
-    ax[0, 0].hist(avg_momenta2, color=color_strict, label=r'L-M = $\lambda_{%s}-\lambda_{%s}$ $[%s^*]$' % (int(pe2.name[-1]) - 2, int(pe2.name[-1]) - 1, int(pe2.name[-1]) - 1), weights=pe2.weights[cycle_nrs2], **hist_kwargs)
+    ax[0, 0].hist(avg_momenta1, color=color_all, label=r'(L) M-R = $\lambda_{%s}-\lambda_{%s}$ $[%s^*]$' % (int(pe1.name[-1]) - 1, int(pe1.name[-1]), int(pe1.name[-1]) - 1), weights=pe1.weights[cycle_nrs1], **hist_kwargs)
+    ax[0, 0].hist(avg_momenta2, color=color_strict, label=r'L-M (all) = $\lambda_{%s}-\lambda_{%s}$ $[%s^*]$' % (int(pe2.name[-1]) - 2, int(pe2.name[-1]) - 1, int(pe2.name[-1]) - 1), weights=pe2.weights[cycle_nrs2], **hist_kwargs)
     
-    ax[0, 1].hist(momentum_at_r1, color=color_all, label=r'R [$%s^*$]' % (int(pe1.name[-1]) - 1), weights=pe1.weights[cycle_nrs1], **hist_kwargs)
-    ax[0, 1].hist(momentum_at_m2, color=color_strict, label=r'M [$%s^*$]' % (int(pe2.name[-1]) - 1), weights=pe2.weights[cycle_nrs2], **hist_kwargs)
+    ax[0, 1].hist(momentum_at_r1, color=color_all, label=r'R (LMR) [$%s^*$]' % (int(pe1.name[-1]) - 1), weights=pe1.weights[cycle_nrs1], **hist_kwargs)
+    ax[0, 1].hist(momentum_at_m2, color=color_strict, label=r'M (all)[$%s^*$]' % (int(pe2.name[-1]) - 1), weights=pe2.weights[cycle_nrs2], **hist_kwargs)
+    ax[0, 1].plot(p, p*np.exp(-p**2/2), color='black', linestyle='--', label=r'$\propto p e^{-p^2/2}$', zorder=4)
     
-    ax[1, 0].hist(avg_momenta1b, color=color_all, label=r'M-R = $\lambda_{%s}-\lambda_{%s}$ $[%s^*]$' % (int(pe1.name[-1]) - 1, int(pe1.name[-1]), int(pe1.name[-1]) - 1), weights=pe1.weights[cycle_nrs1b], **hist_kwargs)
-    ax[1, 0].hist(avg_momenta2b, color=color_strict, label=r'L-M = $\lambda_{%s}-\lambda_{%s}$ $[%s^*]$' % (int(pe2.name[-1]) - 2, int(pe2.name[-1]) - 1, int(pe2.name[-1]) - 1), weights=pe2.weights[cycle_nrs2b], **hist_kwargs)
+    ax[1, 0].hist(avg_momenta1b, color=color_all, label=r'M-R (all) = $\lambda_{%s}-\lambda_{%s}$ $[%s^*]$' % (int(pe1.name[-1]) - 1, int(pe1.name[-1]), int(pe1.name[-1]) - 1), weights=pe1.weights[cycle_nrs1b], **hist_kwargs)
+    ax[1, 0].hist(avg_momenta2b, color=color_strict, label=r'L-M (R) = $\lambda_{%s}-\lambda_{%s}$ $[%s^*]$' % (int(pe2.name[-1]) - 2, int(pe2.name[-1]) - 1, int(pe2.name[-1]) - 1), weights=pe2.weights[cycle_nrs2b], **hist_kwargs)
     
-    ax[1, 1].hist(momentum_at_m1b, color=color_all, label=r'M [$%s^*$]' % (int(pe1.name[-1]) - 1), weights=pe1.weights[cycle_nrs1b], **hist_kwargs)
-    ax[1, 1].hist(momentum_at_l2b, color=color_strict, label=r'L [$%s^*$]' % (int(pe2.name[-1]) - 1), weights=pe2.weights[cycle_nrs2b], **hist_kwargs)
+    ax[1, 1].hist(momentum_at_m1b, color=color_all, label=r'M (all) [$%s^*$]' % (int(pe1.name[-1]) - 1), weights=pe1.weights[cycle_nrs1b], **hist_kwargs)
+    ax[1, 1].hist(momentum_at_l2b, color=color_strict, label=r'L (RML) [$%s^*$]' % (int(pe2.name[-1]) - 1), weights=pe2.weights[cycle_nrs2b], **hist_kwargs)
     
 
     # Clean up legends
@@ -720,7 +725,184 @@ def plot_hist_rv_overlap(pe1, pe2, interfaces):
     print("Percentage of reactive trajectories in PE1: %.2f%%" % (sum(pe1.weights[cycle_nrs1][pe1.lambmaxs[cycle_nrs1] >= interfaces[-1]]) / sum(pe1.weights[cycle_nrs1]) * 100))
     print("Percentage of reactive trajectories in PE2: %.2f%%" % (sum(pe2.weights[cycle_nrs2][pe2.lambmaxs[cycle_nrs2] >= interfaces[-1]]) / sum(pe2.weights[cycle_nrs2]) * 100))
     
+    print("Percentage of well-crossing trajectories in PE1: %.2f%%" % (sum(pe1.weights[cycle_nrs1][pe1.lambmaxs[cycle_nrs1] >= interfaces[-2]]) / sum(pe1.weights[cycle_nrs1]) * 100))
+    print("Percentage of well-crossing trajectories in PE2: %.2f%%" % (sum(pe2.weights[cycle_nrs2] / (sum(pe2.weights[cycle_nrs4]) + sum(pe2.weights[cycle_nrs2])) * 100)))
+    
     return avg_momenta2, momentum_at_r2, momentum_at_l2, avg_momenta1, momentum_at_r1, momentum_at_l1, momentum_at_m2, momentum_at_m1
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+from matplotlib.lines import Line2D
+
+def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None, q_errors=None):
+    """
+    Plots the memory effect index alongside raw q probabilities over the physical 
+    order parameter landscape. Includes forward/backward comparison, discrete 
+    color mapping, and scaled potential backgrounds.
+    
+    Parameters:
+    -----------
+    interfaces : array-like
+        The positions of the interfaces on the order parameter axis (\lambda).
+    q_tot : numpy.ndarray
+        A matrix with shape [2, n_interfaces, n_interfaces] where:
+        - q_tot[0]: conditional crossing probabilities (q_probs)
+        - q_tot[1]: sample counts
+    potential_x, potential_y : array-like, optional
+        Data for plotting the background potential energy curve.
+    q_errors : numpy.ndarray, optional
+        Errors associated with the transition probabilities.
+    """
+    # Setup Figure and Axes
+    plt.style.use('science')
+    fig, ax1 = plt.subplots(figsize=(8, 6), dpi=120)
+    ax1.hlines(20, -100, 100, color='firebrick', linestyle='--', alpha=0.6, zorder=100)
+    # ax1.axhspan(20, 100, color='firebrick', alpha=0.1, zorder=0)
+    ax2 = ax1.twinx()  # Right axis for q probabilities (and the scaled potential)
+    ax2.set_ylim(0., 1.25)
+    
+    # Extract matrices
+    q_probs = q_tot[0]
+    q_weights = q_tot[1]
+    n_interfaces = q_probs.shape[0]
+    
+    # Calculate memory retention (returns both forward and backward dicts)
+    memory_index = calculate_memory_effect_index(q_probs, q_weights, q_errors=q_errors)
+
+    # ---------------------------------------------------------
+    # 1. Plot Background Potential (Scaled strictly to [0, 0.5])
+    # ---------------------------------------------------------
+    if potential_x is not None and potential_y is not None:
+        pot_min = np.min(potential_y)
+        pot_max = np.max(potential_y)
+        
+        # Normalize potential to [0, 1], then scale to [0, 0.5]
+        if pot_max > pot_min:
+            pot_scaled = 50 * (potential_y - pot_min) / (pot_max - pot_min)
+        else:
+            pot_scaled = np.zeros_like(potential_y)
+            
+        # Plot directly on ax2 so it shares the [0, 1] scaling of the probabilities
+        ax2.plot(potential_x, pot_scaled, color='black', alpha=0.25, linewidth=2, zorder=0)
+        # ax2.fill_between(potential_x, pot_scaled, 0, color='gray', alpha=0.1, zorder=0)
+
+    # ---------------------------------------------------------
+    # 2. Set Up Discrete Colormap for n_interfaces
+    # ---------------------------------------------------------
+    base_cmap = plt.get_cmap('coolwarm_r')
+    # Extract exactly N distinct colors from the colormap
+    discrete_colors = [base_cmap(i / max(1, n_interfaces - 1)) for i in range(n_interfaces)]
+    discrete_cmap = mcolors.ListedColormap(discrete_colors)
+    
+    # Create boundaries so each integer index falls squarely in the middle of a color block
+    bounds = np.arange(n_interfaces + 1) - 0.5
+    norm = mcolors.BoundaryNorm(bounds, discrete_cmap.N)
+
+    # ---------------------------------------------------------
+    # 3. Iterate Over Regions (Interfaces r to r+1)
+    # ---------------------------------------------------------
+    color_fwd = 'darkorange'
+    color_bwd = 'teal'
+    
+    for r in range(n_interfaces - 1):
+        x_left = interfaces[r]
+        x_right = interfaces[r+1]
+        
+        # Calculate exactly half the region width for perfectly adjacent bars
+        region_width = x_right - x_left
+        bar_width = region_width / 2 - (interfaces[-1] - interfaces[0]) * 0.005  # 5% gap between bars to prevent overlap
+        
+        # Centers for the Forward (Left side) and Backward (Right side) bars
+        center_fwd = x_left + (region_width / 2) - (bar_width / 2.0) 
+        center_bwd = x_right - (region_width / 2) + (bar_width / 2.0)
+        
+        # Plot interface boundaries
+        ax1.axvline(x_left, color='black', linestyle='--', alpha=0.4, linewidth=0.8)
+        if r == n_interfaces - 2:
+            ax1.axvline(x_right, color='black', linestyle='--', alpha=0.4, linewidth=0.8)
+            
+        # Target assignments for this region
+        k_fwd = r + 1  # Forward target is the right interface
+        k_bwd = r      # Backward target is the left interface
+        
+        # --- FORWARD DATA (Left Half of Region) ---
+        mem_fwd = memory_index['forward_variation'][k_fwd]
+        err_fwd = memory_index['forward_variation_error'][k_fwd]
+        if not np.isnan(mem_fwd):
+            err_fwd = err_fwd if not np.isnan(err_fwd) else 0
+            ax1.bar(center_fwd, mem_fwd, yerr=err_fwd, width=bar_width, 
+                    color=color_fwd, alpha=0.5, edgecolor='dimgray', capsize=3, zorder=2)
+            
+        # Plot Forward q-probs (Circles)
+        for i in range(max(1, k_fwd - 1)): # Skip adjacent
+            q_val = q_probs[i, k_fwd]
+            if not np.isnan(q_val):
+                q_err = q_errors[i, k_fwd] if (q_errors is not None and not np.isnan(q_errors[i, k_fwd])) else 0
+                color = discrete_cmap(norm(i))
+                
+                # Jitter constrained strictly within the forward bar's width
+                jitter = np.random.uniform(-bar_width*0.35, bar_width*0.35)
+                
+                ax2.errorbar(center_fwd + jitter, q_val, yerr=q_err, fmt='o', 
+                             color=color, markersize=9, markeredgecolor='black', 
+                             elinewidth=1, capsize=2, zorder=4, alpha=0.85)
+
+        # --- BACKWARD DATA (Right Half of Region) ---
+        mem_bwd = memory_index['backward_variation'][k_bwd]
+        err_bwd = memory_index['backward_variation_error'][k_bwd]
+        if not np.isnan(mem_bwd):
+            err_bwd = err_bwd if not np.isnan(err_bwd) else 0
+            ax1.bar(center_bwd, mem_bwd, yerr=err_bwd, width=bar_width, 
+                    color=color_bwd, alpha=0.5, edgecolor='dimgray', capsize=3, zorder=2)
+            
+        # Plot Backward q-probs (Squares)
+        for i in range(k_bwd + 2, n_interfaces): # Skip adjacent
+            q_val = q_probs[i, k_bwd]
+            if not np.isnan(q_val):
+                q_err = q_errors[i, k_bwd] if (q_errors is not None and not np.isnan(q_errors[i, k_bwd])) else 0
+                color = discrete_cmap(norm(i))
+                
+                # Jitter constrained strictly within the backward bar's width
+                jitter = np.random.uniform(-bar_width*0.35, bar_width*0.35)
+                
+                ax2.errorbar(center_bwd + jitter, q_val, yerr=q_err, fmt='s', 
+                             color=color, markersize=9, markeredgecolor='black', 
+                             elinewidth=1, capsize=2, zorder=4, alpha=0.85)
+
+    # ---------------------------------------------------------
+    # 4. Formatting, Labels, and Legends
+    # ---------------------------------------------------------
+    ax1.set_xlabel(r'Order parameter $\lambda$', fontsize=12)
+    ax1.set_ylabel(r'Memory index (\%)', fontsize=12, color='black')
+    ax2.set_ylabel(r'Conditional committor $q_{i,k}$', fontsize=12, color='black')
+    
+    # Align limits
+    ax1.set_xlim(interfaces[0] - 0.02, interfaces[-1] + 0.02)
+    ax1.set_ylim(0, max(25, np.nanmax([memory_index['forward_variation'], memory_index['backward_variation']]) * 1.2)) 
+    
+    # Discrete Colorbar (Positioned outside to the right)
+    sm = plt.cm.ScalarMappable(cmap=discrete_cmap, norm=norm)
+    sm.set_array([])
+    # fraction and pad ensure it is pushed outside the plot area without squishing the y-label
+    cbar = fig.colorbar(sm, ax=ax2, pad=0.12, fraction=0.05, ticks=np.arange(n_interfaces))
+    cbar.set_label('Starting Interface ($i$)', rotation=270, labelpad=15)
+    
+    # Custom Legend
+    custom_legend = [
+        Line2D([0], [0], color=color_fwd, lw=5, alpha=0.6, label='Forward memory index'),
+        Line2D([0], [0], color=color_bwd, lw=5, alpha=0.6, label='Backward memory index'),
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='gray', markeredgecolor='black', markersize=8, label=r'$q^+_{i,k}$ (L→R)'),
+        Line2D([0], [0], marker='s', color='w', markerfacecolor='gray', markeredgecolor='black', markersize=8, label=r'$q^-_{k,i}$ (R→L)')
+    ]
+    ax1.legend(handles=custom_legend, loc='upper left', fontsize=10, framealpha=0.9)
+    
+    # plt.title('Memory Effect vs. Order Parameter Landscape', fontsize=14)
+    plt.tight_layout()
+    plt.show()
+    
+    return fig, (ax1, ax2)
 
 def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     """
@@ -996,8 +1178,8 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                     color=forward_colors[idx])
             
             # Plot diffusive reference as dashed lines
-            ax4.plot(starting_positions, ref_probs, '--',
-                    color=forward_colors[idx], alpha=0.5)
+            # ax4.plot(starting_positions, ref_probs, '--',
+            #         color=forward_colors[idx], alpha=0.5)
             # ax4.plot(starting_positions, repptisp, ':',
             #         color=forward_colors[idx], alpha=0.5)
     
@@ -1052,8 +1234,8 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                     color=backward_colors[idx])
             
             # Plot diffusive reference as dashed lines12
-            ax5.plot(starting_positions, ref_probs, '--', 
-                    color=backward_colors[idx], alpha=0.5)
+            # ax5.plot(starting_positions, ref_probs, '--', 
+            #         color=backward_colors[idx], alpha=0.5)
     
     # Configure the backward plot
     ax5.set_xlabel('Starting interface Position ($\lambda$)$\\supset$')
@@ -1072,8 +1254,8 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     ax5.set_xticklabels(["0←"]+[f"{i}$\\supset$" for i in range(1, n_interfaces-1)] + [f"{n_interfaces-1}"])
     
     # Add explanatory text about the dashed lines
-    ax5.text(0.02, 0.02, ref_text, transform=ax5.transAxes, fontsize=9,
-             bbox=dict(facecolor='white', alpha=0.8))
+    # ax5.text(0.02, 0.02, ref_text, transform=ax5.transAxes, fontsize=9,
+    #          bbox=dict(facecolor='white', alpha=0.8))
     
     # Add a legend with reasonable size
     ax5.legend(title='Target Region', loc='best', fontsize=9)
@@ -1113,39 +1295,39 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
 
     if valid_k_fwd:
         # Create a twin axis for the memory retention plot
-        ax6_twin = ax6.twinx()
-        ax6_twin.set_ylim(0, 100)
+        # ax6_twin = ax6.twinx()
+        # ax6_twin.set_ylim(0, 100)
         
         # Create bar plot for variation
         bars = ax6.bar(valid_positions_fwd, valid_variation_fwd, yerr=valid_error_fwd, color=valid_colors_fwd, alpha=0.7, 
                             width=np.mean(np.diff(interfaces))*0.7, capsize=5)  # Use average interface spacing for width
         
         # Add line plot for mean differences
-        line = ax6_twin.plot(valid_positions_fwd, valid_mean_diff_fwd, 'o--', color='red', 
-                                    linewidth=2, markersize=8, label=r'Mean |$\Delta$q|')
+        # line = ax6_twin.plot(valid_positions_fwd, valid_mean_diff_fwd, 'o--', color='red', 
+        #                             linewidth=2, markersize=8, label=r'Mean |$\Delta$q|')
         
         # Add annotations showing variation and sample size
-        for pos, var, count, label in zip(valid_positions_fwd, valid_variation_fwd, valid_counts_fwd, valid_state_labels_fwd):
-                ax6.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
+        # for pos, var, count, label in zip(valid_positions_fwd, valid_variation_fwd, valid_counts_fwd, valid_state_labels_fwd):
+        #         ax6.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
         
         # Configure main plot
         ax6.set_xticks(interfaces)
         ax6.set_xticklabels([(f'{k-1 if k>0 else k}→{k}' if k < n_interfaces-1 else f'{k}') for k in range(n_interfaces)])
         ax6.set_xlabel('Target Region')
-        ax6.set_ylabel('Memory Effect (Std. Dev. %)', color='C0')
-        ax6.tick_params(axis='y', labelcolor='C0')
+        ax6.set_ylabel('Memory Effect (Std. Dev. %)')
+        # ax6.tick_params(axis='y', labelcolor='C0')
         ax6.set_title('Forward Memory Retention: Variation in Crossing Probabilities', fontsize=12)
         
         # Configure twin axis
-        ax6_twin.set_ylabel(r'Mean |$\Delta$q| (%)', color='red')
-        ax6_twin.tick_params(axis='y', labelcolor='red')
+        # ax6_twin.set_ylabel(r'Mean |$\Delta$q| (%)', color='red')
+        # ax6_twin.tick_params(axis='y', labelcolor='red')
         
         # Set reasonable y-limits
         max_y_fwd = max(10.0, max(valid_variation_fwd) * 1.2) if valid_variation_fwd else 10.0
         ax6.set_ylim(0, max_y_fwd)
         
-        max_y_twin_fwd = max(10.0, max(valid_mean_diff_fwd) * 1.2) if valid_mean_diff_fwd else 10.0
-        ax6_twin.set_ylim(0, max_y_twin_fwd)
+        # max_y_twin_fwd = max(10.0, max(valid_mean_diff_fwd) * 1.2) if valid_mean_diff_fwd else 10.0
+        # ax6_twin.set_ylim(0, max_y_twin_fwd)
         
         # Set x limits based on the valid data points rather than all interfa10s7
         if len(valid_positions_fwd) > 0:
@@ -1157,7 +1339,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 Line2D([0], [0], color='black', lw=0, marker='s', markersize=10, markerfacecolor='C0', alpha=0.7),
                 Line2D([0], [0], color='red', lw=2, marker='o', markersize=6)
         ]
-        ax6.legend(custom_lines, ['Std. Dev. (%)', r'Mean |$\Delta$q| (%)'], loc='upper left')
+        ax6.legend(custom_lines, ['Memory index (%)'], loc='upper left')
         
     else:
         ax6.text(0.5, 0.5, "Insufficient data for forward memory retention analysis", 
@@ -1197,39 +1379,39 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
 
     if valid_k_bwd:
         # Create a twin axis for the memory retention plot
-        ax7_twin = ax7.twinx()
-        ax7_twin.set_ylim(0, 100)
+        # ax7_twin = ax7.twinx()
+        # ax7_twin.set_ylim(0, 100)
 
         # Create bar plot using interface physical positions
         bars = ax7.bar(valid_positions_bwd, valid_variation_bwd, yerr=valid_error_bwd, color=valid_colors_bwd, alpha=0.7,
                             width=np.mean(np.diff(interfaces))*0.7, capsize=5)  # Use average interface spacing for width
         
         # Add line plot for mean differences
-        line = ax7_twin.plot(valid_positions_bwd, valid_mean_diff_bwd, 'o--', color='red', 
-                                    linewidth=2, markersize=8, label=r'Mean |$\Delta$q|')
+        # line = ax7_twin.plot(valid_positions_bwd, valid_mean_diff_bwd, 'o--', color='red', 
+        #                             linewidth=2, markersize=8, label=r'Mean |$\Delta$q|')
         
         # Add annotations showing variation and sample size
-        for pos, var, count, label in zip(valid_positions_bwd, valid_variation_bwd, valid_counts_bwd, valid_state_labels_bwd):
-                ax7.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
+        # for pos, var, count, label in zip(valid_positions_bwd, valid_variation_bwd, valid_counts_bwd, valid_state_labels_bwd):
+        #         ax7.text(pos, var + 0.5, f"SD: {var:.1f}%\nn={count}", ha='center', fontsize=9)
         
         # Configure plot
         ax7.set_xticks(interfaces)
         ax7.set_xticklabels([f'{k}←{k+1}' for k in range(n_interfaces)])
         ax7.set_xlabel('Target Region')
-        ax7.set_ylabel('Memory Effect (Std. Dev. %)', color='C0')
-        ax7.tick_params(axis='y', labelcolor='C0')
+        ax7.set_ylabel('Memory Effect (Std. Dev. %)')
+        # ax7.tick_params(axis='y', labelcolor='C0')
         ax7.set_title('Backward Memory Retention: Variation in Crossing Probabilities', fontsize=12)
         
         # Configure twin axis
-        ax7_twin.set_ylabel(r'Mean |$\Delta$q| (%)', color='red')
-        ax7_twin.tick_params(axis='y', labelcolor='red')
+        # ax7_twin.set_ylabel(r'Mean |$\Delta$q| (%)', color='red')
+        # ax7_twin.tick_params(axis='y', labelcolor='red')
         
         # Set reasonable y-limits
         max_y_bwd = max(10.0, max(valid_variation_bwd) * 1.2) if valid_variation_bwd else 10.0
         ax7.set_ylim(0, max_y_bwd)
         
-        max_y_twin_bwd = max(10.0, max(valid_mean_diff_bwd) * 1.2) if valid_mean_diff_bwd else 10.0
-        ax7_twin.set_ylim(0, max_y_twin_bwd)
+        # max_y_twin_bwd = max(10.0, max(valid_mean_diff_bwd) * 1.2) if valid_mean_diff_bwd else 10.0
+        # ax7_twin.set_ylim(0, max_y_twin_bwd)
         
         # Set x limits based on the valid data points rather than all interfaces
         if len(valid_positions_bwd) > 0:
@@ -1241,7 +1423,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 Line2D([0], [0], color='black', lw=0, marker='s', markersize=10, markerfacecolor='C0', alpha=0.7),
                 Line2D([0], [0], color='red', lw=2, marker='o', markersize=6)
         ]
-        ax7.legend(custom_lines, ['Std. Dev. (%)', r'Mean |$\Delta$q| (%)'], loc='upper left')
+        ax7.legend(custom_lines, ['Memory index (%)'], loc='upper left')
         
     else:
         ax7.text(0.5, 0.5, "Insufficient data for backward memory retention analysis", 
