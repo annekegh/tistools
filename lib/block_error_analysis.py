@@ -316,14 +316,18 @@ def load_path_ensembles(indir, load=False):
         A list of interface positions extracted from the data.  
     """
     # Set the working directory
-    inputfile = f"{indir}/repptis.rst"
+    inputfile = f"{indir}/repptis.rst" 
     os.chdir(indir)
 
     # Get sorted list of folders (excluding index 0)
     folders = sorted(glob.glob(f"{indir}/0[0-9][0-9]"))
 
     # Read input data
-    interfaces, zero_left, _ = read_inputfile(inputfile)
+    try:
+        interfaces, zero_left, _ = read_inputfile(inputfile)
+    except Exception as e:
+        interfaces, zero_left, _ = read_inputfile(f"{indir}/logging.log")
+
     LMR_interfaces, LMR_strings = get_LMR_interfaces(interfaces, zero_left)
 
     # Initialize path ensembles
@@ -633,8 +637,9 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
         print(f"{cycles[-1]:8d} {p_rep:15.8e} {q_rep:15.8e} {Pcrossfulls_repptis[-1][-1]:15.8e} {pcrepptis_MSM_list[-1]:20.8e} {pcstaple_print:20.8e}")
     
     write_running_estimates(f"staple_interval_{interval}.txt", cycles, np.array(Pcrossfulls_repptis)[:,-1], "Pcross_repptis", np.array(pcrepptis_MSM_list), "Pcross_repp_MSM", np.array(pcstaple_MSM_list), "Pcross_staple_MSM")
-    write_running_estimates(f"staple_pi_q_interval_{interval}.txt", cycles, p_staple_list, "p_staple", q_staple_list, "q_staple")
-            
+    write_running_estimates(f"staple_p_interval_{interval}.txt", cycles, p_staple_list, "p_staple")
+    write_running_estimates(f"staple_q_interval_{interval}.txt", cycles, q_staple_list, "q_staple")
+    
     return cycles, p_staple_list, q_staple_list, Pcrossfulls_repptis, pcrepptis_MSM_list, pcstaple_MSM_list
 
 def calculate_block_values_staple(pathensembles_original, interfaces, nskip, pl=True, trr=False):

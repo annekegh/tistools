@@ -768,6 +768,30 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
     q_weights = q_tot[1]
     n_interfaces = q_probs.shape[0]
     
+    if q_errors is not None:
+        if isinstance(q_errors, str):
+            try:
+                loaded_q_errors = read_block_errors(q_errors, q_probs.shape)
+                if loaded_q_errors.shape != q_probs.shape:
+                    raise RuntimeWarning(
+                        f"Shape of q_errors loaded from file '{q_errors}' ({loaded_q_errors.shape}) "
+                        f"does not match q_probs shape ({q_probs.shape})."
+                    )
+                q_errors = loaded_q_errors
+            except FileNotFoundError:
+                q_errors = None  
+                raise RuntimeWarning(f"q_errors file not found: {q_errors}")
+            except Exception as e:
+                q_errors = None 
+                raise RuntimeWarning(f"Error loading q_errors from file '{q_errors}': {e}")
+        elif not (isinstance(q_errors, np.ndarray) and q_errors.shape == q_probs.shape):
+            q_errors = None 
+            raise RuntimeWarning(
+                f"If provided, q_errors must be a NumPy array with shape {q_probs.shape} "
+                f"or a path to a loadable text file. "
+                f"Got type {type(q_errors)} with shape {getattr(q_errors, 'shape', 'N/A')}."
+            )
+    
     # Calculate memory retention (returns both forward and backward dicts)
     memory_index = calculate_memory_effect_index(q_probs, q_weights, q_errors=q_errors)
 
@@ -823,6 +847,70 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
         if r == n_interfaces - 2:
             ax1.axvline(x_right, color='black', linestyle='--', alpha=0.4, linewidth=0.8)
             
+        # ---------------------------------------------------------
+        # 1. LOCK LIMITS & LAYOUT FIRST
+        # ---------------------------------------------------------
+        ax1.set_xlim(interfaces[0] - 0.02, interfaces[-1] + 0.02)
+        bottom_extension = -0.135
+        
+        # Calculate the data-unit slant_shift for the polygons
+        slant_shift = (interfaces[-1] - interfaces[0]) * 0.08
+        
+        # Force the layout to lock in so we can read the true axes aspect ratio
+        fig.tight_layout()  
+        
+        # ---------------------------------------------------------
+        # 2. BULLETPROOF GEOMETRIC ANGLE CALCULATION (Axes-Based)
+        # ---------------------------------------------------------
+        # In normalized axes fractions, the slant runs 0.08 units wide and 0.13 units tall
+        dx_axes = 0.08
+        dy_axes = abs(bottom_extension)  # 0.13
+        
+        # Get the physical dimensions of the plot box in inches
+        fig_w, fig_h = fig.get_size_inches()
+        ax_pos = ax1.get_position()
+        ax_w_in = ax_pos.width * fig_w
+        ax_h_in = ax_pos.height * fig_h
+        
+        # Convert the relative axes dimensions to true physical inches
+        dx_in = dx_axes * ax_w_in
+        dy_in = dy_axes * ax_h_in
+        
+        # Calculate the exact visual angle in degrees (completely immune to backend lag)
+        text_angle = np.degrees(np.arctan2(dy_in, dx_in))
+        
+        if r % 2 == 0:
+            # A. Vertical gradient column ABOVE the x-axis (y=0 to y=1)
+            grad_alpha = np.linspace(0.18, 0.0, 100).reshape(-1, 1)
+            rgba_strip = np.zeros((100, 1, 4))
+            rgba_strip[:, :, :3] = 0.6  # Elegant silver baseline
+            rgba_strip[:, :, 3] = grad_alpha
+            ax1.imshow(rgba_strip, aspect='auto', origin='lower',
+                       extent=[x_left, x_right, 0, 1], 
+                       transform=ax1.get_xaxis_transform(), zorder=0)
+            
+            # B. Slanted matching parallelogram UNDERNEATH the x-axis (y=bottom_extension to y=0)
+            # Vertices ordered clockwise: top-left, top-right, bottom-right, bottom-left
+            vertices = [
+                (x_left, 0),
+                (x_right, 0),
+                (x_right - slant_shift, bottom_extension),
+                (x_left - slant_shift, bottom_extension)
+            ]
+            poly = plt.Polygon(vertices, facecolor='silver', alpha=0.18, 
+                               edgecolor='none', transform=ax1.get_xaxis_transform(), 
+                               clip_on=False, zorder=0)
+            ax1.add_patch(poly)
+            
+        # Position the text centered horizontally within the slanted bottom footprint
+        region_center = x_left + (region_width / 2.0)
+        text_x = region_center - (slant_shift / 1.7)
+        
+        ax1.text(text_x, bottom_extension + 0.05, f'$k={r}$', 
+                 transform=ax1.get_xaxis_transform(), 
+                 ha='center', va='center', rotation=text_angle, fontsize=11, 
+                 color='dimgray', clip_on=False, zorder=5)
+            
         # Target assignments for this region
         k_fwd = r + 1  # Forward target is the right interface
         k_bwd = r      # Backward target is the left interface
@@ -874,7 +962,7 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
     # ---------------------------------------------------------
     # 4. Formatting, Labels, and Legends
     # ---------------------------------------------------------
-    ax1.set_xlabel(r'Order parameter $\lambda$', fontsize=12)
+    ax1.set_xlabel(r'Order parameter $\lambda$', fontsize=12, labelpad=35)
     ax1.set_ylabel(r'Memory index (\%)', fontsize=12, color='black')
     ax2.set_ylabel(r'Conditional committor $q_{i,k}$', fontsize=12, color='black')
     
@@ -894,7 +982,7 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
         Line2D([0], [0], color=color_fwd, lw=5, alpha=0.6, label='Forward memory index'),
         Line2D([0], [0], color=color_bwd, lw=5, alpha=0.6, label='Backward memory index'),
         Line2D([0], [0], marker='o', color='w', markerfacecolor='gray', markeredgecolor='black', markersize=8, label=r'$q^+_{i,k}$ (L→R)'),
-        Line2D([0], [0], marker='s', color='w', markerfacecolor='gray', markeredgecolor='black', markersize=8, label=r'$q^-_{k,i}$ (R→L)')
+        Line2D([0], [0], marker='s', color='w', markerfacecolor='gray', markeredgecolor='black', markersize=8, label=r'$q^-_{i,k}$ (R→L)')
     ]
     ax1.legend(handles=custom_legend, loc='upper left', fontsize=10, framealpha=0.9)
     
@@ -953,6 +1041,30 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
             is_equidistant = np.allclose(diffs, diffs[0], rtol=0.05)
         else:
             is_equidistant = True
+            
+    if q_errors is not None:
+        if isinstance(q_errors, str):
+            try:
+                loaded_q_errors = read_block_errors(q_errors, q_probs.shape)
+                if loaded_q_errors.shape != q_probs.shape:
+                    raise RuntimeWarning(
+                        f"Shape of q_errors loaded from file '{q_errors}' ({loaded_q_errors.shape}) "
+                        f"does not match q_probs shape ({q_probs.shape})."
+                    )
+                q_errors = loaded_q_errors
+            except FileNotFoundError:
+                q_errors = None  
+                raise RuntimeWarning(f"q_errors file not found: {q_errors}")
+            except Exception as e:
+                q_errors = None 
+                raise RuntimeWarning(f"Error loading q_errors from file '{q_errors}': {e}")
+        elif not (isinstance(q_errors, np.ndarray) and q_errors.shape == q_probs.shape):
+            q_errors = None 
+            raise RuntimeWarning(
+                f"If provided, q_errors must be a NumPy array with shape {q_probs.shape} "
+                f"or a path to a loadable text file. "
+                f"Got type {type(q_errors)} with shape {getattr(q_errors, 'shape', 'N/A')}."
+            )
     
     # Generate more descriptive state labels
     state_labels = generate_state_labels(n_interfaces)
@@ -1161,6 +1273,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ref_probs = []
         valid_indices = []
         repptisp = []
+        errs = []
         
         for i in range(k):
             # Include adjacent transitions only for interface 0->1
@@ -1170,10 +1283,11 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 valid_indices.append(i)
                 ref_probs.append(diff_ref[i, k])
                 repptisp.append(plocs_repptis[k]["LMR"])
+                errs.append(q_errors[i, k] if q_errors is not None and not np.isnan(q_errors[i, k]) else 0)
         
         if target_data:
             # Plot actual probabilities with physical positions on x-axis
-            ax4.plot(starting_positions, target_data, 'o-', 
+            ax4.errorbar(starting_positions, target_data, yerr=errs, fmt='o-', 
                     label=(f'{k-1 if k>0 else k}→{k}'), linewidth=2, markersize=8,
                     color=forward_colors[idx])
             
@@ -1218,6 +1332,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         starting_positions = []
         ref_probs = []
         valid_indices = []
+        errs = []
         
         for i in range(k+1, n_interfaces):
             # Exclude adjacent transitions (i.e., exclude i=k+1)
@@ -1226,10 +1341,11 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 starting_positions.append(interfaces[i])
                 valid_indices.append(i)
                 ref_probs.append(diff_ref[i, k])
+                errs.append(q_errors[i, k] if q_errors is not None and not np.isnan(q_errors[i, k]) else 0)
         
         if target_data:
-            # Plot actual probabilities with physical po5)
-            ax5.plot(starting_positions, target_data, 'o-', 
+            # Plot actual probabilities with physical positions on x-axis
+            ax5.errorbar(starting_positions, target_data, yerr=errs, fmt='o-', 
                     label=(f'{k}←{k+1}'), linewidth=2, markersize=8,
                     color=backward_colors[idx])
             
@@ -1314,7 +1430,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ax6.set_xticks(interfaces)
         ax6.set_xticklabels([(f'{k-1 if k>0 else k}→{k}' if k < n_interfaces-1 else f'{k}') for k in range(n_interfaces)])
         ax6.set_xlabel('Target Region')
-        ax6.set_ylabel('Memory Effect (Std. Dev. %)')
+        ax6.set_ylabel('Memory Effect (Std. Dev. \%)')
         # ax6.tick_params(axis='y', labelcolor='C0')
         ax6.set_title('Forward Memory Retention: Variation in Crossing Probabilities', fontsize=12)
         
