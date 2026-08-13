@@ -9,9 +9,11 @@ import copy
 import io
 from contextlib import redirect_stdout, redirect_stderr
 from time import sleep
+from matplotlib import container
 import numpy as np
 from pathlib import Path
 import matplotlib.colors as mcolors
+import matplotlib.ticker as ticker
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
@@ -44,16 +46,15 @@ def setup_plotting_style():
         'text.usetex': True,
         'font.family': 'serif',
         'font.serif': ['Computer Modern Roman', 'DejaVu Serif'],
-        'font.size': 14,
-        'axes.labelsize': 15,
+        'font.size': 12,
+        'axes.labelsize': 11,
         'axes.titlesize': 18,
-        'xtick.labelsize': 15,
-        'ytick.labelsize': 15,
-        'legend.fontsize': 15,
-        'lines.linewidth': 1.5,
+        'xtick.labelsize': 10,
+        'ytick.labelsize': 11,
+        'legend.fontsize': 11,
+        'lines.linewidth': 1,
         'lines.markersize': 8,
     })
-
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -393,7 +394,7 @@ def plot_ptot_gamma(args):
     import matplotlib.pyplot as plt
 
     setup_plotting_style()
-    fig, ax = plt.subplots(figsize=(6, 5), facecolor='white', layout='constrained')
+    fig, ax = plt.subplots(figsize=(5., 2.5), facecolor='white', layout='constrained')
     ax.set_yscale('log')
 
     if len(args.folders) != len(args.gammas):
@@ -541,22 +542,23 @@ def plot_ptot_gamma(args):
     
     LABEL_MAP = {
         "report": "RETIS",
+        "repptis": "REPPTIS",
         "apptis": "StapleTIS",
-        "repptis": "REPPTIS"
     }
 
     for i, method in enumerate(unique_methods):
         mapped_method = LABEL_MAP.get(method.lower(), method)
         
         if mapped_method == "RETIS":
-            color = "#000000"
-            marker = "o"
-        elif mapped_method == "StapleTIS":
-            color = "#E97414"
+            color = "#333333"
             marker = "o"
         elif mapped_method == "REPPTIS":
-            color = "#d62728"
+            color = "#4575B4"
             marker = "D"
+        elif mapped_method == "StapleTIS":
+            # color = "#E97414"
+            color = "#D73027"
+            marker = "o"
         else:
             color = default_colors[i % len(default_colors)]
             marker = default_markers[i % len(default_markers)]
@@ -577,24 +579,37 @@ def plot_ptot_gamma(args):
             else:
                 stds.append(np.std(vals))
         
-        ax.errorbar(xvals, means, yerr=stds, fmt=marker, color=color, label=mapped_method,
+        ax.plot(xvals, means, '--', color=color, alpha=0.4, zorder=2)
+        ax.errorbar(xvals, means, yerr=stds, fmt=f"{marker}", color=color, label=mapped_method,
                     markersize=7, alpha=0.95, capsize=4, elinewidth=1.5,
                     markeredgewidth=1.0, markeredgecolor=color,
                     markerfacecolor=light_rgb, zorder=3)
 
     if args.x_axis == "gamma":
-        ax.set_xlabel(r"$\gamma$", fontsize=15)
+        ax.set_xlabel(r"$\gamma$")
+                    #   , fontsize=15)
     else:
         # ax.set_xlabel(r"$\Delta\lambda$ interfaces", fontsize=15)
-        ax.set_xlabel(r"\# interfaces", fontsize=15)
-    ax.set_ylabel(r"$P_{\mathrm{cross}}$", fontsize=15)
+        ax.set_xlabel(r"\# interfaces")
+                    #   , fontsize=15)
+    ax.set_ylabel(r"$P_A(\lambda_B|\lambda_A)$")
+                #   , fontsize=15)
     style_axes(ax)
 
-    legend = ax.legend(frameon=True, fontsize=12)
+    legend = ax.legend(frameon=True)
+                    #    , fontsize=12)
     if legend:
         legend.get_frame().set_facecolor('white')
         legend.get_frame().set_edgecolor('none')
 
+    fig.patch.set_alpha(0.0)       # Makes outer canvas fully transparent
+    ax.patch.set_facecolor('white') # Makes inner plot area solid white
+    ax.patch.set_alpha(1.0)        # Ensures inner area is completely opaque
+    formatter = ticker.ScalarFormatter()
+    formatter.set_scientific(False)
+    formatter.set_useOffset(False)
+    ax.yaxis.set_major_formatter(formatter)
+      
     fig.savefig(args.output, dpi=300, bbox_inches='tight')
     png_output = os.path.splitext(args.output)[0] + '.png'
     fig.savefig(png_output, dpi=300, bbox_inches='tight')
@@ -602,7 +617,7 @@ def plot_ptot_gamma(args):
     plt.close(fig)
 
     # -------- PLOT 2: Relative Difference --------
-    fig2, ax2 = plt.subplots(figsize=(6, 5), facecolor='white', layout='constrained')
+    fig2, ax2 = plt.subplots(figsize=(5, 2.5), facecolor='white', layout='constrained')
     
     all_xvals = sorted(list(set(g for method in results_by_method for g in results_by_method[method])))
     ref_values = {}
@@ -630,14 +645,14 @@ def plot_ptot_gamma(args):
         mapped_method = LABEL_MAP.get(method.lower(), method)
         
         if mapped_method == "RETIS":
-            color = "#000000"
-            marker = "o"
-        elif mapped_method == "StapleTIS":
-            color = "#E97414"
+            color = "#333333"
             marker = "o"
         elif mapped_method == "REPPTIS":
-            color = "#d62728"
+            color = "#4575B4"
             marker = "D"
+        elif mapped_method == "StapleTIS":
+            color = "#D73027"
+            marker = "o"
         else:
             color = default_colors[i % len(default_colors)]
             marker = default_markers[i % len(default_markers)]
@@ -672,19 +687,24 @@ def plot_ptot_gamma(args):
                 valid_xvals.append(g)
                 
         if valid_xvals:
-            ax2.errorbar(valid_xvals, rel_diff_means, yerr=rel_diff_stds, fmt=marker, color=color, label=mapped_method,
+            ax2.plot(valid_xvals, rel_diff_means, '--', color=color, alpha=0.4, zorder=2)
+            ax2.errorbar(valid_xvals, rel_diff_means, yerr=rel_diff_stds, fmt=f"--{marker}", color=color, label=mapped_method,
                          markersize=7, alpha=0.95, capsize=4, elinewidth=1.5,
                          markeredgewidth=1.0, markeredgecolor=color,
                          markerfacecolor=light_rgb, zorder=3)
                          
     if args.x_axis == "gamma":
-        ax2.set_xlabel(r"$\gamma$", fontsize=15)
+        ax2.set_xlabel(r"$\gamma$")
+        # , fontsize=15)
     else:
-        ax2.set_xlabel(r"\# interfaces", fontsize=15)
-    ax2.set_ylabel(r"Relative Difference (\%)", fontsize=15)
+        ax2.set_xlabel(r"\# interfaces")
+        # , fontsize=15)
+    ax2.set_ylabel(r"Relative Difference (\%)")
+    # , fontsize=15)
     style_axes(ax2)
 
-    legend2 = ax2.legend(frameon=True, fontsize=12)
+    legend2 = ax2.legend(frameon=True)
+    # , fontsize=12)
     if legend2:
         legend2.get_frame().set_facecolor('white')
         legend2.get_frame().set_edgecolor('none')
@@ -692,6 +712,10 @@ def plot_ptot_gamma(args):
     base, ext = os.path.splitext(args.output)
     reldiff_pdf = f"{base}_reldiff{ext}"
     reldiff_png = f"{base}_reldiff.png"
+    
+    fig2.patch.set_alpha(0.0)       # Makes outer canvas fully transparent
+    ax2.patch.set_facecolor('white') # Makes inner plot area solid white
+    ax2.patch.set_alpha(1.0)        # Ensures inner area is completely opaque
     
     fig2.savefig(reldiff_pdf, dpi=300, bbox_inches='tight')
     fig2.savefig(reldiff_png, dpi=300, bbox_inches='tight')

@@ -1453,37 +1453,64 @@ def read_block_errors(errors_file_path, shape=None):
             except Exception as e:
                 raise ValueError(f"Could not infer shape from headers. Please provide it. Error: {e}")
         
-        if shape is None:
-             raise ValueError("Shape must be provided or inferable from headers.")
+        # Determine whether headers are component_i or component_i_j
+        first_idx_parts = headers[0].replace("component_", "").split("_")
+        single_index = (len(first_idx_parts) == 1)
 
-        errors_array = np.full(shape, np.nan, dtype=float)
+        if single_index:
+            # ------------------------------------------------------------------
+            # component_0, component_1, ...
+            # ------------------------------------------------------------------
+            if shape is None:
+                max_idx = max(int(h.replace("component_", "")) for h in headers)
+                n = int(np.sqrt(max_idx + 1))
+                if n * n != max_idx + 1:
+                    raise ValueError(
+                        "Number of components is not a perfect square. "
+                        "Please provide 'shape' explicitly."
+                    )
+                shape = (n, n)
 
-        for header, val_str in zip(headers, error_values_str):
-            if not header.startswith("component_"):
-                print(f"Warning: Skipping unexpected header format: {header}")
-                continue
-            try:
-                # component_i_j or component_i (if j is implicitly 0 or not present)
-                idx_parts_str = header.replace("component_", "").split("_")
-                i = int(idx_parts_str[0])
-                j = 0
-                if len(idx_parts_str) > 1 : # component_i_j
-                    j = int(idx_parts_str[1])
-                
-                if val_str.lower() == 'nan':
-                    errors_array[i, j] = np.nan
-                else:
-                    errors_array[i, j] = float(val_str)
-            except IndexError:
-                print(f"Warning: Could not parse indices from header '{header}'. Skipping.")
-                continue
-            except ValueError:
-                print(f"Warning: Could not convert value '{val_str}' to float for header '{header}'. Skipping.")
-                continue
-            except Exception as e:
-                print(f"Warning: Error processing header '{header}' with value '{val_str}': {e}. Skipping.")
-                continue
-        
+            errors_array = np.full(shape, np.nan, dtype=float)
+
+            for header, val_str in zip(headers, error_values_str):
+                idx = int(header.replace("component_", ""))
+                i, j = np.unravel_index(idx, shape)
+
+                errors_array[i, j] = (
+                    np.nan if val_str.lower() == "nan" else float(val_str)
+                )
+
+        else:
+            # ------------------------------------------------------------------
+            # component_i_j
+            # ------------------------------------------------------------------
+            if shape is None:
+                last_header = headers[-1]
+                try:
+                    parts = last_header.replace("component_", "").split("_")
+                    max_i = int(parts[0])
+                    max_j = int(parts[1])
+                    shape = (max_i + 1, max_j + 1)
+                except Exception as e:
+                    raise ValueError(
+                        f"Could not infer shape from headers. Please provide it. Error: {e}"
+                    )
+
+            errors_array = np.full(shape, np.nan, dtype=float)
+
+            for header, val_str in zip(headers, error_values_str):
+                try:
+                    i, j = map(int, header.replace("component_", "").split("_"))
+                    errors_array[i, j] = (
+                        np.nan if val_str.lower() == "nan" else float(val_str)
+                    )
+                except Exception as e:
+                    print(
+                        f"Warning: Error processing header '{header}' "
+                        f"with value '{val_str}': {e}. Skipping."
+                    )
+
         return errors_array
 
     except FileNotFoundError:

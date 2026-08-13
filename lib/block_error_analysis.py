@@ -170,13 +170,16 @@ def block_error_analysis_staple(path_ensembles, interfaces, interval, load=False
     if load and os.path.exists(filename):
         # Attempt to load data from the file
         print("The data file exists, reading...")
-        _, pcrepptis, pcrepptis_MSM, st0, st1, st2, st3, st4 = np.loadtxt(filename, skiprows=1, unpack=True, max_rows=50000)
+        _, pcrepptis, pcrepptis_MSM, st0, st1, st2, st3, st4 = np.loadtxt(filename, skiprows=1, unpack=True)
         pcstaple_MSM = np.column_stack((st0, st1, st2, st3, st4))
         Pcrossfulls_repptis = [[pcrepptis[i]] for i in range(len(pcrepptis))]
+        # data = np.genfromtxt(filename, skip_header=1, dtype=float)
+        # p_staple = data[:, :data.shape[1]//2]
+        # q_staple = data[:, data.shape[1]//2:]
 
         # Validate the loaded data: check for empty values or NaNs
         # if taups is None or pcross is None or np.isnan(taups).any() or np.isnan(pcross).any():
-        if pcrepptis is None or st0 is None:
+        if st0 is None or pcrepptis is None:
             print("Invalid data in file, recalculating...")
 
             # If data is invalid, recalculate running estimates

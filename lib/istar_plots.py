@@ -736,7 +736,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.lines import Line2D
 
-def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None, q_errors=None):
+def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None, q_errors=None, max_error=0.3):
     """
     Plots the memory effect index alongside raw q probabilities over the physical 
     order parameter landscape. Includes forward/backward comparison, discrete 
@@ -793,7 +793,7 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
             )
     
     # Calculate memory retention (returns both forward and backward dicts)
-    memory_index = calculate_memory_effect_index(q_probs, q_weights, q_errors=q_errors)
+    memory_index = calculate_memory_effect_index(q_probs, q_weights, q_errors=q_errors, max_error=max_error)
 
     # ---------------------------------------------------------
     # 1. Plot Background Potential (Scaled strictly to [0, 0.5])
@@ -920,7 +920,7 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
         err_fwd = memory_index['forward_variation_error'][k_fwd]
         if not np.isnan(mem_fwd):
             err_fwd = err_fwd if not np.isnan(err_fwd) else 0
-            ax1.bar(center_fwd, mem_fwd, yerr=err_fwd, width=bar_width, 
+            ax1.bar(center_fwd, mem_fwd, yerr=None, width=bar_width, 
                     color=color_fwd, alpha=0.5, edgecolor='dimgray', capsize=3, zorder=2)
             
         # Plot Forward q-probs (Circles)
@@ -928,6 +928,8 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
             q_val = q_probs[i, k_fwd]
             if not np.isnan(q_val):
                 q_err = q_errors[i, k_fwd] if (q_errors is not None and not np.isnan(q_errors[i, k_fwd])) else 0
+                if q_err >= max_error:
+                    continue
                 color = discrete_cmap(norm(i))
                 
                 # Jitter constrained strictly within the forward bar's width
@@ -942,7 +944,7 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
         err_bwd = memory_index['backward_variation_error'][k_bwd]
         if not np.isnan(mem_bwd):
             err_bwd = err_bwd if not np.isnan(err_bwd) else 0
-            ax1.bar(center_bwd, mem_bwd, yerr=err_bwd, width=bar_width, 
+            ax1.bar(center_bwd, mem_bwd, yerr=None, width=bar_width, 
                     color=color_bwd, alpha=0.5, edgecolor='dimgray', capsize=3, zorder=2)
             
         # Plot Backward q-probs (Squares)
@@ -950,6 +952,8 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
             q_val = q_probs[i, k_bwd]
             if not np.isnan(q_val):
                 q_err = q_errors[i, k_bwd] if (q_errors is not None and not np.isnan(q_errors[i, k_bwd])) else 0
+                if q_err >= max_error:
+                    continue
                 color = discrete_cmap(norm(i))
                 
                 # Jitter constrained strictly within the backward bar's width

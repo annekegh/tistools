@@ -17,3 +17,4 @@ test/template_features_cache/
 lightning_logs/*
 session_logs/session_0afc4f3e-202d-4565-8d73-e7fcf6292cc3_20260604_160727.json
 session_logs/session_553a24ac-73f0-4355-b81a-d4d943bd484c_20260604_111050.json
+.aider*

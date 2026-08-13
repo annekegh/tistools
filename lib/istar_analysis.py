@@ -2082,7 +2082,7 @@ def calculate_memory_effect_std(q_probs, q_weights, q_errors=None, min_samples=5
 
 import numpy as np
 
-def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples=5):
+def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples=5, max_error=0.1):
     """
     Calculate a normalized memory effect index based on the variation in conditional 
     crossing probabilities, weighted by the theoretical binomial standard deviation.
@@ -2099,6 +2099,8 @@ def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples
         Matrix of sample counts for each q value.
     min_samples : int, optional
         Minimum number of samples required to consider a q value valid.
+    max_error : float, optional
+        Maximum allowed error for a q value to be considered valid.
         
     Returns:
     --------
@@ -2151,7 +2153,7 @@ def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples
         q_errors_k = []
 
         for i in range(max(1, k-1)):  # Skip adjacent interface (i=k-1)
-            if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples:
+            if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples and (q_errors is None or (not np.isnan(q_errors[i, k]) and q_errors[i, k] <= max_error)):
                 q_values.append(q_probs[i, k])
                 weights.append(q_weights[i, k])
                 if q_errors is not None and not np.isnan(q_errors[i, k]):
@@ -2206,7 +2208,7 @@ def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples
         q_errors_k = []
         
         for i in range(k+2, n_interfaces):  # Skip adjacent interface (i=k+1)
-            if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples:
+            if not np.isnan(q_probs[i, k]) and q_weights[i, k] >= min_samples and (q_errors is None or (not np.isnan(q_errors[i, k]) and q_errors[i, k] <= max_error)):
                 q_values.append(q_probs[i, k])
                 weights.append(q_weights[i, k])
                 if q_errors is not None and not np.isnan(q_errors[i, k]):
