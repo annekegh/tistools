@@ -1,0 +1,199 @@
+#!/usr/bin/env python
+"""
+tistools-memory-analysis: crossing-probability profile and memory-effect
+analysis for iSTAR/StapleTIS simulations.
+
+Computes:
+  - The crossing-probability profile P_A(lambda_i | lambda_A) as a function of
+    interface index, from the iSTAR Markov state model.
+  - Memory-effect (non-Markovian) analysis of the conditional crossing
+    probabilities between interfaces, with the associated diagnostic plots.
+
+Usage:
+    tistools-memory-analysis <simulation_dir> [options]
+
+Example:
+    tistools-memory-analysis /path/to/staple_sim --show
+"""
+
+import argparse
+import glob
+import os
+import sys
+sys.path = [p for p in sys.path if 'inftools' not in p]
+sys.path.insert(0, os.path.abspath('..'))
+from pathlib import Path
+
+import numpy as np
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Crossing-probability profile and memory-effect analysis for iSTAR/StapleTIS simulations.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument(
+        "simdir",
+        type=str,
+        help="Path to the simulation directory containing ensemble folders (000, 001, ...)",
+    )
+    parser.add_argument(
+        "--inputfile",
+        type=str,
+        default=None,
+        help="Path to input file (default: <simdir>/logging.log)",
+    )
+    parser.add_argument(
+        "--zero-minus-one",
+        action="store_true",
+        default=False,
+        help="Set if lambda_-1 interface is defined",
+    )
+    parser.add_argument(
+        "--outdir",
+        type=str,
+        default=None,
+        help="Directory to save plots in (default: <simdir>)",
+    )
+    parser.add_argument(
+        "--show",
+        action="store_true",
+        help="Also display the plots interactively (in addition to saving them)",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    try:
+        from tistools import (
+            read_inputfile,
+            get_LMR_interfaces,
+            read_pathensemble,
+            get_weights,
+            ACCFLAGS,
+            REJFLAGS,
+        )
+        from tistools import (
+            display_data,
+            get_transition_probs_weights,
+            compute_weight_matrices,
+            construct_M_istar,
+            global_pcross_msm_star,
+            memory_analysis,
+        )
+        from tistools import plot_memory_analysis
+    except ImportError as e:
+        print(f"Error: Could not import tistools: {e}", file=sys.stderr)
+        print("Make sure tistools is installed or in your PYTHONPATH.", file=sys.stderr)
+        sys.exit(1)
+
+    import matplotlib
+
+    if not args.show:
+        matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    simdir = Path(args.simdir).resolve()
+    if not simdir.exists():
+        print(f"Error: Directory {simdir} does not exist", file=sys.stderr)
+        sys.exit(1)
+
+    outdir = Path(args.outdir).resolve() if args.outdir else simdir
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    inputfile = args.inputfile or str(simdir / "logging.log")
+    if not os.path.exists(inputfile):
+        print(f"Error: Input file not found: {inputfile}", file=sys.stderr)
+        sys.exit(1)
+
+    folders = sorted(glob.glob(str(simdir / "0[0-9][0-9]")))
+    if not folders:
+        print(f"Error: No ensemble folders found in {simdir}", file=sys.stderr)
+        sys.exit(1)
+
+    # ---------------------------------------------------------------------
+    # Reading
+    # ---------------------------------------------------------------------
+    interfaces, zero_left, timestep = read_inputfile(inputfile)
+    LMR_interfaces, LMR_strings = get_LMR_interfaces(interfaces, zero_left)
+    n_int = len(interfaces)
+
+    pathensembles = []
+    for i, fol in enumerate(folders):
+        pe = read_pathensemble(os.path.join(fol, "pathensemble.txt"))
+        pe.set_name(fol)
+        pe.set_interfaces([LMR_interfaces[i], LMR_strings[i]])
+        if i == 0:
+            pe.set_zero_minus_one(args.zero_minus_one)
+            pe.set_in_zero_minus(True)
+        if i == 1:
+            pe.set_in_zero_plus(True)
+
+        w, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose=False)
+        pe.set_weights(w)
+
+        # Order parameters (order.txt/order.npy) are not needed for the
+        # crossing-probability or memory analysis below. Uncomment if you
+        # also need them (load=True after the first run to read the cached
+        # .npy files instead of the raw order.txt):
+        # pe.set_orders(load=False, acc_only=True, save=True)
+
+        pathensembles.append(pe)
+
+    print(f"Loaded {len(pathensembles)} path ensembles from {simdir}")
+
+    # ---------------------------------------------------------------------
+    # Crossing-probability profile
+    # ---------------------------------------------------------------------
+    plocMSM = np.ones(n_int)
+    for lint in range(2, n_int + 1):
+        wi = compute_weight_matrices(pathensembles[:lint], interfaces[:lint], n_int, True)
+        pi, _ = get_transition_probs_weights(wi)
+        Mi = construct_M_istar(pi, max(4, 2 * len(interfaces[:lint])), len(interfaces[:lint]))
+        _, _, y1, _ = global_pcross_msm_star(Mi)
+        plocMSM[lint - 1] = y1[0][0]
+        print(f"ploc till intf {lint - 1}: {y1[0][0]}")
+
+    fig, ax = plt.subplots()
+    ax.set_yscale("log")
+    ax.errorbar(
+        range(n_int), plocMSM, fmt="-o", c="b", ecolor="r", capsize=6, label="StapleTIS"
+    )
+    ax.set_xlabel("Interface index")
+    ax.set_ylabel(r"$P_A(\lambda_i|\lambda_A)$")
+    ax.set_xticks(np.arange(n_int))
+    ax.legend()
+    fig.tight_layout()
+    crossing_plot_file = outdir / "crossing_probability_profile.png"
+    fig.savefig(crossing_plot_file, dpi=200)
+    print(f"Crossing-probability profile saved to {crossing_plot_file}")
+
+    # ---------------------------------------------------------------------
+    # Memory analysis
+    # ---------------------------------------------------------------------
+    C, X_tr, X_norm, X_tr_norm, wpath, W_tr, W_norm, W_tr_norm, W = display_data(
+        pathensembles, interfaces, n_int, correct_ha=False
+    )
+    p, q = get_transition_probs_weights(wpath)
+    q_k, q_tot = memory_analysis(wpath, False)
+    fig1, fig2, fig3 = plot_memory_analysis(pathensembles, q_tot, p, interfaces)
+
+    memory_files = {
+        "memory_matrices.png": fig1,
+        "memory_probabilities.png": fig2,
+        "memory_landscape.png": fig3,
+    }
+    for fname, mfig in memory_files.items():
+        fpath = outdir / fname
+        mfig.savefig(fpath, dpi=200)
+        print(f"Memory analysis plot saved to {fpath}")
+
+    if args.show:
+        plt.show()
+
+
+if __name__ == "__main__":
+    main()

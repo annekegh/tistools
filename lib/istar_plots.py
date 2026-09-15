@@ -1079,41 +1079,27 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     diff_ref = calculate_diffusive_reference(interfaces, q_tot[0], q_tot[1])
     plocs_repptis, plocs_istar = ploc_repptis_from_staples(pes, interfaces, n_int=n_interfaces)
     
-    # Function to generate high-contrast colors for plots
-    def generate_high_contrast_colors(n):
+    BLUE, RED, NEUTRAL = '#2a78d6', '#e34948', '#f0efec'
+    GRID_COLOR, MUTED_INK = '#e1e0d9', '#898781'
+
+    def sequential_colors(n, cmap_name):
+        # A perceptually-uniform, multi-hue ramp for series that encode an ordered
+        # index (here: the target interface k) rather than unrelated categories.
+        # Multi-hue maps (viridis/plasma) give much stronger step-to-step contrast
+        # than a single-hue tint ramp, while still reading as one ordered progression.
+        cmap = plt.get_cmap(cmap_name)
         if n <= 1:
-            return ["#1f77b4"]  # Default blue for single item
-        
-        if n <= 10:
-            # Viridis with enhanced spacing for better contrast
-            viridis_cmap = plt.cm.get_cmap('viridis')
-            return [colors.to_hex(viridis_cmap(i/(n-1) if n > 1 else 0.5)) for i in range(n)]
-        else:
-            # For more interfaces, use viridis with adjusted spacing
-            cmap1 = plt.cm.get_cmap('viridis')
-            
-            # Get colors with deliberate spacing for better contrast
-            colors_list = []
-            for i in range(n):
-                # Distribute colors with slight variations in spacing
-                # This avoids adjacent indices having too similar colors
-                pos = (i / max(1, n-1)) * 0.85 + 0.1  # Scale to range 0.1-0.95
-                
-                # Introduce small oscillations in color position for adjacent indices
-                if i % 2 == 1:
-                    pos = min(0.95, pos + 0.05)
-                    
-                colors_list.append(colors.to_hex(cmap1(pos)))
-                
-            return colors_list
+            return [colors.to_hex(cmap(0.5))]
+        return [colors.to_hex(cmap(t)) for t in np.linspace(0.0, 0.9, n)]
 
     # ================ Figure 1: Matrix Heatmaps ================
     fig1 = plt.figure(figsize=(18, 7))
-    gs1 = gridspec.GridSpec(1, 3, width_ratios=[1.2, 1, 1])
+    gs1 = gridspec.GridSpec(1, 4, width_ratios=[1.2, 1, 1, 1])
     
-    # Create custom colormap for memory effect heatmap
-    cmap_memory = LinearSegmentedColormap.from_list('memory_effect', 
-                                                  [(0, 'blue'), (0.5, 'white'), (1, 'red')], N=256)
+    # Diverging colormap (blue<->red) with a neutral midpoint for signed quantities
+    cmap_memory = LinearSegmentedColormap.from_list(
+        'memory_effect', [(0, BLUE), (0.5, NEUTRAL), (1, RED)], N=256
+    )
     
     # Plot 1.1: Memory Effect Matrix (q_probs)
     ax1 = fig1.add_subplot(gs1[0])
@@ -1135,33 +1121,24 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                     interpolation='none', aspect='auto')
     
     # Add colorbar
-    cbar1 = fig1.colorbar(im1, ax=ax1, label='Memory Effect (q - q_diff)')
-    
-    # Add reference line at 0
-    cbar1.ax.axhline(y=0.0, color='black', linestyle='--', linewidth=1)
-    cbar1.ax.text(1.5, 0.0, '0 (diffusive)', va='center', ha='left', fontsize=9)
-    
-    # Add annotations with more compact formatting
+    cbar1 = fig1.colorbar(im1, ax=ax1, label='q - q_diffusive')
+    cbar1.ax.axhline(y=0.0, color=MUTED_INK, linestyle='--', linewidth=1)
+
+    # Annotate with the observed probability; the deviation itself is the color
     for i in range(n_interfaces):
         for j in range(n_interfaces):
             if not np.isnan(memory_effect[i, j]) and not np.ma.is_masked(masked_data[i, j]):
-                weight = q_weights[i, j]
-                # More compact format: actual/diff
-                text = f"{q_probs[i, j]:.2f}/{diff_ref[i, j]:.2f}" if weight > 0 else "N/A"
-                # Only show count if it's significant
-                if weight > 10:
-                    text += f"\n{int(weight)}"
+                text = f"{q_probs[i, j]:.2f}" if q_weights[i, j] > 0 else "N/A"
                 color = 'black' if abs(memory_effect[i, j]) < 0.3 else 'white'
-                ax1.text(j, i, text, ha='center', va='center', color=color, fontsize=7)
-    
-    # Set ticks and labels using state labels
+                ax1.text(j, i, text, ha='center', va='center', color=color, fontsize=8)
+
     ax1.set_xticks(np.arange(n_interfaces))
     ax1.set_yticks(np.arange(n_interfaces))
     ax1.set_xticklabels([f"{i}" for i in range(n_interfaces)])
     ax1.set_yticklabels([f"{i}" for i in range(n_interfaces)])
-    ax1.set_xlabel('Target Turn at k')
-    ax1.set_ylabel('Starting Turn at i')
-    ax1.set_title('Memory Effect Matrix: q(i,k) - q_diffuse(i,k)', fontsize=12)
+    ax1.set_xlabel('Target interface k')
+    ax1.set_ylabel('Starting interface i')
+    ax1.set_title('Memory effect (q - q_diffusive)', fontsize=12)
     
     # Plot 1.2: Memory Effect Ratio
     ax2 = fig1.add_subplot(gs1[1])
@@ -1176,25 +1153,24 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 diff_ref[i, j] > 0 and diff_ref[i, j] < 1):
                 memory_ratio[i, j] = q_probs[i, j] / diff_ref[i, j]
     
-    # Plot heatmap with logarithmic scale
-    im2 = ax2.imshow(memory_ratio, cmap='RdBu_r', norm=colors.LogNorm(vmin=0.1, vmax=10))
-    
+    # Plot heatmap with logarithmic scale (diverging around 1 = diffusive)
+    im2 = ax2.imshow(memory_ratio, cmap=cmap_memory, norm=colors.LogNorm(vmin=0.1, vmax=10))
+
     # Add colorbar
-    cbar2 = fig1.colorbar(im2, ax=ax2, label='Probability Ratio q/q_diffuse [log scale]')
-    
-    # Add annotations for ratio values - more compact
+    cbar2 = fig1.colorbar(im2, ax=ax2, label='q / q_diffusive (log)')
+
     for i in range(n_interfaces):
         for j in range(n_interfaces):
             if not np.isnan(memory_ratio[i, j]) and q_weights[i, j] > 5:
                 text_color = 'black'
                 if memory_ratio[i, j] > 5 or memory_ratio[i, j] < 0.2:
                     text_color = 'white'
-                ax2.text(j, i, f"{memory_ratio[i, j]:.1f}", ha='center', va='center', 
-                       color=text_color, fontsize=7)
-    
-    ax2.set_xlabel('Target Turn at  k')
-    ax2.set_ylabel('Starting Turn at i')
-    ax2.set_title('Memory Effect Ratio: Deviation from Diffusive Behavior', fontsize=12)
+                ax2.text(j, i, f"{memory_ratio[i, j]:.1f}", ha='center', va='center',
+                       color=text_color, fontsize=8)
+
+    ax2.set_xlabel('Target interface k')
+    ax2.set_ylabel('Starting interface i')
+    ax2.set_title('Memory ratio (q / q_diffusive)', fontsize=12)
     ax2.set_xticks(range(n_interfaces))
     ax2.set_yticks(range(n_interfaces))
     ax2.set_xticklabels([f"{i}" for i in range(n_interfaces)])
@@ -1214,59 +1190,62 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 memory_asymmetry[i, j] = p[i, j] - p[j, i]
     
     # Plot heatmap
-    im3 = ax3.imshow(memory_asymmetry, cmap='RdBu', vmin=-0.5, vmax=0.5)
-    
+    im3 = ax3.imshow(memory_asymmetry, cmap=cmap_memory, vmin=-0.5, vmax=0.5)
+
     # Add colorbar
-    cbar3 = fig1.colorbar(im3, ax=ax3, label='Probability Asymmetry (i→j vs j→i)')
-    
-    # Add annotations - more compact
+    cbar3 = fig1.colorbar(im3, ax=ax3, label='p(i→j) - p(j→i)')
+
     for i in range(n_interfaces):
         for j in range(n_interfaces):
             if not np.isnan(memory_asymmetry[i, j]):
                 text_color = 'black'
                 if abs(memory_asymmetry[i, j]) > 0.3:
                     text_color = 'white'
-                ax3.text(j, i, f"{memory_asymmetry[i, j]:.2f}", ha='center', va='center', 
-                       color=text_color, fontsize=7)
-    
-    ax3.set_xlabel('Target Turn at j')
-    ax3.set_ylabel('Starting Turn at i')
-    ax3.set_title('Memory Asymmetry: Forward vs. Backward Transitions', fontsize=12)
+                ax3.text(j, i, f"{memory_asymmetry[i, j]:.2f}", ha='center', va='center',
+                       color=text_color, fontsize=8)
+
+    ax3.set_xlabel('Target interface j')
+    ax3.set_ylabel('Starting interface i')
+    ax3.set_title('Transition asymmetry', fontsize=12)
     ax3.set_xticks(range(n_interfaces))
     ax3.set_yticks(range(n_interfaces))
     ax3.set_xticklabels([f"{i}" for i in range(n_interfaces)])
     ax3.set_yticklabels([f"{i}" for i in range(n_interfaces)])
+
+    ax5 = fig1.add_subplot(gs1[3])
+    # Sequential single-hue ramp: q(i,k) is a magnitude (0-1 probability), not a signed quantity
+    cmap_seq = LinearSegmentedColormap.from_list('q_seq', ['#fcfcfb', BLUE], N=256)
+    sns.heatmap(q_probs, annot=True, cmap=cmap_seq, fmt='.2f', vmin=0, vmax=1,
+                xticklabels=range(n_interfaces), yticklabels=range(n_interfaces),
+                cbar_kws={'label': 'q(i,k)'}, ax=ax5)
+    ax5.set_title('Conditional probabilities', fontsize=12)
+    ax5.set_xlabel('Target interface k')
+    ax5.set_ylabel('Starting interface i')
+
     
     # Add explanatory text that includes info about non-equidistant interfaces
     if is_equidistant:
-        desc_text = """
-        Memory Effect Matrix: Shows deviations from diffusive behavior.
-        In a purely diffusive process, all values would be 0.
-        Values > 0 (red) indicate bias toward crossing, < 0 (blue) indicate bias toward returning.
-        """
+        desc_text = "Color = deviation from diffusive (memoryless) behavior. Red: bias toward crossing. Blue: bias toward returning."
     else:
-        desc_text = """
-        Memory Effect Matrix: Shows deviations from diffusive behavior.
-        Due to non-equidistant interfaces, the diffusive reference varies for each transition.
-        Values > 0 (red) indicate bias toward crossing, < 0 (blue) indicate bias toward returning.
-        """
-    fig1.text(0.02, 0.02, desc_text, fontsize=10, wrap=True)
-    
-    plt.tight_layout(rect=[0, 0.07, 1, 0.95])
-    fig1.suptitle('TIS Memory Effect Analysis - Matrix Representations' + 
-                (' (Non-equidistant Interfaces)' if not is_equidistant else ''), fontsize=14)
+        desc_text = ("Color = deviation from diffusive (memoryless) behavior (reference varies per transition, "
+                      "non-equidistant interfaces). Red: bias toward crossing. Blue: bias toward returning.")
+    fig1.text(0.02, 0.02, desc_text, fontsize=9, color=MUTED_INK, wrap=True)
+
+    plt.tight_layout(rect=[0, 0.06, 1, 0.94])
+    fig1.suptitle('Memory effect analysis - transition matrices' +
+                (' (non-equidistant interfaces)' if not is_equidistant else ''), fontsize=14)
     
     # ================ Figure 2: Forward/Backward Probs + Memory Retention ================
     fig2 = plt.figure(figsize=(18, 12))
     gs2 = gridspec.GridSpec(2, 2, height_ratios=[1, 0.8])
     
-    # Create colors for targets
+    # Colors progress with the target interface k (one hue per direction, light->dark)
     forward_targets = [k for k in range(1, n_interfaces)]
-    forward_colors = generate_high_contrast_colors(len(forward_targets))
-    
+    forward_colors = sequential_colors(len(forward_targets), 'viridis')
+
     backward_targets = [k for k in range(n_interfaces-1)]
-    backward_colors = generate_high_contrast_colors(len(backward_targets)) 
-    
+    backward_colors = sequential_colors(len(backward_targets), 'plasma')
+
     # Plot 2.1: Forward Transition Probabilities (L→R)
     ax4 = fig2.add_subplot(gs2[0, 0])
 
@@ -1302,30 +1281,22 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
             #         color=forward_colors[idx], alpha=0.5)
     
     # Configure the forward plot
-    ax4.set_xlabel('Starting interface Position ($\lambda$$\\subset$)')
-    ax4.set_ylabel('Probability q(i,k)')
-    ax4.set_title('Forward Transition Probabilities (L→R)', fontsize=12)
+    ax4.set_xlabel(r'Starting position $\lambda$')
+    ax4.set_ylabel('q(i,k)')
+    ax4.set_title('Forward crossing probabilities', fontsize=12)
     ax4.set_ylim(0, 1.05)
+    ax4.grid(axis='y', alpha=0.3, color=GRID_COLOR, zorder=0)
     sns.despine(ax=ax4)
-    
+
     # Create better x-axis ticks using interface indices as labels but keeping physical distances
     ax4.set_xlim(min(interfaces) - 0.1, interfaces[n_interfaces-2] + 0.1)
     # Set the physical positions of interfaces on the x-axis
     ax4.set_xticks(interfaces)
     # Use state_labels for the tick labels
     ax4.set_xticklabels(["0→"]+[f"{i}$\\subset$" for i in range(1, n_interfaces-1)] + [f"{n_interfaces-1}"])
-    
-    # Add explanatory text about the dashed lines
-    ref_text = """
-    Dashed lines: Diffusive reference probabilities
-    • Based on free energy differences between interfaces
-    • Calculated using detailed balance principle
-    """
-    # ax4.text(0.02, 0.02, ref_text, transform=ax4.transAxes, fontsize=9, 
-    #          bbox=dict(facecolor='white', alpha=0.8))
-    
+
     # Add a legend with reasonable size
-    ax4.legend(title='Target Region', loc='best', fontsize=9)
+    ax4.legend(title='Target', loc='best', fontsize=9)
     
     # Plot 2.2: Backward Transition Probabilities (R→L)
     ax5 = fig2.add_subplot(gs2[0, 1])
@@ -1358,27 +1329,22 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
             #         color=backward_colors[idx], alpha=0.5)
     
     # Configure the backward plot
-    ax5.set_xlabel('Starting interface Position ($\lambda$)$\\supset$')
-    ax5.set_ylabel('Probability q(i,k)')
-    ax5.set_title('Backward Transition Probabilities (R→L)', fontsize=12)
+    ax5.set_xlabel(r'Starting position $\lambda$')
+    ax5.set_ylabel('q(i,k)')
+    ax5.set_title('Backward crossing probabilities', fontsize=12)
     ax5.set_ylim(0, 1.05)
+    ax5.grid(axis='y', alpha=0.3, color=GRID_COLOR, zorder=0)
     sns.despine(ax=ax5)
-        
-    # Add explanatory text about the dashed lines
-    # ax5.text(0.02, 0.02, ref_text, transform=ax5.tra9,
-    #          bbox=dict(facecolor='whiteintalpha=0.8)ices as labels but keeping physical distances
+
+    # Create better x-axis ticks using interface indices as labels but keeping physical distances
     ax5.set_xlim(interfaces[1] - 0.1, max(interfaces) + 0.1)
     # Set the physical positions of interfaces on the x-axis
     ax5.set_xticks(interfaces)
     # Use state_labels for the tick labels
     ax5.set_xticklabels(["0←"]+[f"{i}$\\supset$" for i in range(1, n_interfaces-1)] + [f"{n_interfaces-1}"])
-    
-    # Add explanatory text about the dashed lines
-    # ax5.text(0.02, 0.02, ref_text, transform=ax5.transAxes, fontsize=9,
-    #          bbox=dict(facecolor='white', alpha=0.8))
-    
+
     # Add a legend with reasonable size
-    ax5.legend(title='Target Region', loc='best', fontsize=9)
+    ax5.legend(title='Target', loc='best', fontsize=9)
     
     # Plot 2.3: Forward Memory Retention
     ax6 = fig2.add_subplot(gs2[1, 0])
@@ -1433,10 +1399,12 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         # Configure main plot
         ax6.set_xticks(interfaces)
         ax6.set_xticklabels([(f'{k-1 if k>0 else k}→{k}' if k < n_interfaces-1 else f'{k}') for k in range(n_interfaces)])
-        ax6.set_xlabel('Target Region')
+        ax6.set_xlabel('Crossing region')
         ax6.set_ylabel('Memory Effect (Std. Dev. \%)')
         # ax6.tick_params(axis='y', labelcolor='C0')
-        ax6.set_title('Forward Memory Retention: Variation in Crossing Probabilities', fontsize=12)
+        ax6.set_title('Forward memory retention', fontsize=12)
+        ax6.grid(axis='y', alpha=0.3, color=GRID_COLOR, zorder=0)
+        sns.despine(ax=ax6)
         
         # Configure twin axis
         # ax6_twin.set_ylabel(r'Mean |$\Delta$q| (%)', color='red')
@@ -1517,10 +1485,12 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         # Configure plot
         ax7.set_xticks(interfaces)
         ax7.set_xticklabels([f'{k}←{k+1}' for k in range(n_interfaces)])
-        ax7.set_xlabel('Target Region')
+        ax7.set_xlabel('Crossing region')
         ax7.set_ylabel('Memory Effect (Std. Dev. %)')
         # ax7.tick_params(axis='y', labelcolor='C0')
-        ax7.set_title('Backward Memory Retention: Variation in Crossing Probabilities', fontsize=12)
+        ax7.set_title('Backward memory retention', fontsize=12)
+        ax7.grid(axis='y', alpha=0.3, color=GRID_COLOR, zorder=0)
+        sns.despine(ax=ax7)
         
         # Configure twin axis
         # ax7_twin.set_ylabel(r'Mean |$\Delta$q| (%)', color='red')
@@ -1551,7 +1521,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ax7.set_xticks(interfaces)
         ax7.set_xticklabels([f'{k}←{k+1}' for k in range(n_interfaces)])
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    fig2.suptitle('TIS Memory Effect Analysis - Transition Probabilities and Memory Retention', fontsize=14)
+    fig2.suptitle('Transition probabilities & memory retention', fontsize=14)
 
     # ================ Figure 3: Free Energy Landscape and Momentum Effects ================
     fig3 = plt.figure(figsize=(18, 14))
@@ -1581,26 +1551,23 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
             cumulative_G[i] = np.nan
     
     # Plot free energy profile with improved styling
-    ax8.plot(interfaces, cumulative_G, 'o-', linewidth=2.5, color='royalblue', 
-             label='Free Energy Profile')
-    
+    ax8.plot(interfaces, cumulative_G, 'o-', linewidth=2.5, color=BLUE, markersize=8)
+
     # Add marker points with annotations
     for i, (pos, g) in enumerate(zip(interfaces, cumulative_G)):
         if not np.isnan(g):
-            ax8.plot(pos, g, 'o', markersize=8, color='royalblue')
-            ax8.text(pos, g + 0.15, f"{g:.2f}", ha='center', va='bottom', fontsize=10, 
-                    bbox=dict(facecolor='white', alpha=0.7, boxstyle='round,pad=0.2'))
-    
+            ax8.text(pos, g + 0.15, f"{g:.2f}", ha='center', va='bottom', fontsize=9,
+                    color=MUTED_INK)
+
     # Enhance the appearance
     ax8.set_xlabel(r'Interface Position ($\lambda$)', fontsize=12)
     ax8.set_ylabel(r'Free Energy G($\lambda$) (kT)', fontsize=12)
-    ax8.set_title('Free Energy Profile Along Interface Coordinate', fontsize=14)
-    ax8.grid(True, alpha=0.3, linestyle='--')
-    
+    ax8.set_title('Free energy profile', fontsize=13)
+    ax8.grid(True, alpha=0.3, linestyle='--', color=GRID_COLOR, zorder=0)
+    sns.despine(ax=ax8)
+
     # Add shaded area under the curve for visual appeal
-    ax8.fill_between(interfaces, 0, cumulative_G, alpha=0.2, color='royalblue')
-    
-    ax8.legend(loc='best', fontsize=10)
+    ax8.fill_between(interfaces, 0, cumulative_G, alpha=0.15, color=BLUE)
     
     # Plot 3.2: Observed vs Diffusive Probabilities Comparison (bottom-left)
     ax9 = fig3.add_subplot(gs3[1, 0])
@@ -1634,46 +1601,46 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         min_val = min(min(x_vals), min(y_vals)) * 0.9
         
         # Plot the ideal 1:1 line
-        ax9.plot([min_val, max_val], [min_val, max_val], '--', color='gray', alpha=0.7)
-        
+        ax9.plot([min_val, max_val], [min_val, max_val], '--', color=MUTED_INK, alpha=0.6)
+
         # Plot each point, colored by significance
         for x, y, sig, label in zip(x_vals, y_vals, significance, labels):
-            color = 'red' if sig else 'blue'
-            ax9.scatter(x, y, color=color, s=50, alpha=0.7)
-        
+            color = RED if sig else BLUE
+            ax9.scatter(x, y, color=color, s=50, alpha=0.8, zorder=3)
+
         # Add labels with improved readability
         for i, (x, y, sig, label) in enumerate(zip(x_vals, y_vals, significance, labels)):
             # Calculate offset direction based on point position to avoid overlaps
             dx = 10 if x < 0.5 * (min_val + max_val) else -30
             dy = 10 if y < 0.5 * (min_val + max_val) else -15
-            
+
             # Create a small white background for the text to improve readability
             text = ax9.annotate(
-                label, 
-                (x, y), 
+                label,
+                (x, y),
                 xytext=(dx, dy),
-                textcoords='offset points', 
-                fontsize=9,
-                fontweight='bold',
+                textcoords='offset points',
+                fontsize=8,
                 bbox=dict(
-                    boxstyle="round,pad=0.3",
+                    boxstyle="round,pad=0.2",
                     fc="white",
-                    ec="gray",
-                    alpha=0.8
+                    ec=GRID_COLOR,
+                    alpha=0.85
                 )
             )
-        
+
         ax9.set_xlabel('Diffusive Probability (Free Energy Model)', fontsize=12)
         ax9.set_ylabel('Observed Probability', fontsize=12)
-        ax9.set_title('Observed vs Diffusive Transition Probabilities\n(excluding boundary interfaces)', fontsize=14)
+        ax9.set_title('Observed vs. diffusive probabilities', fontsize=13)
         ax9.set_xlim(min_val, max_val)
         ax9.set_ylim(min_val, max_val)
-        ax9.grid(True, alpha=0.3)
-        
+        ax9.grid(True, alpha=0.3, color=GRID_COLOR, zorder=0)
+        sns.despine(ax=ax9)
+
         # Add legend using the same color scheme as momentum_vs_fe
-        ax9.scatter([], [], color='blue', label='Free Energy Dominated')
-        ax9.scatter([], [], color='red', label='Momentum Effects')
-        ax9.legend(fontsize=10)
+        ax9.scatter([], [], color=BLUE, label='Free Energy Dominated')
+        ax9.scatter([], [], color=RED, label='Momentum Effects')
+        ax9.legend(fontsize=9)
     else:
         ax9.text(0.5, 0.5, "Insufficient valid data for comparison\n(non-boundary transitions)",
                 ha='center', va='center', transform=ax9.transAxes)
@@ -1686,82 +1653,62 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     
     # Define colors for classifications - matching those in analyze_momentum_vs_free_energy
     class_colors = {
-        "free_energy_dominated": 'blue',
-        "momentum_dominated": 'red',
-        "strong_momentum": 'darkred',
+        "free_energy_dominated": BLUE,
+        "momentum_dominated": RED,
+        "strong_momentum": '#8c1f1f',
     }
-    
+    boundary_color = '#d8d7d2'
+
     # Create a modified list of colors, excluding first and last interfaces
     n_intervals = len(interfaces) - 1
     modified_colors = []
     for i in range(n_intervals):
         if i == 0 or i == n_intervals - 1:
             # Skip classification coloring for first and last intervals
-            modified_colors.append('lightgray')
+            modified_colors.append(boundary_color)
         else:
-            modified_colors.append(class_colors.get(classification[i], 'gray'))
-    
+            modified_colors.append(class_colors.get(classification[i], MUTED_INK))
+
     # Plot interface pair classifications as colored bars
     x = np.arange(n_intervals)
-    bars = ax10.bar(x, [1] * n_intervals, color=modified_colors, alpha=0.7, width=0.7)
-    
+    bars = ax10.bar(x, [1] * n_intervals, color=modified_colors, alpha=0.85, width=0.7)
+
     # Add labels for each interface pair, but skip first and last
     for i in range(n_intervals):
         if i > 0 and i < n_intervals - 1:
-            # Determine text color based on background color brightness for better readability
-            bg_color = modified_colors[i]
-            
-            # Function to determine if background color is dark (needs white text)
-            def is_dark_color(color_name):
-                dark_colors = ['darkred', 'red', 'darkblue', 'navy', 'black']
-                return color_name.lower() in dark_colors
-            
-            # Choose text color based on background brightness
-            text_color = 'white' if is_dark_color(bg_color) else 'black'
-            
-            # Add text with a small outline for better readability
-            text = classification[i].replace('_', '\n')
-            # First add text with outline
-            for offset_x, offset_y in [(-1, -1), (-1, 1), (1, -1), (1, 1)]:
-                ax10.text(i + offset_x*0.01, 0.5 + offset_y*0.01, text,
-                       ha='center', va='center', fontsize=10,
-                       color='black' if text_color == 'white' else 'white',
-                       alpha=0.5)
-            # Then add main text
-            ax10.text(i, 0.5, text, 
-                   ha='center', va='center', fontsize=10, 
+            text_color = 'white' if modified_colors[i] in (RED, class_colors['strong_momentum']) else 'black'
+            ax10.text(i, 0.5, classification[i].replace('_', '\n'),
+                   ha='center', va='center', fontsize=9,
                    color=text_color, fontweight='bold')
-    
+
     ax10.set_xticks(x)
     ax10.set_xticklabels([f"{i}→{i+1}" for i in range(n_intervals)])
     ax10.set_yticks([])  # No y-ticks needed
     ax10.set_xlabel('Interface Pair', fontsize=12)
-    ax10.set_title('Interface Pair Classification (excluding boundary interfaces)', fontsize=14)
-    
+    ax10.set_title('Interface pair classification', fontsize=13)
+
     # Create custom legend for the classification - matching analyze_momentum_vs_free_energy
     from matplotlib.patches import Patch
     legend_elements = [
-        Patch(facecolor=class_colors.get('free_energy_dominated', 'blue'), label='Free Energy Dominated'),
-        Patch(facecolor=class_colors.get('momentum_dominated', 'red'), label='Momentum Dominated'),
-        Patch(facecolor=class_colors.get('strong_momentum', 'darkred'), label='Strong Momentum Effects'),
-        Patch(facecolor='lightgray', label='Boundary (not classified)')
+        Patch(facecolor=class_colors['free_energy_dominated'], label='Free Energy Dominated'),
+        Patch(facecolor=class_colors['momentum_dominated'], label='Momentum Dominated'),
+        Patch(facecolor=class_colors['strong_momentum'], label='Strong Momentum Effects'),
+        Patch(facecolor=boundary_color, label='Boundary (not classified)')
     ]
-    ax10.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, -0.15), 
-               ncol=2, fontsize=10)
-    
+    ax10.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, -0.15),
+               ncol=2, fontsize=9)
+
     # Add overall title and additional information
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.tight_layout(rect=[0, 0.04, 1, 0.95])
     overall_class = momentum_results['overall_classification'].replace("_", " ").title()
-    fig3.suptitle(f'TIS Memory Analysis - Free Energy and Momentum Effects ({overall_class})', fontsize=16)
-    # Add metrics as text in the bottom of figure 3
+    fig3.suptitle('Free energy & momentum effects', fontsize=15)
+    # Add metrics as a compact one-line summary at the bottom of figure 3
     metrics_text = (
-        f"Overall Classification: {overall_class}\n"
-        f"Average Momentum Effect: {momentum_results['avg_momentum_effect']:.3f}\n"
-        f"Average Free Energy: {momentum_results['avg_free_energy']:.3f} kT\n"
-        f"Average Probabilities: {momentum_results['avg_probabilities']:.3f}"
+        f"{overall_class}  ·  mean momentum effect = {momentum_results['avg_momentum_effect']:.2f}"
+        f"  ·  mean ΔG = {momentum_results['avg_free_energy']:.2f} kT"
     )
-    fig3.text(0.02, 0.01, metrics_text, fontsize=10, wrap=True)
-    
+    fig3.text(0.02, 0.01, metrics_text, fontsize=9, color=MUTED_INK)
+
     return fig1, fig2, fig3
 
 ##################################
