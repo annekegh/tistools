@@ -12,6 +12,7 @@ and rates between different states in complex molecular systems.
 """
 
 from json import load
+import warnings
 from matplotlib import colors
 import numpy as np
 from .reading import *
@@ -756,7 +757,15 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
         Errors associated with the transition probabilities.
     """
     # Setup Figure and Axes
-    plt.style.use('science')
+    # The 'science' style is registered by importing scienceplots; it used to
+    # only get imported as a side effect of tica.py pulling in mlcolvar, so
+    # this broke whenever tica/mlcolvar/torch failed to import for unrelated
+    # reasons (e.g. a broken CUDA library). Import it directly here instead.
+    try:
+        import scienceplots  # noqa: F401
+        plt.style.use('science')
+    except (ImportError, OSError):
+        pass
     fig, ax1 = plt.subplots(figsize=(8, 6), dpi=120)
     ax1.hlines(20, -100, 100, color='firebrick', linestyle='--', alpha=0.6, zorder=100)
     # ax1.axhspan(20, 100, color='firebrick', alpha=0.1, zorder=0)
@@ -770,28 +779,31 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
     
     if q_errors is not None:
         if isinstance(q_errors, str):
+            q_errors_path = q_errors
             try:
-                loaded_q_errors = read_block_errors(q_errors, q_probs.shape)
+                loaded_q_errors = read_block_errors(q_errors_path, q_probs.shape)
                 if loaded_q_errors.shape != q_probs.shape:
-                    raise RuntimeWarning(
-                        f"Shape of q_errors loaded from file '{q_errors}' ({loaded_q_errors.shape}) "
-                        f"does not match q_probs shape ({q_probs.shape})."
+                    warnings.warn(
+                        f"Shape of q_errors loaded from file '{q_errors_path}' ({loaded_q_errors.shape}) "
+                        f"does not match q_probs shape ({q_probs.shape}); ignoring q_errors."
                     )
-                q_errors = loaded_q_errors
+                    q_errors = None
+                else:
+                    q_errors = loaded_q_errors
             except FileNotFoundError:
-                q_errors = None  
-                raise RuntimeWarning(f"q_errors file not found: {q_errors}")
+                q_errors = None
+                warnings.warn(f"q_errors file not found: {q_errors_path}; ignoring q_errors.")
             except Exception as e:
-                q_errors = None 
-                raise RuntimeWarning(f"Error loading q_errors from file '{q_errors}': {e}")
+                q_errors = None
+                warnings.warn(f"Error loading q_errors from file '{q_errors_path}': {e}; ignoring q_errors.")
         elif not (isinstance(q_errors, np.ndarray) and q_errors.shape == q_probs.shape):
-            q_errors = None 
-            raise RuntimeWarning(
+            warnings.warn(
                 f"If provided, q_errors must be a NumPy array with shape {q_probs.shape} "
                 f"or a path to a loadable text file. "
-                f"Got type {type(q_errors)} with shape {getattr(q_errors, 'shape', 'N/A')}."
+                f"Got type {type(q_errors)} with shape {getattr(q_errors, 'shape', 'N/A')}; ignoring q_errors."
             )
-    
+            q_errors = None
+
     # Calculate memory retention (returns both forward and backward dicts)
     memory_index = calculate_memory_effect_index(q_probs, q_weights, q_errors=q_errors, max_error=max_error)
 
@@ -1048,28 +1060,31 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
             
     if q_errors is not None:
         if isinstance(q_errors, str):
+            q_errors_path = q_errors
             try:
-                loaded_q_errors = read_block_errors(q_errors, q_probs.shape)
+                loaded_q_errors = read_block_errors(q_errors_path, q_probs.shape)
                 if loaded_q_errors.shape != q_probs.shape:
-                    raise RuntimeWarning(
-                        f"Shape of q_errors loaded from file '{q_errors}' ({loaded_q_errors.shape}) "
-                        f"does not match q_probs shape ({q_probs.shape})."
+                    warnings.warn(
+                        f"Shape of q_errors loaded from file '{q_errors_path}' ({loaded_q_errors.shape}) "
+                        f"does not match q_probs shape ({q_probs.shape}); ignoring q_errors."
                     )
-                q_errors = loaded_q_errors
+                    q_errors = None
+                else:
+                    q_errors = loaded_q_errors
             except FileNotFoundError:
-                q_errors = None  
-                raise RuntimeWarning(f"q_errors file not found: {q_errors}")
+                q_errors = None
+                warnings.warn(f"q_errors file not found: {q_errors_path}; ignoring q_errors.")
             except Exception as e:
-                q_errors = None 
-                raise RuntimeWarning(f"Error loading q_errors from file '{q_errors}': {e}")
+                q_errors = None
+                warnings.warn(f"Error loading q_errors from file '{q_errors_path}': {e}; ignoring q_errors.")
         elif not (isinstance(q_errors, np.ndarray) and q_errors.shape == q_probs.shape):
-            q_errors = None 
-            raise RuntimeWarning(
+            warnings.warn(
                 f"If provided, q_errors must be a NumPy array with shape {q_probs.shape} "
                 f"or a path to a loadable text file. "
-                f"Got type {type(q_errors)} with shape {getattr(q_errors, 'shape', 'N/A')}."
+                f"Got type {type(q_errors)} with shape {getattr(q_errors, 'shape', 'N/A')}; ignoring q_errors."
             )
-    
+            q_errors = None
+
     # Generate more descriptive state labels
     state_labels = generate_state_labels(n_interfaces)
 
@@ -1400,7 +1415,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ax6.set_xticks(interfaces)
         ax6.set_xticklabels([(f'{k-1 if k>0 else k}→{k}' if k < n_interfaces-1 else f'{k}') for k in range(n_interfaces)])
         ax6.set_xlabel('Crossing region')
-        ax6.set_ylabel('Memory Effect (Std. Dev. \%)')
+        ax6.set_ylabel('Memory index (\%)')
         # ax6.tick_params(axis='y', labelcolor='C0')
         ax6.set_title('Forward memory retention', fontsize=12)
         ax6.grid(axis='y', alpha=0.3, color=GRID_COLOR, zorder=0)
@@ -1486,7 +1501,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ax7.set_xticks(interfaces)
         ax7.set_xticklabels([f'{k}←{k+1}' for k in range(n_interfaces)])
         ax7.set_xlabel('Crossing region')
-        ax7.set_ylabel('Memory Effect (Std. Dev. %)')
+        ax7.set_ylabel('Memory index (%)')
         # ax7.tick_params(axis='y', labelcolor='C0')
         ax7.set_title('Backward memory retention', fontsize=12)
         ax7.grid(axis='y', alpha=0.3, color=GRID_COLOR, zorder=0)

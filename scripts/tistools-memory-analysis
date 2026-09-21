@@ -20,8 +20,11 @@ import argparse
 import glob
 import os
 import sys
+# A sibling project (inftools) puts a directory containing its own empty
+# `tistools` namespace package on sys.path; strip it so `import tistools`
+# below resolves to the real, pip-installed (editable) tistools package
+# instead of that empty shadow.
 sys.path = [p for p in sys.path if 'inftools' not in p]
-sys.path.insert(0, os.path.abspath('..'))
 from pathlib import Path
 
 import numpy as np
@@ -49,6 +52,14 @@ def parse_args():
         action="store_true",
         default=False,
         help="Set if lambda_-1 interface is defined",
+    )
+    parser.add_argument(
+        "--q-errors",
+        type=str,
+        default=None,
+        help="Path to a block-error-analysis text file with errors for the q-matrix "
+             "(e.g. block_error_analysis_qstaple_1.txt), used to draw error bars/bands "
+             "on the memory-analysis and memory-landscape plots (default: none)",
     )
     parser.add_argument(
         "--outdir",
@@ -84,7 +95,7 @@ def main():
             global_pcross_msm_star,
             memory_analysis,
         )
-        from tistools import plot_memory_analysis
+        from tistools import plot_memory_analysis, plot_memory_landscape
     except ImportError as e:
         print(f"Error: Could not import tistools: {e}", file=sys.stderr)
         print("Make sure tistools is installed or in your PYTHONPATH.", file=sys.stderr)
@@ -179,17 +190,23 @@ def main():
     )
     p, q = get_transition_probs_weights(wpath)
     q_k, q_tot = memory_analysis(wpath, False)
-    fig1, fig2, fig3 = plot_memory_analysis(pathensembles, q_tot, p, interfaces)
+    fig1, fig2, fig3 = plot_memory_analysis(pathensembles, q_tot, p, interfaces, q_errors=args.q_errors)
 
     memory_files = {
         "memory_matrices.png": fig1,
         "memory_probabilities.png": fig2,
-        "memory_landscape.png": fig3,
+        "free_energy_momentum.png": fig3,
     }
     for fname, mfig in memory_files.items():
         fpath = outdir / fname
         mfig.savefig(fpath, dpi=200)
         print(f"Memory analysis plot saved to {fpath}")
+
+    # Memory index and conditional probabilities over the order parameter landscape
+    fig_landscape, _ = plot_memory_landscape(interfaces, q_tot, q_errors=args.q_errors)
+    landscape_file = outdir / "memory_landscape.png"
+    fig_landscape.savefig(landscape_file, dpi=200)
+    print(f"Memory landscape plot saved to {landscape_file}")
 
     if args.show:
         plt.show()
