@@ -527,6 +527,93 @@ def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples
     }
 
 
+def calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=None, min_samples=5,
+                                           n_eff=None, verbose=True):
+    """
+    Memory effect index, corrected for sampling noise::
+
+        M_k = sqrt(max(0, s_k^2 - sigma_k^2)) / sqrt(q_mean (1 - q_mean))   (in percent)
+
+    s_k^2 is the weighted variance of q(i,k) over starting turns i and
+    sigma_k^2 the sampling-noise floor, so a purely statistical spread gives
+    M_k = 0 rather than a spurious memory signal. Same normalisation as
+    calculate_memory_effect_index above, which is what keeps the scale bounded
+    and the threshold comparable between systems.
+
+    The subtraction is in variance, so the floor must reach ~44% of the
+    uncorrected index to change it by 10%; it mainly zeroes marginal regions
+    rather than shifting the largest one.
+
+    Mirrors tistools.calculate_memory_effect_index_corrected.
+        """
+    n_interfaces = q_probs.shape[0]
+    out = {}
+    for direction in ("forward", "backward"):
+        eps = np.full(n_interfaces, np.nan)
+        eps_error = np.full(n_interfaces, np.nan)
+        floor = np.full(n_interfaces, np.nan)
+        sizes = np.zeros(n_interfaces, dtype=int)
+
+        k_range = range(1, n_interfaces) if direction == "forward" else range(n_interfaces - 1)
+        for k in k_range:
+            i_range = range(max(1, k - 1)) if direction == "forward" else range(k + 2, n_interfaces)
+            q_values, weights, errs = [], [], []
+            for i in i_range:
+                if np.isnan(q_probs[i, k]) or q_weights[i, k] < min_samples:
+                    continue
+                if q_errors is not None:
+                    if np.isnan(q_errors[i, k]):
+                        continue
+                    err = q_errors[i, k]
+                else:
+                    # The binomial fallback treats every MC step as an
+                    # independent sample; n_eff (an effective-count array, or a
+                    # scalar statistical inefficiency to divide by) corrects it.
+                    if n_eff is None:
+                        n_use = q_weights[i, k]
+                    elif np.isscalar(n_eff):
+                        n_use = q_weights[i, k] / max(float(n_eff), 1e-12)
+                    else:
+                        n_use = n_eff[i, k]
+                    err = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / max(n_use, 1e-12))
+                q_values.append(q_probs[i, k])
+                weights.append(q_weights[i, k])
+                errs.append(err)
+            if len(q_values) < 2:
+                continue
+
+            q_values, weights, sigma = np.array(q_values), np.array(weights), np.array(errs)
+            q_mean = np.average(q_values, weights=weights)
+            var_binomial = q_mean * (1.0 - q_mean)
+            if not np.isfinite(q_mean) or var_binomial <= 1e-12:
+                continue
+            denom = np.sqrt(var_binomial)
+            var_obs = float(np.cov(q_values, aweights=weights))
+            var_noise = float(np.average(sigma ** 2, weights=weights))
+            s_corr = np.sqrt(max(var_obs - var_noise, 0.0))
+
+            eps[k] = (s_corr / denom) * 100
+            floor[k] = (np.sqrt(var_noise) / denom) * 100
+            sizes[k] = int(np.sum(weights))
+            if s_corr > 0 and not np.any(np.isnan(sigma)):
+                n = len(q_values)
+                term1 = (q_values - q_mean) / (denom * (n - 1) * s_corr)
+                term2 = (s_corr * (1 - 2 * q_mean)) / (2 * n * (denom ** 3))
+                partial_derivs = term1 - term2
+                eps_error[k] = float(np.sqrt(np.sum((partial_derivs * sigma) ** 2))) * 100
+
+        out[f"{direction}_variation"] = eps
+        out[f"{direction}_variation_error"] = eps_error
+        out[f"{direction}_floor"] = floor
+        out[f"{direction}_sample_sizes"] = sizes
+        out[f"{direction}_total"] = float(np.nansum(eps))
+
+    if verbose:
+        print(f"Memory index (noise-corrected, summed over interfaces): "
+              f"forward {out['forward_total']:.1f}%, backward {out['backward_total']:.1f}%")
+    return out
+
+
 def estimate_free_energy_differences(interfaces, q_matrix, q_weights=None, min_samples=5):
     n_interfaces = len(interfaces)
     delta_G = np.full((n_interfaces, n_interfaces), np.nan)
@@ -809,7 +896,7 @@ def plot_memory_analysis(q_tot, p, interfaces=None, q_errors=None):
     ax5b.set_ylim(0, 1.05); ax5b.grid(axis="y", alpha=0.3, color=GRID_COLOR, zorder=0)
     sns.despine(ax=ax5b); ax5b.legend(title="Target", loc="best", fontsize=9)
 
-    memory_index = calculate_memory_effect_index(q_probs, q_weights, q_errors=q_errors)
+    memory_index = calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=q_errors)
 
     ax6 = fig2.add_subplot(gs2[1, 0])
     valid_k_fwd = [k for k in range(1, n_interfaces) if not np.isnan(memory_index["forward_variation"][k])]

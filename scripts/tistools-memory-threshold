@@ -1,0 +1,790 @@
+#!/usr/bin/env python
+"""
+tistools-memory-threshold: calibrate a memory-index threshold that tells you
+when REPPTIS stops being accurate.
+
+Thresholding the memory index directly is arbitrary (the hard-coded 20% line
+in plot_memory_landscape is a guess). This script instead calibrates it
+against the quantity that actually matters -- the error REPPTIS makes in
+P_A(lambda_B|lambda_A) -- using simulations where both estimates are
+available from the very same paths:
+
+  1. read the path ensembles of each simulation,
+  2. compute the memory index per region, mirroring
+     tistools.calculate_memory_effect_index, but additionally subtracting the
+     sampling-noise floor (the index is biased high by finite sampling),
+  3. turn that into eps_k = sqrt(max(0, s^2 - sigma^2)) / q_mean per region --
+     the relative dispersion of the conditional committor over starting turns,
+     i.e. the scale of the systematic offset a memory-less method incurs there,
+  4. measure the *actual* REPPTIS-vs-APPTIS(iSTAR) discrepancy in P_cross with
+     tistools.ploc_memory,
+  5. regress predicted against actual over all simulations, and score each
+     candidate as a warning rule for a target accuracy (--tolerance).
+
+Both directions count. P_cross depends on the backward committors as well as
+the forward ones (construct_M_istar fills both blocks of the transition matrix
+and global_pcross_msm_star solves the first-passage problem on all of it; in
+the REPPTIS recursion P- sits in the denominator of P+), so every (direction,
+k) region enters the predictors. Forward-only variants are reported as [ref]
+rows for comparison.
+
+Note eps_k is a relative dispersion of a *local* committor, not a relative
+error on P_cross: recrossings damp its propagation into the global quantity,
+so an accumulated eps is an upper bound on the damage. That is exactly why the
+threshold is calibrated empirically here rather than derived.
+
+Several candidate predictors are compared so you can see which one actually
+tracks the REPPTIS error; the recommendation picks on separability (AUC),
+breaking ties on the width of the gap and then on R^2:
+
+  - worst single region (max index, max eps),
+  - accumulated over regions, coherent (sum) and quadrature (root-sum-square),
+  - the same two made *interface-invariant* by dividing by the region count N
+    and sqrt(N) respectively, i.e. the mean and the RMS per-region bias,
+  - those two again, weighted by each region's sample count.
+
+The accumulated forms are extensive: they grow with the number of interfaces,
+so a threshold on them is system-specific. The interface-invariant forms are
+intensive and are the ones to use for a threshold meant to hold across
+different systems; the sample-weighted variants additionally stop a region
+estimated from a handful of paths counting as much as one estimated from
+thousands.
+
+Usage:
+    tistools-memory-threshold <simdir> [<simdir> ...] [options]
+
+Example:
+    tistools-memory-threshold /path/to/sims/sim_istar*/ --tolerance 0.2 --outdir .
+"""
+
+import argparse
+import contextlib
+import glob
+import io
+import os
+import sys
+# A sibling project (inftools) puts a directory containing its own empty
+# `tistools` namespace package on sys.path; strip it so `import tistools`
+# below resolves to the real, pip-installed (editable) tistools package.
+sys.path = [p for p in sys.path if 'inftools' not in p]
+import warnings
+from pathlib import Path
+
+import numpy as np
+
+
+@contextlib.contextmanager
+def quiet():
+    """Silence the very chatty tistools analysis routines."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        yield buf
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Calibrate a memory-index threshold that predicts when REPPTIS becomes inaccurate.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument(
+        "simdirs",
+        type=str,
+        nargs="+",
+        help="Simulation directories to calibrate on (each with ensemble folders 000, 001, ...)",
+    )
+    parser.add_argument(
+        "--tolerance",
+        type=float,
+        default=0.2,
+        help="Relative error on P_A(lambda_B|lambda_A) you are willing to accept from REPPTIS (default: 0.2)",
+    )
+    parser.add_argument(
+        "--inputfile-name",
+        type=str,
+        default="logging.log",
+        help="Name of the input file inside each simulation directory (default: logging.log)",
+    )
+    parser.add_argument(
+        "--q-errors-name",
+        type=str,
+        default="block_error_analysis_qstaple_1.txt",
+        help="Name of the block-error file inside each simulation directory, used for the noise "
+             "floor when present (default: block_error_analysis_qstaple_1.txt). Block errors are "
+             "strongly preferred over the binomial fallback: TIS paths are correlated, so the "
+             "binomial floor is too optimistic. Pass '' to always use the binomial fallback.",
+    )
+    parser.add_argument(
+        "--min-samples",
+        type=float,
+        default=5,
+        help="Minimum weight for a q(i,k) entry to be used (default: 5, as in calculate_memory_effect_index)",
+    )
+    parser.add_argument(
+        "--zero-minus-one",
+        action="store_true",
+        default=False,
+        help="Set if lambda_-1 interface is defined",
+    )
+    parser.add_argument(
+        "--outdir",
+        type=str,
+        default=None,
+        help="Directory to write the calibration plot and report to (default: current directory)",
+    )
+    parser.add_argument(
+        "--show",
+        action="store_true",
+        help="Also display the calibration plot interactively",
+    )
+    return parser.parse_args()
+
+
+# ---------------------------------------------------------------------------
+# Memory index with a sampling-noise floor
+# ---------------------------------------------------------------------------
+
+def _stats_for_target(q_values, weights, q_errors_k):
+    """Weighted mean/variance, noise floor, chi2 heterogeneity for one target."""
+    q_values = np.asarray(q_values, dtype=float)
+    weights = np.asarray(weights, dtype=float)
+    sigma = np.asarray(q_errors_k, dtype=float)
+    n = len(q_values)
+
+    # Weighted mean and (unbiased) weighted variance, as in
+    # tistools.calculate_memory_effect_index.
+    q_mean = np.average(q_values, weights=weights)
+    var_obs = float(np.cov(q_values, aweights=weights))
+
+    # Expected variance from sampling noise alone (the floor): weighted mean
+    # of the individual variances of the q(i,k) estimates.
+    var_noise = float(np.average(sigma ** 2, weights=weights))
+
+    var_binomial = q_mean * (1.0 - q_mean)
+    if var_binomial <= 1e-12:
+        return None
+
+    denom = np.sqrt(var_binomial)
+    index_raw = np.sqrt(max(var_obs, 0.0)) / denom * 100.0
+    index_floor = np.sqrt(var_noise) / denom * 100.0
+    index_corr = np.sqrt(max(var_obs - var_noise, 0.0)) / denom * 100.0
+
+    # Heterogeneity test: is the spread larger than sampling noise at all?
+    # Inverse-variance weighted mean is the right centre for this statistic.
+    iv_w = 1.0 / np.maximum(sigma ** 2, 1e-300)
+    q_iv = np.sum(iv_w * q_values) / np.sum(iv_w)
+    chi2 = float(np.sum((q_values - q_iv) ** 2 * iv_w))
+    dof = n - 1
+    # Higgins' I^2: fraction of the observed spread that is real, not noise.
+    i_squared = max(0.0, (chi2 - dof) / chi2) * 100.0 if chi2 > 0 else 0.0
+    try:
+        from scipy.stats import chi2 as chi2_dist
+        p_value = float(chi2_dist.sf(chi2, dof)) if dof > 0 else np.nan
+    except ImportError:
+        p_value = np.nan
+
+    # Relative bias this target contributes to P_cross. The k-th factor of
+    # P_A(lambda_B|lambda_A) is ~q(.,k), so a spread of sqrt(var) in q is a
+    # relative error of sqrt(var)/q_mean on that factor.
+    eps_raw = np.sqrt(max(var_obs, 0.0)) / q_mean
+    eps_corr = np.sqrt(max(var_obs - var_noise, 0.0)) / q_mean
+
+    return {
+        "n": n,
+        "n_samples": float(np.sum(weights)),
+        "q_mean": q_mean,
+        "index_raw": index_raw,
+        "index_floor": index_floor,
+        "index_corr": index_corr,
+        "i_squared": i_squared,
+        "chi2": chi2,
+        "p_value": p_value,
+        "eps_raw": eps_raw,
+        "eps_corr": eps_corr,
+    }
+
+
+def memory_index_with_floor(q_probs, q_weights, q_errors=None, min_samples=5):
+    """
+    Per-target memory index, extended with a sampling-noise floor.
+
+    Point selection mirrors tistools.calculate_memory_effect_index exactly
+    (same adjacent-interface skipping, same min_samples filter),
+    so 'index_raw' reproduces what the memory-analysis plots show.
+    """
+    n_interfaces = q_probs.shape[0]
+    forward = {}
+    backward = {}
+
+    def collect(i_range, k):
+        q_values, weights, errs = [], [], []
+        for i in i_range:
+            if np.isnan(q_probs[i, k]) or q_weights[i, k] < min_samples:
+                continue
+            if q_errors is not None:
+                if np.isnan(q_errors[i, k]):
+                    continue
+                err = q_errors[i, k]
+            else:
+                err = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / q_weights[i, k])
+            q_values.append(q_probs[i, k])
+            weights.append(q_weights[i, k])
+            errs.append(err)
+        return q_values, weights, errs
+
+    for k in range(1, n_interfaces):
+        q_values, weights, errs = collect(range(max(1, k - 1)), k)
+        if len(q_values) >= 2:
+            stats = _stats_for_target(q_values, weights, errs)
+            if stats is not None:
+                forward[k] = stats
+
+    for k in range(n_interfaces - 1):
+        q_values, weights, errs = collect(range(k + 2, n_interfaces), k)
+        if len(q_values) >= 2:
+            stats = _stats_for_target(q_values, weights, errs)
+            if stats is not None:
+                backward[k] = stats
+
+    return forward, backward
+
+
+def accumulate(per_target, key):
+    """Accumulate per-interface relative biases into a predicted P_cross error."""
+    eps = np.array([s[key] for s in per_target.values()], dtype=float)
+    if eps.size == 0:
+        return 0.0, 0.0
+    # Memory biases tend to share a sign (paths from deeper interfaces are
+    # systematically less equilibrated), so the coherent sum is the
+    # conservative estimate; the quadrature sum assumes independent signs.
+    return float(np.sum(eps)), float(np.sqrt(np.sum(eps ** 2)))
+
+
+# ---------------------------------------------------------------------------
+# Per-simulation analysis
+# ---------------------------------------------------------------------------
+
+def load_pathensembles(simdir, inputfile_name, zero_minus_one, tistools_ns):
+    read_inputfile = tistools_ns["read_inputfile"]
+    get_LMR_interfaces = tistools_ns["get_LMR_interfaces"]
+    read_pathensemble = tistools_ns["read_pathensemble"]
+    get_weights = tistools_ns["get_weights"]
+    ACCFLAGS, REJFLAGS = tistools_ns["ACCFLAGS"], tistools_ns["REJFLAGS"]
+
+    inputfile = str(Path(simdir) / inputfile_name)
+    if not os.path.exists(inputfile):
+        raise FileNotFoundError(f"input file not found: {inputfile}")
+    folders = sorted(glob.glob(str(Path(simdir) / "0[0-9][0-9]")))
+    if not folders:
+        raise FileNotFoundError(f"no ensemble folders in {simdir}")
+
+    interfaces, zero_left, _ = read_inputfile(inputfile)
+    LMR_interfaces, LMR_strings = get_LMR_interfaces(interfaces, zero_left)
+
+    pathensembles = []
+    for i, fol in enumerate(folders):
+        pe = read_pathensemble(os.path.join(fol, "pathensemble.txt"))
+        pe.set_name(fol)
+        pe.set_interfaces([LMR_interfaces[i], LMR_strings[i]])
+        if i == 0:
+            pe.set_zero_minus_one(zero_minus_one)
+            pe.set_in_zero_minus(True)
+        if i == 1:
+            pe.set_in_zero_plus(True)
+        w, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose=False)
+        pe.set_weights(w)
+        pathensembles.append(pe)
+
+    return pathensembles, interfaces
+
+
+def analyse_simulation(simdir, args, tistools_ns, plt):
+    """Return the predictors and the measured REPPTIS error for one simulation."""
+    pes, interfaces = load_pathensembles(simdir, args.inputfile_name, args.zero_minus_one, tistools_ns)
+    n_int = len(interfaces)
+
+    # --- memory index (predictor side) ---------------------------------
+    # Use display_data's weight matrices and memory_analysis(.., tr=False),
+    # exactly as tistools-memory-analysis does, so the index calibrated here
+    # is the same number the memory-analysis plots show.
+    with quiet():
+        wpath = tistools_ns["display_data"](pes, interfaces, n_int, correct_ha=False)[4]
+        _, q_tot = tistools_ns["memory_analysis"](wpath, False)
+    q_probs, q_weights = q_tot[0], q_tot[1]
+
+    q_errors = None
+    if args.q_errors_name:
+        qe_path = Path(simdir) / args.q_errors_name
+        if qe_path.exists():
+            try:
+                q_errors = tistools_ns["read_block_errors"](str(qe_path), q_probs.shape)
+            except Exception as e:
+                print(f"  ! could not read block errors ({e}); falling back to binomial floor")
+
+    forward, backward = memory_index_with_floor(
+        q_probs, q_weights, q_errors=q_errors,
+        min_samples=args.min_samples,
+    )
+    if not forward and not backward:
+        raise RuntimeError("no usable memory-index targets")
+
+    # P_cross depends on the backward committors as well as the forward ones:
+    # construct_M_istar fills both blocks of the transition matrix and
+    # global_pcross_msm_star solves the first-passage problem on all of it,
+    # while in the REPPTIS recursion P- appears in the denominator of P+. So
+    # every (direction, k) region is a region whose memory can bias the result.
+    regions = {("f", k): s for k, s in forward.items()}
+    regions.update({("b", k): s for k, s in backward.items()})
+
+    eps_coh_corr, eps_ind_corr = accumulate(regions, "eps_corr")
+    eps_coh_raw, eps_ind_raw = accumulate(regions, "eps_raw")
+    max_index_raw = max(s["index_raw"] for s in regions.values())
+    max_index_corr = max(s["index_corr"] for s in regions.values())
+    # Worst single region, weighted by how much that region's q actually
+    # matters -- between "max index" and the accumulated sums.
+    max_eps_corr = max(s["eps_corr"] for s in regions.values())
+    max_i_squared = max(s["i_squared"] for s in regions.values())
+    min_p_value = min((s["p_value"] for s in regions.values() if not np.isnan(s["p_value"])), default=np.nan)
+
+    # Forward-only references, kept so the table shows whether including the
+    # backward committors actually buys anything.
+    eps_coh_fwd = accumulate(forward, "eps_corr")[0] if forward else 0.0
+    eps_coh_bwd = accumulate(backward, "eps_corr")[0] if backward else 0.0
+    max_index_fwd = max((s["index_raw"] for s in forward.values()), default=np.nan)
+
+    # --- interface-invariant and sample-weighted aggregates -------------
+    # Sums over regions are extensive: they grow with the number of interfaces,
+    # so their scale is system-specific and a threshold on them does not
+    # transfer. Dividing by the region count (coherent) or its square root
+    # (quadrature) turns them into the mean and the RMS of the per-region bias,
+    # which are intensive and therefore comparable across systems.
+    eps_vals = np.array([s_["eps_corr"] for s_ in regions.values()], dtype=float)
+    samp = np.array([s_["n_samples"] for s_ in regions.values()], dtype=float)
+    n_reg = max(len(eps_vals), 1)
+    eps_mean = float(np.sum(eps_vals) / n_reg)
+    eps_rms = float(np.sqrt(np.sum(eps_vals ** 2) / n_reg))
+    # Sample-weighted versions: a region estimated from a handful of paths
+    # should not count as much as one estimated from thousands.
+    if np.sum(samp) > 0:
+        eps_mean_w = float(np.sum(samp * eps_vals) / np.sum(samp))
+        eps_rms_w = float(np.sqrt(np.sum(samp * eps_vals ** 2) / np.sum(samp)))
+    else:
+        eps_mean_w = eps_rms_w = np.nan
+
+    # --- REPPTIS vs APPTIS/iSTAR (ground-truth side) -------------------
+    # tistools.ploc_memory computes both from the same paths. It flips
+    # rcParams and opens a figure, so shield the caller from that.
+    saved_usetex = plt.rcParams.get("text.usetex", False)
+    try:
+        with quiet():
+            plocs = tistools_ns["ploc_memory"](pes, interfaces, trr=False)
+    finally:
+        plt.rcParams["text.usetex"] = saved_usetex
+        plt.close("all")
+
+    p_apptis = np.asarray(plocs["apptis"], dtype=float)
+    p_repptis = np.asarray(plocs["repptis"], dtype=float)
+    if p_apptis.size == 0 or p_repptis.size == 0:
+        raise RuntimeError("ploc_memory returned empty crossing probabilities")
+    pa, pr = float(p_apptis[-1]), float(p_repptis[-1])
+    if not (np.isfinite(pa) and np.isfinite(pr)) or pa <= 0 or pr <= 0:
+        raise RuntimeError(f"non-positive crossing probability (apptis={pa}, repptis={pr})")
+
+    return {
+        "name": Path(simdir).name or str(simdir),
+        "n_int": n_int,
+        "n_targets": len(regions),
+        "q_mean_median": float(np.median([s["q_mean"] for s in regions.values()])),
+        "max_index_raw": max_index_raw,
+        "max_index_corr": max_index_corr,
+        "max_eps_corr": max_eps_corr,
+        "max_i_squared": max_i_squared,
+        "min_p_value": min_p_value,
+        "eps_coh_raw": eps_coh_raw,
+        "eps_ind_raw": eps_ind_raw,
+        "eps_coh_corr": eps_coh_corr,
+        "eps_ind_corr": eps_ind_corr,
+        "eps_coh_fwd": eps_coh_fwd,
+        "eps_coh_bwd": eps_coh_bwd,
+        "max_index_fwd": max_index_fwd,
+        "eps_mean": eps_mean,
+        "eps_rms": eps_rms,
+        "eps_mean_w": eps_mean_w,
+        "eps_rms_w": eps_rms_w,
+        "n_regions": n_reg,
+        "used_block_errors": q_errors is not None,
+        "P_apptis": pa,
+        "P_repptis": pr,
+        # Measured REPPTIS error, relative to the less-approximate iSTAR value.
+        "rel_error": abs(pr - pa) / pa,
+        "log_ratio": abs(np.log(pr / pa)),
+        "regions": regions,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Calibration
+# ---------------------------------------------------------------------------
+
+def fit_through_origin(x, y):
+    """Least-squares slope of y = c*x, plus R^2 and the median ratio."""
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    ok = np.isfinite(x) & np.isfinite(y)
+    x, y = x[ok], y[ok]
+    if x.size < 2 or np.all(x == 0):
+        return np.nan, np.nan, np.nan
+    slope = float(np.sum(x * y) / np.sum(x * x))
+    resid = y - slope * x
+    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+    r2 = 1.0 - float(np.sum(resid ** 2)) / ss_tot if ss_tot > 0 else np.nan
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratios = np.where(x > 0, y / x, np.nan)
+    median_ratio = float(np.nanmedian(ratios)) if np.any(np.isfinite(ratios)) else np.nan
+    return slope, r2, median_ratio
+
+
+def _ranks(a):
+    """Average ranks, ties shared."""
+    a = np.asarray(a, float)
+    n = a.size
+    order = np.argsort(a, kind="mergesort")
+    ranks = np.empty(n, float)
+    sa = a[order]
+    i = 0
+    while i < n:
+        j = i
+        while j + 1 < n and sa[j + 1] == sa[i]:
+            j += 1
+        ranks[order[i:j + 1]] = 0.5 * (i + j) + 1.0
+        i = j + 1
+    return ranks
+
+
+def rank_metrics(x, truth, labels):
+    """Spearman rho against the measured error, and ROC AUC against the label."""
+    x = np.asarray(x, float)
+    truth = np.asarray(truth, float)
+    labels = np.asarray(labels, bool)
+    ok = np.isfinite(x) & np.isfinite(truth)
+    x, truth, labels = x[ok], truth[ok], labels[ok]
+    if x.size < 3 or np.std(x) == 0:
+        return np.nan, np.nan
+    rx, rt = _ranks(x), _ranks(truth)
+    rho = float(np.corrcoef(rx, rt)[0, 1])
+    if labels.all() or (~labels).all():
+        return rho, np.nan
+    n_pos, n_neg = int(np.sum(labels)), int(np.sum(~labels))
+    auc = float((np.sum(rx[labels]) - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg))
+    return rho, auc
+
+
+def separation_margin(x, labels):
+    """
+    Gap between the worst 'good' run and the best 'bad' run.
+
+    This is what decides whether a cut survives contact with new data: AUC
+    saturates at 1.0 as soon as the classes are separable at all, but a cut
+    sitting in a razor-thin gap will misclassify the next simulation, while
+    one sitting in a wide gap has room to be wrong.
+    """
+    x = np.asarray(x, float)
+    labels = np.asarray(labels, bool)
+    ok = np.isfinite(x)
+    x, labels = x[ok], labels[ok]
+    if not labels.any() or not (~labels).any():
+        return np.nan
+    worst_good = float(np.max(x[~labels]))
+    best_bad = float(np.min(x[labels]))
+    if best_bad <= worst_good:
+        return np.nan  # classes overlap: no gap to sit in
+    if worst_good <= 0:
+        return np.inf
+    return best_bad / worst_good
+
+
+def threshold_sweep(x, labels):
+    """
+    Sweep every candidate cut on the predictor and score it as a warning rule.
+
+    Returns the Youden-optimal cut (balanced), and the most permissive cut that
+    still catches every inaccurate case (no false negatives) -- the latter is
+    usually what you want for a user-facing warning, where missing a bad
+    REPPTIS result is worse than an unnecessary warning.
+    """
+    x = np.asarray(x, float)
+    labels = np.asarray(labels, bool)
+    ok = np.isfinite(x)
+    x, labels = x[ok], labels[ok]
+    if x.size < 3 or labels.all() or (~labels).all():
+        return None
+
+    uniq = np.unique(x)
+    cands = np.concatenate(([uniq[0] * 0.999 - 1e-12], (uniq[:-1] + uniq[1:]) / 2.0, [uniq[-1] * 1.001 + 1e-12]))
+    rows = []
+    for t in cands:
+        pred = x >= t
+        tp = int(np.sum(pred & labels))
+        fp = int(np.sum(pred & ~labels))
+        fn = int(np.sum(~pred & labels))
+        tn = int(np.sum(~pred & ~labels))
+        tpr = tp / (tp + fn) if (tp + fn) else np.nan
+        fpr = fp / (fp + tn) if (fp + tn) else np.nan
+        rows.append({
+            "t": float(t), "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+            "tpr": tpr, "fpr": fpr,
+            "precision": tp / (tp + fp) if (tp + fp) else np.nan,
+            "youden": tpr - fpr,
+        })
+    best = max(rows, key=lambda r: (r["youden"] if np.isfinite(r["youden"]) else -np.inf))
+    no_fn = [r for r in rows if r["fn"] == 0]
+    safe = max(no_fn, key=lambda r: r["t"]) if no_fn else None
+    return {"best": best, "safe": safe}
+
+
+# All predictors run over both directions (every (direction, k) region), since
+# P_cross depends on the backward committors too. The last two are forward-only
+# references, to show whether including the backward ones actually helps.
+PREDICTORS = [
+    ("max_index_raw", "max raw index (current)", "%"),
+    ("max_index_corr", "max floor-corrected index", "%"),
+    ("max_eps_corr", "max per-region bias", ""),
+    ("eps_coh_corr", "accumulated bias, coherent", ""),
+    ("eps_ind_corr", "accumulated bias, quadrature", ""),
+    ("eps_mean", "mean bias per region (coh/N)", ""),
+    ("eps_rms", "RMS bias per region (quad/sqrtN)", ""),
+    ("eps_mean_w", "mean bias, sample-weighted", ""),
+    ("eps_rms_w", "RMS bias, sample-weighted", ""),
+    ("max_index_fwd", "[ref] max raw index, fwd only", "%"),
+    ("eps_coh_fwd", "[ref] coherent bias, fwd only", ""),
+]
+
+
+def main():
+    args = parse_args()
+
+    try:
+        import tistools
+        tistools_ns = {
+            name: getattr(tistools, name) for name in (
+                "read_inputfile", "get_LMR_interfaces", "read_pathensemble", "get_weights",
+                "ACCFLAGS", "REJFLAGS", "display_data", "memory_analysis",
+                "ploc_memory", "read_block_errors",
+            )
+        }
+    except (ImportError, AttributeError) as e:
+        print(f"Error: Could not import tistools: {e}", file=sys.stderr)
+        print("Make sure tistools is installed or in your PYTHONPATH.", file=sys.stderr)
+        sys.exit(1)
+
+    import matplotlib
+    if not args.show:
+        matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    outdir = Path(args.outdir).resolve() if args.outdir else Path.cwd()
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    results = []
+    for simdir in args.simdirs:
+        name = Path(simdir).name or str(simdir)
+        print(f"\n{'=' * 70}\n{name}\n{'=' * 70}")
+        try:
+            results.append(analyse_simulation(simdir, args, tistools_ns, plt))
+        except Exception as e:
+            print(f"  ! skipped ({type(e).__name__}: {e})")
+
+    if len(results) < 2:
+        print("\nNeed at least 2 usable simulations to calibrate.", file=sys.stderr)
+        sys.exit(1)
+
+    truth = np.array([r["rel_error"] for r in results])
+
+    # ---------------- report -------------------------------------------
+    lines = []
+
+    def emit(line=""):
+        print(line)
+        lines.append(line)
+
+    emit()
+    emit("=" * 108)
+    emit("PER-SIMULATION RESULTS")
+    emit("=" * 108)
+    emit(f"{'simulation':<28} {'N':>3} {'blk':>4} {'maxI':>6} {'I2':>5} {'maxEps':>7} "
+         f"{'eps_coh':>8} {'(fwd':>7} {'bwd)':>7} {'mean':>7} {'rms':>7} {'meanW':>7} "
+         f"{'P_repp':>10} {'P_istar':>10} {'relerr':>8}")
+    emit("-" * 124)
+    for r in sorted(results, key=lambda r: r["rel_error"]):
+        emit(f"{r['name'][:28]:<28} {r['n_int']:>3} {'y' if r['used_block_errors'] else 'n':>4} "
+             f"{r['max_index_raw']:>6.1f} {r['max_i_squared']:>5.0f} {r['max_eps_corr']:>7.3f} "
+             f"{r['eps_coh_corr']:>8.3f} {r['eps_coh_fwd']:>7.3f} {r['eps_coh_bwd']:>7.3f} "
+             f"{r['eps_mean']:>7.3f} {r['eps_rms']:>7.3f} {r['eps_mean_w']:>7.3f} "
+             f"{r['P_repptis']:>10.3e} {r['P_apptis']:>10.3e} {r['rel_error']:>8.3f}")
+
+    labels = truth > args.tolerance
+    emit()
+    emit(f"{int(np.sum(labels))}/{len(results)} simulations exceed the {args.tolerance:.0%} tolerance "
+         f"(REPPTIS 'inaccurate'); {int(np.sum(~labels))} do not.")
+
+    emit()
+    emit("=" * 108)
+    emit(f"CALIBRATION  (target tolerance on P_cross: {args.tolerance:.0%})")
+    emit("=" * 108)
+    emit("Warning rule 'predictor >= threshold' scored as a classifier of "
+         "'REPPTIS error > tolerance'.")
+    emit("  regr.thr = threshold from the linear fit;  balanced = Youden-optimal cut;")
+    emit("  safe     = most permissive cut that still catches every bad case (no misses);")
+    emit("  margin   = (best bad run)/(worst good run); '-' means the classes overlap.")
+    emit()
+    emit(f"{'predictor':<30} {'R^2':>6} {'rho':>6} {'AUC':>6} {'margin':>7} {'regr.thr':>9} "
+         f"{'balanced':>9} {'TPR/FPR':>11} {'safe':>9} {'FP@safe':>8}")
+    emit("-" * 118)
+
+    fits = {}
+    for key, label, unit in PREDICTORS:
+        x = np.array([r[key] for r in results])
+        slope, r2, med = fit_through_origin(x, truth)
+        thr = args.tolerance / slope if np.isfinite(slope) and slope > 0 else np.nan
+        rho, auc = rank_metrics(x, truth, labels)
+        sweep = threshold_sweep(x, labels)
+        margin = separation_margin(x, labels)
+        fits[key] = {
+            "slope": slope, "r2": r2, "median_ratio": med, "threshold": thr,
+            "rho": rho, "auc": auc, "margin": margin, "sweep": sweep,
+            "x": x, "label": label, "unit": unit,
+        }
+        if sweep:
+            b, s = sweep["best"], sweep["safe"]
+            bal = f"{b['t']:.3g}{unit}"
+            rates = f"{b['tpr']:.2f}/{b['fpr']:.2f}"
+            safe_s = f"{s['t']:.3g}{unit}" if s else "n/a"
+            fp_s = f"{s['fp']}" if s else "-"
+        else:
+            bal = rates = safe_s = fp_s = "n/a"
+        margin_s = f"{margin:.2f}x" if np.isfinite(margin) else ("inf" if margin == np.inf else "-")
+        emit(f"{label:<30} {r2:>6.2f} {rho:>6.2f} {auc:>6.2f} {margin_s:>7} "
+             f"{(f'{thr:.3g}' + unit) if np.isfinite(thr) else 'n/a':>9} "
+             f"{bal:>9} {rates:>11} {safe_s:>9} {fp_s:>8}")
+
+    usable = {k: v for k, v in fits.items()
+              if v["sweep"] and np.isfinite(v["auc"]) and not v["label"].startswith("[ref]")}
+    best_key = None
+    if not usable:
+        emit("\nNo predictor could be calibrated (degenerate data).")
+    else:
+        # AUC saturates at 1.0 as soon as the classes separate, so it alone
+        # cannot choose between several perfect predictors. Break ties on the
+        # width of the gap the cut sits in, then on how well the predictor
+        # tracks the *size* of the error (R^2), which is what lets the
+        # threshold be rescaled to another tolerance without recalibrating.
+        def rank_key(k):
+            f = usable[k]
+            margin = f["margin"]
+            margin_score = 0.0 if not np.isfinite(margin) else min(margin, 1e3)
+            if margin == np.inf:
+                margin_score = 1e3
+            return (round(f["auc"], 3), margin_score, f["r2"] if np.isfinite(f["r2"]) else -np.inf)
+
+        best_key = max(usable, key=rank_key)
+        best = usable[best_key]
+        tied = [k for k in usable if round(usable[k]["auc"], 3) == round(best["auc"], 3)]
+        b, s = best["sweep"]["best"], best["sweep"]["safe"]
+        emit()
+        emit(f"RECOMMENDATION -- best separating predictor: {best['label']}")
+        if len(tied) > 1:
+            emit(f"  ({len(tied)} predictors tie at AUC {best['auc']:.2f}; chosen on gap width "
+                 f"then R^2 -- see the margin column.)")
+        margin_txt = (f"{best['margin']:.2f}x" if np.isfinite(best["margin"])
+                      else ("inf" if best["margin"] == np.inf else "overlapping"))
+        emit(f"  AUC = {best['auc']:.2f}, Spearman rho = {best['rho']:.2f} vs the measured error, "
+             f"gap = {margin_txt}, R^2 = {best['r2']:.2f}.")
+        emit(f"  Balanced cut : {b['t']:.3g}{best['unit']}  "
+             f"(catches {b['tp']}/{b['tp'] + b['fn']} bad runs, {b['fp']} false alarms)")
+        if s:
+            emit(f"  Safe cut     : {s['t']:.3g}{best['unit']}  "
+                 f"(catches all {s['tp']} bad runs, {s['fp']} false alarms) <- use this for a "
+                 f"user-facing warning; over-warning is cheaper than a silently wrong rate.")
+        emit(f"  Regression cut: {best['threshold']:.3g}{best['unit']} (from the linear fit)")
+        emit()
+        emit("  Gate on significance as well as magnitude: only warn when the chi^2 heterogeneity")
+        emit("  p-value is small (p < 0.05). Otherwise an under-sampled run trips the warning on")
+        emit("  noise alone -- that is what the floor subtraction and the p-value are for.")
+
+    # ---- where the predictors disagree with reality --------------------
+    if best_key:
+        emit()
+        emit("=" * 108)
+        emit("WORST DISAGREEMENTS (predictor says one thing, measured error says another)")
+        emit("=" * 108)
+        x = fits[best_key]["x"]
+        cut = fits[best_key]["sweep"]["best"]["t"]
+        odd = [(r, xv) for r, xv in zip(results, x) if (xv >= cut) != (r["rel_error"] > args.tolerance)]
+        if not odd:
+            emit("None -- the balanced cut classifies every simulation correctly.")
+        for r, xv in sorted(odd, key=lambda t: -abs(t[1] - cut))[:3]:
+            kind = "FALSE ALARM" if xv >= cut else "MISSED"
+            emit(f"\n{kind}: {r['name']}  ({fits[best_key]['label']} = {xv:.3g}, "
+                 f"measured error = {r['rel_error']:.3f})")
+            emit(f"  {'dir':>4} {'k':>3} {'q_mean':>8} {'index':>8} {'floor':>8} {'I^2':>6} {'p':>9} "
+                 f"{'eps_k':>8} {'n_samp':>9}")
+            for (d, k), st in sorted(r["regions"].items()):
+                emit(f"  {d:>4} {k:>3} {st['q_mean']:>8.3f} {st['index_raw']:>8.1f} {st['index_floor']:>8.2f} "
+                     f"{st['i_squared']:>6.0f} {st['p_value']:>9.2e} {st['eps_corr']:>8.3f} "
+                     f"{st['n_samples']:>9.0f}")
+
+    n_blk = sum(r["used_block_errors"] for r in results)
+    emit()
+    emit(f"Noise floor from block errors in {n_blk}/{len(results)} simulations "
+         f"(binomial fallback elsewhere; the fallback underestimates the floor because TIS paths "
+         f"are correlated, so those runs bias the index high).")
+
+    # ---------------- plot ---------------------------------------------
+    ncols = 3
+    nrows = int(np.ceil(len(PREDICTORS) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 4.6 * nrows))
+    for ax, (key, label, unit) in zip(np.atleast_1d(axes).flat, PREDICTORS):
+        f = fits[key]
+        x = f["x"]
+        ax.scatter(x[~labels], truth[~labels], s=45, color="#2a78d6", alpha=0.85, zorder=3,
+                   label="REPPTIS ok")
+        ax.scatter(x[labels], truth[labels], s=55, color="#e34948", alpha=0.9, zorder=3,
+                   marker="^", label="REPPTIS inaccurate")
+        if np.isfinite(f["slope"]):
+            xs = np.linspace(0, max(x.max(), 1e-12) * 1.05, 50)
+            ax.plot(xs, f["slope"] * xs, "-", color="#898781", lw=1.5, alpha=0.8,
+                    label=f"fit (R$^2$={f['r2']:.2f})")
+        ax.axhline(args.tolerance, ls="--", color="#898781", lw=1.5)
+        if f["sweep"]:
+            ax.axvline(f["sweep"]["best"]["t"], ls="-", color="#008300", lw=2,
+                       label=f"balanced {f['sweep']['best']['t']:.3g}{unit}")
+            if f["sweep"]["safe"]:
+                ax.axvline(f["sweep"]["safe"]["t"], ls=":", color="#008300", lw=2,
+                           label=f"safe {f['sweep']['safe']['t']:.3g}{unit}")
+        ax.set_xlabel(f"{label} [{unit or 'rel.'}]")
+        ax.set_ylabel("measured REPPTIS error")
+        auc_s = f"AUC={f['auc']:.2f}" if np.isfinite(f["auc"]) else "AUC n/a"
+        ax.set_title(f"{label}  ({auc_s})", fontsize=11)
+        ax.grid(alpha=0.3, color="#e1e0d9", zorder=0)
+        ax.legend(fontsize=7)
+    for ax in np.atleast_1d(axes).flat[len(PREDICTORS):]:
+        ax.set_visible(False)
+    fig.suptitle("Memory index vs. actual REPPTIS error on P$_A(\\lambda_B|\\lambda_A)$", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+    plot_file = outdir / "memory_threshold_calibration.png"
+    fig.savefig(plot_file, dpi=200)
+    emit()
+    emit(f"Calibration plot saved to {plot_file}")
+
+    report_file = outdir / "memory_threshold_calibration.txt"
+    report_file.write_text("\n".join(lines) + "\n")
+    print(f"Report saved to {report_file}")
+
+    if args.show:
+        plt.show()
+
+
+if __name__ == "__main__":
+    main()

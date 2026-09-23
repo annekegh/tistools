@@ -12,6 +12,7 @@ and rates between different states in complex molecular systems.
 """
 
 from json import load
+import warnings
 import numpy as np
 from .reading import *
 import logging
@@ -2252,14 +2253,253 @@ def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples
             
     memory_index = {
         'forward_variation': forward_variation,
-        'forward_variation_error': forward_variation_error, 
+        'forward_variation_error': forward_variation_error,
         'backward_variation': backward_variation,
-        'backward_variation_error': backward_variation_error, 
+        'backward_variation_error': backward_variation_error,
         'forward_sample_sizes': forward_sample_sizes,
         'backward_sample_sizes': backward_sample_sizes
     }
-    
+
     return memory_index
+
+
+def _memory_index_for_target(q_values, weights, sigma):
+    """One target interface. See calculate_memory_effect_index_corrected."""
+    q_values = np.asarray(q_values, dtype=float)
+    weights = np.asarray(weights, dtype=float)
+    sigma = np.asarray(sigma, dtype=float)
+    n = len(q_values)
+
+    q_mean = np.average(q_values, weights=weights)
+    var_binomial = q_mean * (1.0 - q_mean)
+    if not np.isfinite(q_mean) or var_binomial <= 1e-12:
+        return None
+    denom = np.sqrt(var_binomial)
+
+    # Observed spread, and the spread expected from sampling noise alone.
+    var_obs = float(np.cov(q_values, aweights=weights))
+    var_noise = float(np.average(sigma ** 2, weights=weights))
+    s_corr = np.sqrt(max(var_obs - var_noise, 0.0))
+
+    index = s_corr / denom
+    floor = np.sqrt(var_noise) / denom
+
+    # Error propagation for index = s_corr / sqrt(q(1-q)), same form as in
+    # calculate_memory_effect_index.
+    if s_corr > 0 and not np.any(np.isnan(sigma)):
+        term1 = (q_values - q_mean) / (denom * (n - 1) * s_corr)
+        term2 = (s_corr * (1 - 2 * q_mean)) / (2 * n * (denom ** 3))
+        partial_derivs = term1 - term2
+        index_error = float(np.sqrt(np.sum((partial_derivs * sigma) ** 2)))
+    else:
+        index_error = np.nan
+
+    return {
+        'index': index, 'index_error': index_error, 'floor': floor,
+        'q_mean': q_mean, 'n_samples': float(np.sum(weights)),
+    }
+
+
+def estimate_statistical_inefficiency(pathensembles):
+    """
+    Statistical inefficiency g = sum(w) / N_eff of the MC path weights.
+
+    TIS path weights are multiplicities: a path accepted once and then kept
+    through nine rejected moves carries w = 10, i.e. ten MC steps that are one
+    sample. Summing the weights therefore counts MC steps, not independent
+    observations. Kish's effective sample size
+
+        N_eff = (sum w)^2 / sum w^2
+
+    reduces to the number of distinct paths when the weights are uniform and
+    penalises further when they are not, so g = sum(w)/N_eff is the factor by
+    which a naive binomial error underestimates the uncertainty on quantities
+    built from these weights. Pass the result as `n_eff` to
+    :py:func:`calculate_memory_effect_index_corrected`.
+
+    This accounts only for rejection multiplicity. Consecutive *accepted*
+    paths from shooting moves remain correlated, so g obtained this way is a
+    lower bound on the true inefficiency; a block-error analysis of the MC
+    series captures both effects and should be preferred when available.
+
+    Parameters
+    ----------
+    pathensembles : list
+        :py:class:`.PathEnsemble` objects with weights already set.
+
+    Returns
+    -------
+    float
+        g >= 1, pooled over the ensembles.
+    """
+    total, kish = 0.0, 0.0
+    for pe in pathensembles:
+        w = np.asarray(getattr(pe, "weights", []), dtype=float)
+        w = w[np.isfinite(w) & (w > 0)]
+        if w.size == 0:
+            continue
+        total += w.sum()
+        kish += w.sum() ** 2 / np.sum(w ** 2)
+    if kish <= 0:
+        return 1.0
+    return max(float(total / kish), 1.0)
+
+
+def calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=None, min_samples=5,
+                                           n_eff=None, verbose=True):
+    """
+    Memory effect index, corrected for sampling noise.
+
+    Same normalisation as :py:func:`calculate_memory_effect_index` -- the
+    spread in q(i,k) over starting turns i, divided by the binomial standard
+    deviation sqrt(q(1-q)) -- but with the spread that finite sampling alone
+    would produce subtracted first::
+
+        M_k = sqrt(max(0, s_k^2 - sigma_k^2)) / sqrt(q_mean (1 - q_mean))
+
+    s_k^2 is the weighted variance of q(i,k) over starting turns, and
+    sigma_k^2 the sampling-noise floor: the weighted mean of the individual
+    variances of those estimates (block errors when supplied, the binomial
+    q(1-q)/N otherwise). Subtracting it means a purely statistical spread
+    gives M_k = 0 rather than a spurious memory signal. Note this clamping is
+    itself a weak significance criterion -- it removes the spread only once the
+    observed variance drops below the expected one -- so small residual values
+    should not be read as evidence of memory.
+
+    On the error estimates: block errors are strongly preferred. The binomial
+    fallback sqrt(q(1-q)/N) assumes N independent Bernoulli trials, but N here
+    is a sum of MC multiplicities, so it counts every MC step as independent.
+    Passing n_eff corrects the rejection-multiplicity part of that (a factor
+    ~2-4 in N on typical StapleTIS runs); it does not correct the correlation
+    between distinct shooting-move paths, for which only a block or
+    autocorrelation analysis of the MC series is adequate.
+
+    Note the subtraction is in *variance*, so the floor has to reach roughly
+    44% of the uncorrected index before it changes it by even 10%; below that
+    it is nearly a no-op, and once the floor exceeds the spread the result
+    clamps to exactly 0. It therefore matters most for the marginal regions,
+    not for the largest one.
+
+    Parameters
+    ----------
+    q_probs : numpy.ndarray
+        Matrix of conditional crossing probabilities q(i,k).
+    q_weights : numpy.ndarray
+        Matrix of sample counts for each q value.
+    q_errors : numpy.ndarray or str, optional
+        Errors on q(i,k), or a path to a block-error file. Block errors are
+        strongly preferred over the binomial fallback: TIS paths are
+        correlated, so the binomial floor is too optimistic.
+    n_eff : float or numpy.ndarray, optional
+        Effective sample sizes for the binomial fallback, which otherwise
+        treats every MC step as an independent sample. Either an array shaped
+        like q_weights holding the effective count per entry, or a scalar
+        statistical inefficiency g >= 1 by which the weights are divided
+        (see :py:func:`estimate_statistical_inefficiency`). Ignored when
+        q_errors is supplied. Default None (no correction).
+    min_samples : int, optional
+        Minimum weight for a q(i,k) entry to be used. Default 5. Note this
+        barely affects the index itself -- the weighted statistics already
+        suppress low-weight entries -- but it does protect the chi^2 test,
+        which uses inverse-variance weights and so amplifies them instead.
+    verbose : bool, optional
+        Print the summed index per direction. Default True.
+
+    There is deliberately no max_error cut: discarding poorly determined
+    entries is what subtracting the noise floor already does, proportionally
+    rather than through a hard threshold, and an absolute cut would in any
+    case mean very different things at large and small q.
+
+    Returns
+    -------
+    dict
+        Same keys as :py:func:`calculate_memory_effect_index` so it can be used
+        in its place -- 'forward_variation'/'backward_variation' hold M_k --
+        plus 'forward_floor'/'backward_floor' (the noise floor in the same
+        units) and 'forward_total'/'backward_total' (the sum over interfaces).
+
+    Notes
+    -----
+    Values are in percent. Both directions matter: the global crossing
+    probability depends on the backward conditional committors as well as the
+    forward ones, through the return terms of the PPTIS recursion and both
+    blocks of the iSTAR transition matrix.
+    """
+    n_interfaces = q_probs.shape[0]
+
+    if q_errors is not None:
+        if isinstance(q_errors, str):
+            q_errors_path = q_errors
+            try:
+                loaded = read_block_errors(q_errors_path, q_probs.shape)
+                if loaded.shape != q_probs.shape:
+                    warnings.warn(
+                        f"Shape of q_errors from '{q_errors_path}' ({loaded.shape}) does not "
+                        f"match q_probs {q_probs.shape}; ignoring q_errors.")
+                    q_errors = None
+                else:
+                    q_errors = loaded
+            except Exception as e:
+                warnings.warn(f"Could not load q_errors from '{q_errors_path}': {e}; ignoring.")
+                q_errors = None
+        elif not (isinstance(q_errors, np.ndarray) and q_errors.shape == q_probs.shape):
+            warnings.warn("q_errors must be an array shaped like q_probs or a file path; ignoring.")
+            q_errors = None
+
+    out = {}
+    for direction in ("forward", "backward"):
+        eps = np.full(n_interfaces, np.nan)
+        eps_error = np.full(n_interfaces, np.nan)
+        floor = np.full(n_interfaces, np.nan)
+        sizes = np.zeros(n_interfaces, dtype=int)
+
+        k_range = range(1, n_interfaces) if direction == "forward" else range(n_interfaces - 1)
+        for k in k_range:
+            # Same point selection as calculate_memory_effect_index: skip the
+            # adjacent interface, drop under-sampled and poorly-resolved entries.
+            i_range = range(max(1, k - 1)) if direction == "forward" else range(k + 2, n_interfaces)
+            q_values, weights, errs = [], [], []
+            for i in i_range:
+                if np.isnan(q_probs[i, k]) or q_weights[i, k] < min_samples:
+                    continue
+                if q_errors is not None:
+                    if np.isnan(q_errors[i, k]):
+                        continue
+                    err = q_errors[i, k]
+                else:
+                    if n_eff is None:
+                        n_use = q_weights[i, k]
+                    elif np.isscalar(n_eff):
+                        n_use = q_weights[i, k] / max(float(n_eff), 1e-12)
+                    else:
+                        n_use = n_eff[i, k]
+                    err = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / max(n_use, 1e-12))
+                q_values.append(q_probs[i, k])
+                weights.append(q_weights[i, k])
+                errs.append(err)
+
+            if len(q_values) < 2:
+                continue
+            stats = _memory_index_for_target(q_values, weights, errs)
+            if stats is None:
+                continue
+            eps[k] = stats['index'] * 100
+            eps_error[k] = stats['index_error'] * 100
+            floor[k] = stats['floor'] * 100
+            sizes[k] = int(stats['n_samples'])
+
+        out[f'{direction}_variation'] = eps
+        out[f'{direction}_variation_error'] = eps_error
+        out[f'{direction}_floor'] = floor
+        out[f'{direction}_sample_sizes'] = sizes
+        out[f'{direction}_total'] = float(np.nansum(eps))
+
+    if verbose:
+        print(f"Memory index (noise-corrected, summed over interfaces): "
+              f"forward {out['forward_total']:.1f}%, backward {out['backward_total']:.1f}%")
+
+    return out
+
 
 def calculate_diffusive_reference(interfaces, q_matrix, q_weights=None, min_samples=5, account_for_distances=True):
     """

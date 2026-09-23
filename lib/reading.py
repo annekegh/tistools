@@ -314,8 +314,10 @@ class PathEnsemble(object):
         self.has_zero_minus_one = self.has_zero_minus_one
         self.in_zero_minus = self.in_zero_minus
         self.in_zero_plus = self.in_zero_plus
-        self.orders = self.orders[ncut:]
-        self.ncycle = len(self.orders)
+        if hasattr(self, 'orders'):
+            if self.orders is not None:
+                self.orders = self.orders[ncut:]
+        self.ncycle = len(self.cyclenumbers)
         
     def sample_pe(self, cycle_ids):
         """

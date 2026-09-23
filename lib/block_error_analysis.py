@@ -347,9 +347,10 @@ def load_path_ensembles(indir, load=False):
         weights, _ = get_weights(pe.flags, ACCFLAGS, REJFLAGS, verbose=False)
         pe.set_weights(weights)
         if load == True:
-            pe.set_orders(load=True, acc_only=True)
-        else:
-            pe.set_orders(load=False, acc_only=True, save=True)
+            try:
+                pe.set_orders(load=True, acc_only=True)
+            except Exception as e:
+                pe.set_orders(load=False, acc_only=True, save=True)
 
         pathensembles_original.append(pe)
     
@@ -551,6 +552,7 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
     pcrepptis_MSM_list = []
     pcstaple_MSM_list = []
     
+    print([pe.cyclenumbers[-1] for pe in pathensembles_original])
     max_cycle = max(pe.cyclenumbers[-1] for pe in pathensembles_original)
     min_cycle = min(pe.cyclenumbers[0] for pe in pathensembles_original)
     

@@ -737,7 +737,8 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.lines import Line2D
 
-def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None, q_errors=None, max_error=0.3):
+def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None, q_errors=None,
+                          max_error=0.3, warn_threshold=25.0):
     """
     Plots the memory effect index alongside raw q probabilities over the physical 
     order parameter landscape. Includes forward/backward comparison, discrete 
@@ -755,6 +756,12 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
         Data for plotting the background potential energy curve.
     q_errors : numpy.ndarray, optional
         Errors associated with the transition probabilities.
+    max_error : float, optional
+        Only filters which individual q_{i,k} markers are drawn; it no longer
+        affects the memory index, which handles poorly determined entries via
+        the sampling-noise floor instead.
+    warn_threshold : float, optional
+        Memory index above which a region is flagged (percent).
     """
     # Setup Figure and Axes
     # The 'science' style is registered by importing scienceplots; it used to
@@ -767,7 +774,13 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
     except (ImportError, OSError):
         pass
     fig, ax1 = plt.subplots(figsize=(8, 6), dpi=120)
-    ax1.hlines(20, -100, 100, color='firebrick', linestyle='--', alpha=0.6, zorder=100)
+    # Calibrated warning level: a region above this is on its own enough to
+    # push REPPTIS past ~10% error on P_cross. Calibrated in
+    # scripts/tistools-memory-threshold against the measured REPPTIS-vs-iSTAR
+    # discrepancy over three independent families of test systems, which put
+    # the cut at 22.4/24.9/25.4% -- the only metric tried whose threshold
+    # transferred between families (the rest spread by a factor 2-4).
+    ax1.hlines(warn_threshold, -100, 100, color='firebrick', linestyle='--', alpha=0.6, zorder=100)
     # ax1.axhspan(20, 100, color='firebrick', alpha=0.1, zorder=0)
     ax2 = ax1.twinx()  # Right axis for q probabilities (and the scaled potential)
     ax2.set_ylim(0., 1.25)
@@ -805,7 +818,7 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
             q_errors = None
 
     # Calculate memory retention (returns both forward and backward dicts)
-    memory_index = calculate_memory_effect_index(q_probs, q_weights, q_errors=q_errors, max_error=max_error)
+    memory_index = calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=q_errors)
 
     # ---------------------------------------------------------
     # 1. Plot Background Potential (Scaled strictly to [0, 0.5])
@@ -984,7 +997,8 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
     
     # Align limits
     ax1.set_xlim(interfaces[0] - 0.02, interfaces[-1] + 0.02)
-    ax1.set_ylim(0, max(25, np.nanmax([memory_index['forward_variation'], memory_index['backward_variation']]) * 1.2)) 
+    ax1.set_ylim(0, max(warn_threshold * 1.3,
+                        np.nanmax([memory_index['forward_variation'], memory_index['backward_variation']]) * 1.2))
     
     # Discrete Colorbar (Positioned outside to the right)
     sm = plt.cm.ScalarMappable(cmap=discrete_cmap, norm=norm)
@@ -1365,7 +1379,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     ax6 = fig2.add_subplot(gs2[1, 0])
 
     # Calculate memory retention using simplified approach
-    memory_index = calculate_memory_effect_index(q_probs, q_weights, q_errors=q_errors)
+    memory_index = calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=q_errors)
 
     # Prepare data for forward plot
     valid_k_fwd = [k for k in range(1, n_interfaces) if not np.isnan(memory_index['forward_variation'][k])]
@@ -1415,7 +1429,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ax6.set_xticks(interfaces)
         ax6.set_xticklabels([(f'{k-1 if k>0 else k}→{k}' if k < n_interfaces-1 else f'{k}') for k in range(n_interfaces)])
         ax6.set_xlabel('Crossing region')
-        ax6.set_ylabel('Memory index (\%)')
+        ax6.set_ylabel(r'Memory index (\%)')
         # ax6.tick_params(axis='y', labelcolor='C0')
         ax6.set_title('Forward memory retention', fontsize=12)
         ax6.grid(axis='y', alpha=0.3, color=GRID_COLOR, zorder=0)
@@ -1501,7 +1515,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ax7.set_xticks(interfaces)
         ax7.set_xticklabels([f'{k}←{k+1}' for k in range(n_interfaces)])
         ax7.set_xlabel('Crossing region')
-        ax7.set_ylabel('Memory index (%)')
+        ax7.set_ylabel(r'Memory index (%)')
         # ax7.tick_params(axis='y', labelcolor='C0')
         ax7.set_title('Backward memory retention', fontsize=12)
         ax7.grid(axis='y', alpha=0.3, color=GRID_COLOR, zorder=0)
