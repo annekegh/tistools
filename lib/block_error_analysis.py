@@ -137,7 +137,7 @@ def block_error_analysis(path_ensembles, interfaces, interval, load=False):
     block_error_calculation(pcross, interval, "Pcross")
     block_error_calculation(fluxs, interval, "Flux")
 
-def block_error_analysis_staple(path_ensembles, interfaces, interval, load=False, pl=True):
+def block_error_analysis_staple(path_ensembles, interfaces, interval, load=False, pl=True, progress=None):
     """
     Conducts block error analysis on Tau and Pcross values.
 
@@ -158,6 +158,10 @@ def block_error_analysis_staple(path_ensembles, interfaces, interval, load=False
 
     load : bool, optional (default=False)
         Whether to load data from the txt file if available.
+
+    progress : callable, optional
+        Called as progress(step_index, n_steps, nskip) before each running
+        estimate, for progress reporting. Default None.
 
     Returns
     -------
@@ -183,11 +187,11 @@ def block_error_analysis_staple(path_ensembles, interfaces, interval, load=False
             print("Invalid data in file, recalculating...")
 
             # If data is invalid, recalculate running estimates
-            _, p_staple, q_staple, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl)
+            _, p_staple, q_staple, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl, progress=progress)
     else:
         # If loading is disabled or the file doesn't exist, calculate running estimates
         print("First time calculating the data file ...")
-        _, p_staple, q_staple, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl)
+        _, p_staple, q_staple, Pcrossfulls_repptis, pcrepptis_MSM, pcstaple_MSM = calculate_running_estimate_staple(path_ensembles, interfaces, interval, pl=pl, progress=progress)
 
     block_error_calculation(np.array(Pcrossfulls_repptis)[:,-1], interval, "Pcross_repptis")
     block_error_calculation(pcrepptis_MSM, interval, "Pcross_repp_MSM")
@@ -542,7 +546,7 @@ def calculate_running_estimate(pathensembles_original, interfaces, interval=1, t
     return cycles, taups, pcross, pmms, pmps, ppms, ppps, Pcrossfulls, taums, fluxs, mfpts, rates
     
 
-def calculate_running_estimate_staple(pathensembles_original, interfaces, interval=1, pl=True, trr=False):
+def calculate_running_estimate_staple(pathensembles_original, interfaces, interval=1, pl=True, trr=False, progress=None):
     """
     Computes running estimates of key parameters using APPTIS (staple) and REPPTIS local probabilities.
     """
@@ -555,8 +559,11 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
     print([pe.cyclenumbers[-1] for pe in pathensembles_original])
     max_cycle = max(pe.cyclenumbers[-1] for pe in pathensembles_original)
     min_cycle = min(pe.cyclenumbers[0] for pe in pathensembles_original)
-    
-    for nskip in range(max(min_cycle, interval), max_cycle + interval, interval):
+
+    steps = list(range(max(min_cycle, interval), max_cycle + interval, interval))
+    for _step_idx, nskip in enumerate(steps):
+        if progress is not None:
+            progress(_step_idx, len(steps), nskip)
         pathensembles = [shallow_copy(pe) for pe in pathensembles_original]
         
         repptisploc = []

@@ -1017,10 +1017,99 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
     ax1.legend(handles=custom_legend, loc='upper left', fontsize=10, framealpha=0.9)
     
     # plt.title('Memory Effect vs. Order Parameter Landscape', fontsize=14)
-    plt.tight_layout()
-    plt.show()
-    
+    # No plt.show() here: the figure is returned, and it is the caller that
+    # decides whether to display it. Showing it from inside the library warns
+    # (or blocks) whenever the backend is non-interactive.
+    fig.tight_layout()
+
     return fig, (ax1, ax2)
+
+def plot_q_matrix(q_probs, q_weights=None, q_errors=None, cmap_name='turbo',
+                  title='Conditional crossing probabilities  q(i,k)'):
+    """
+    Stand-alone heatmap of the conditional committor matrix q(i,k).
+
+    This deliberately gets a figure of its own rather than a panel in the
+    multi-panel matrix figure: past a handful of interfaces the matrix needs
+    the whole canvas before the cells -- and the numbers in them -- are
+    readable at all. The canvas grows with the number of interfaces, the
+    annotations shrink and then drop out, and the tick labels thin.
+
+    Parameters
+    ----------
+    q_probs : (n, n) array
+        Conditional crossing probabilities; NaN where undefined.
+    q_weights : (n, n) array, optional
+        Sample weights; entries with zero weight are drawn as "unsampled".
+    q_errors : (n, n) array, optional
+        Per-entry errors, annotated underneath the value on small matrices.
+    cmap_name : str
+        A high-contrast sequential map. 'turbo' is the default because the
+        point here is to tell neighbouring q values apart across a large grid,
+        which a low-contrast single-hue ramp does poorly.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    import matplotlib.pyplot as plt
+
+    q_probs = np.asarray(q_probs, dtype=float)
+    n = q_probs.shape[0]
+
+    # ~0.45 in per cell on top of a fixed margin, clamped so small matrices
+    # are not comically large and big ones still fit on a page.
+    side = float(np.clip(0.45 * n + 3.5, 7.0, 22.0))
+    fig, ax = plt.subplots(figsize=(side + 1.6, side))
+
+    data = np.ma.masked_invalid(q_probs)
+    if q_weights is not None:
+        data = np.ma.masked_where(np.asarray(q_weights) <= 0, data)
+
+    cmap = plt.get_cmap(cmap_name).copy()
+    cmap.set_bad('#d9d8d2')          # (i,k) pairs that were never sampled
+    im = ax.imshow(data, cmap=cmap, vmin=0.0, vmax=1.0,
+                   interpolation='nearest', aspect='equal')
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.02)
+    cbar.set_label('q(i,k)')
+
+    mask = np.ma.getmaskarray(data)
+    if n <= 30:
+        fontsize = float(np.clip(150.0 / n, 4.5, 14.0))
+        rgba = cmap(np.ma.filled(data, np.nan))
+        for i in range(n):
+            for j in range(n):
+                if mask[i, j]:
+                    continue
+                # Black or white chosen from the cell's own luminance, so the
+                # annotation stays legible whichever colormap is in use.
+                r, g, b = rgba[i, j, :3]
+                lum = 0.299 * r + 0.587 * g + 0.114 * b
+                txt = f"{q_probs[i, j]:.2f}"
+                if (q_errors is not None and n <= 15
+                        and not np.isnan(np.asarray(q_errors)[i, j])):
+                    txt += f"\n$\\pm${np.asarray(q_errors)[i, j]:.2f}"
+                ax.text(j, i, txt, ha='center', va='center',
+                        color='black' if lum > 0.55 else 'white', fontsize=fontsize)
+
+    # Thin separators so the eye can follow rows and columns on a big grid.
+    ax.set_xticks(np.arange(-0.5, n, 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, n, 1), minor=True)
+    ax.grid(which='minor', color='white', linewidth=0.6)
+    ax.tick_params(which='minor', length=0)
+
+    step = 1 if n <= 25 else int(np.ceil(n / 25.0))
+    ticks = np.arange(0, n, step)
+    ax.set_xticks(ticks)
+    ax.set_yticks(ticks)
+    ax.set_xticklabels([str(t) for t in ticks])
+    ax.set_yticklabels([str(t) for t in ticks])
+    ax.set_xlabel('Target interface k')
+    ax.set_ylabel('Starting interface i')
+    ax.set_title(title, fontsize=14)
+    fig.tight_layout()
+    return fig
+
 
 def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     """
@@ -1043,10 +1132,12 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     Returns:
     -------
     tuple
-        A tuple containing three matplotlib.figure.Figure objects:
+        A tuple containing four matplotlib.figure.Figure objects:
         - fig1: Matrix heatmaps (memory effect matrix, ratio, asymmetry)
         - fig2: Forward/backward probability plots with memory retention bar charts
         - fig3: Free energy landscape, momentum effects, and flux network analysis
+        - fig4: The conditional-probability matrix q(i,k) on its own full-size
+                canvas, so that large interface counts stay legible
     """
     import matplotlib.pyplot as plt
     from matplotlib.colors import LinearSegmentedColormap
@@ -1122,8 +1213,21 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         return [colors.to_hex(cmap(t)) for t in np.linspace(0.0, 0.9, n)]
 
     # ================ Figure 1: Matrix Heatmaps ================
-    fig1 = plt.figure(figsize=(18, 7))
-    gs1 = gridspec.GridSpec(1, 4, width_ratios=[1.2, 1, 1, 1])
+    # The three panels share one canvas, so their cells shrink as the
+    # interface count grows: scale the annotations with it and drop them once
+    # the numbers would overlap. The q(i,k) matrix itself is in fig4, which
+    # keeps its own full-size canvas precisely so it stays readable.
+    # Give every panel a fixed ~0.35 in per matrix cell rather than squeezing an
+    # arbitrary number of interfaces into a fixed canvas, so the annotations stay
+    # the same readable size as the matrix grows. Past ~25 interfaces the figure
+    # would get unwieldy, so there the canvas is clamped and the numbers dropped
+    # (the colors still carry the pattern, and fig4 shows q(i,k) full size).
+    panel_w = 0.35 * n_interfaces + 1.8
+    fig1_w = float(np.clip(3.0 * panel_w, 15.0, 32.0))
+    fig1_h = float(np.clip(0.35 * n_interfaces + 2.8, 6.5, 12.0))
+    fig1 = plt.figure(figsize=(fig1_w, fig1_h))
+    gs1 = gridspec.GridSpec(1, 3, width_ratios=[1.2, 1, 1])
+    ann_fs = 8.0 if n_interfaces <= 25 else None
     
     # Diverging colormap (blue<->red) with a neutral midpoint for signed quantities
     cmap_memory = LinearSegmentedColormap.from_list(
@@ -1159,7 +1263,8 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
             if not np.isnan(memory_effect[i, j]) and not np.ma.is_masked(masked_data[i, j]):
                 text = f"{q_probs[i, j]:.2f}" if q_weights[i, j] > 0 else "N/A"
                 color = 'black' if abs(memory_effect[i, j]) < 0.3 else 'white'
-                ax1.text(j, i, text, ha='center', va='center', color=color, fontsize=8)
+                if ann_fs:
+                    ax1.text(j, i, text, ha='center', va='center', color=color, fontsize=ann_fs)
 
     ax1.set_xticks(np.arange(n_interfaces))
     ax1.set_yticks(np.arange(n_interfaces))
@@ -1194,8 +1299,9 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 text_color = 'black'
                 if memory_ratio[i, j] > 5 or memory_ratio[i, j] < 0.2:
                     text_color = 'white'
-                ax2.text(j, i, f"{memory_ratio[i, j]:.1f}", ha='center', va='center',
-                       color=text_color, fontsize=8)
+                if ann_fs:
+                    ax2.text(j, i, f"{memory_ratio[i, j]:.1f}", ha='center', va='center',
+                       color=text_color, fontsize=ann_fs)
 
     ax2.set_xlabel('Target interface k')
     ax2.set_ylabel('Starting interface i')
@@ -1230,8 +1336,9 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 text_color = 'black'
                 if abs(memory_asymmetry[i, j]) > 0.3:
                     text_color = 'white'
-                ax3.text(j, i, f"{memory_asymmetry[i, j]:.2f}", ha='center', va='center',
-                       color=text_color, fontsize=8)
+                if ann_fs:
+                    ax3.text(j, i, f"{memory_asymmetry[i, j]:.2f}", ha='center', va='center',
+                       color=text_color, fontsize=ann_fs)
 
     ax3.set_xlabel('Target interface j')
     ax3.set_ylabel('Starting interface i')
@@ -1241,17 +1348,10 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     ax3.set_xticklabels([f"{i}" for i in range(n_interfaces)])
     ax3.set_yticklabels([f"{i}" for i in range(n_interfaces)])
 
-    ax5 = fig1.add_subplot(gs1[3])
-    # Sequential single-hue ramp: q(i,k) is a magnitude (0-1 probability), not a signed quantity
-    cmap_seq = LinearSegmentedColormap.from_list('q_seq', ['#fcfcfb', BLUE], N=256)
-    sns.heatmap(q_probs, annot=True, cmap=cmap_seq, fmt='.2f', vmin=0, vmax=1,
-                xticklabels=range(n_interfaces), yticklabels=range(n_interfaces),
-                cbar_kws={'label': 'q(i,k)'}, ax=ax5)
-    ax5.set_title('Conditional probabilities', fontsize=12)
-    ax5.set_xlabel('Target interface k')
-    ax5.set_ylabel('Starting interface i')
+    # The q(i,k) matrix itself used to sit here as a fourth panel, but it is the
+    # one that has to stay readable for large interface counts, so it gets its
+    # own full-size figure (fig4) below.
 
-    
     # Add explanatory text that includes info about non-equidistant interfaces
     if is_equidistant:
         desc_text = "Color = deviation from diffusive (memoryless) behavior. Red: bias toward crossing. Blue: bias toward returning."
@@ -1263,6 +1363,10 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     plt.tight_layout(rect=[0, 0.06, 1, 0.94])
     fig1.suptitle('Memory effect analysis - transition matrices' +
                 (' (non-equidistant interfaces)' if not is_equidistant else ''), fontsize=14)
+
+    # ================ Figure 4: the q(i,k) matrix, full size ================
+    fig4 = plot_q_matrix(q_probs, q_weights=q_weights, q_errors=q_errors)
+
     
     # ================ Figure 2: Forward/Backward Probs + Memory Retention ================
     fig2 = plt.figure(figsize=(18, 12))
@@ -1738,7 +1842,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     )
     fig3.text(0.02, 0.01, metrics_text, fontsize=9, color=MUTED_INK)
 
-    return fig1, fig2, fig3
+    return fig1, fig2, fig3, fig4
 
 ##################################
 # Network Analysis Tools

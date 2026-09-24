@@ -190,12 +190,15 @@ def main():
     )
     p, q = get_transition_probs_weights(wpath)
     q_k, q_tot = memory_analysis(wpath, False)
-    fig1, fig2, fig3 = plot_memory_analysis(pathensembles, q_tot, p, interfaces, q_errors=args.q_errors)
+    fig1, fig2, fig3, fig4 = plot_memory_analysis(pathensembles, q_tot, p, interfaces, q_errors=args.q_errors)
 
     memory_files = {
         "memory_matrices.png": fig1,
         "memory_probabilities.png": fig2,
         "free_energy_momentum.png": fig3,
+        # q(i,k) on its own canvas: it is the panel that has to stay readable
+        # when the simulation has many interfaces.
+        "q_matrix.png": fig4,
     }
     for fname, mfig in memory_files.items():
         fpath = outdir / fname

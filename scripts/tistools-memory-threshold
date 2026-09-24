@@ -362,6 +362,21 @@ def analyse_simulation(simdir, args, tistools_ns, plt):
     eps_vals = np.array([s_["eps_corr"] for s_ in regions.values()], dtype=float)
     samp = np.array([s_["n_samples"] for s_ in regions.values()], dtype=float)
     n_reg = max(len(eps_vals), 1)
+
+    # Same aggregates built from the floor-corrected memory *index* instead of
+    # the per-region bias eps. The index is already normalised by
+    # sqrt(q(1-q)), so it is dimensionless per region; summing it is still
+    # extensive (it grows with the number of interfaces), hence the /N and
+    # /sqrt(N) variants alongside.
+    idx_vals = np.array([s_["index_corr"] for s_ in regions.values()], dtype=float)
+    idx_sum_corr = float(np.sum(idx_vals))
+    idx_mean_corr = float(idx_sum_corr / n_reg)
+    idx_rms_corr = float(np.sqrt(np.sum(idx_vals ** 2) / n_reg))
+    idx_quad_corr = float(np.sqrt(np.sum(idx_vals ** 2)))
+    if np.sum(samp) > 0:
+        idx_mean_corr_w = float(np.sum(samp * idx_vals) / np.sum(samp))
+    else:
+        idx_mean_corr_w = np.nan
     eps_mean = float(np.sum(eps_vals) / n_reg)
     eps_rms = float(np.sqrt(np.sum(eps_vals ** 2) / n_reg))
     # Sample-weighted versions: a region estimated from a handful of paths
@@ -412,6 +427,11 @@ def analyse_simulation(simdir, args, tistools_ns, plt):
         "eps_rms": eps_rms,
         "eps_mean_w": eps_mean_w,
         "eps_rms_w": eps_rms_w,
+        "idx_sum_corr": idx_sum_corr,
+        "idx_quad_corr": idx_quad_corr,
+        "idx_mean_corr": idx_mean_corr,
+        "idx_rms_corr": idx_rms_corr,
+        "idx_mean_corr_w": idx_mean_corr_w,
         "n_regions": n_reg,
         "used_block_errors": q_errors is not None,
         "P_apptis": pa,
@@ -543,12 +563,43 @@ def threshold_sweep(x, labels):
     return {"best": best, "safe": safe}
 
 
+def stratified_cuts(x, labels, strata, min_bad=1):
+    """
+    Safe cut recomputed within each stratum (here: interface count).
+
+    A predictor that is *extensive* -- a sum over regions, say -- needs a
+    larger cut on a system with more interfaces, so its within-set AUC can
+    look excellent while no single number transfers. Recomputing the safe cut
+    (lowest predictor value among the inaccurate runs) per stratum exposes
+    that: an intensive predictor gives roughly the same cut in every stratum,
+    an extensive one gives cuts that climb with the stratum.
+
+    Returns {stratum: cut} for strata holding at least `min_bad` bad runs.
+    """
+    cuts = {}
+    for v in sorted(set(strata)):
+        m = (np.asarray(strata) == v) & labels
+        if int(np.sum(m)) >= min_bad:
+            cuts[v] = float(np.min(x[m]))
+    return cuts
+
+
 # All predictors run over both directions (every (direction, k) region), since
 # P_cross depends on the backward committors too. The last two are forward-only
 # references, to show whether including the backward ones actually helps.
+# Largest max/min ratio of the per-interface-count safe cut a predictor may have
+# and still be recommended as a global threshold. Anything above this is
+# extensive: its cut would have to be restated per system.
+MAX_STRATUM_SPREAD = 3.0
+
 PREDICTORS = [
     ("max_index_raw", "max raw index (current)", "%"),
     ("max_index_corr", "max floor-corrected index", "%"),
+    ("idx_sum_corr", "sum floor-corr. index (coherent)", "%"),
+    ("idx_quad_corr", "sum floor-corr. index, quadrature", "%"),
+    ("idx_mean_corr", "mean floor-corr. index (sum/N)", "%"),
+    ("idx_rms_corr", "RMS floor-corr. index (quad/sqrtN)", "%"),
+    ("idx_mean_corr_w", "mean floor-corr. index, sample-wtd", "%"),
     ("max_eps_corr", "max per-region bias", ""),
     ("eps_coh_corr", "accumulated bias, coherent", ""),
     ("eps_ind_corr", "accumulated bias, quadrature", ""),
@@ -614,13 +665,15 @@ def main():
     emit("=" * 108)
     emit(f"{'simulation':<28} {'N':>3} {'blk':>4} {'maxI':>6} {'I2':>5} {'maxEps':>7} "
          f"{'eps_coh':>8} {'(fwd':>7} {'bwd)':>7} {'mean':>7} {'rms':>7} {'meanW':>7} "
+         f"{'idxSum':>8} {'idxMean':>8} "
          f"{'P_repp':>10} {'P_istar':>10} {'relerr':>8}")
-    emit("-" * 124)
+    emit("-" * 142)
     for r in sorted(results, key=lambda r: r["rel_error"]):
         emit(f"{r['name'][:28]:<28} {r['n_int']:>3} {'y' if r['used_block_errors'] else 'n':>4} "
              f"{r['max_index_raw']:>6.1f} {r['max_i_squared']:>5.0f} {r['max_eps_corr']:>7.3f} "
              f"{r['eps_coh_corr']:>8.3f} {r['eps_coh_fwd']:>7.3f} {r['eps_coh_bwd']:>7.3f} "
              f"{r['eps_mean']:>7.3f} {r['eps_rms']:>7.3f} {r['eps_mean_w']:>7.3f} "
+             f"{r['idx_sum_corr']:>8.1f} {r['idx_mean_corr']:>8.2f} "
              f"{r['P_repptis']:>10.3e} {r['P_apptis']:>10.3e} {r['rel_error']:>8.3f}")
 
     labels = truth > args.tolerance
@@ -638,9 +691,9 @@ def main():
     emit("  safe     = most permissive cut that still catches every bad case (no misses);")
     emit("  margin   = (best bad run)/(worst good run); '-' means the classes overlap.")
     emit()
-    emit(f"{'predictor':<30} {'R^2':>6} {'rho':>6} {'AUC':>6} {'margin':>7} {'regr.thr':>9} "
+    emit(f"{'predictor':<35} {'R^2':>6} {'rho':>6} {'AUC':>6} {'margin':>7} {'regr.thr':>9} "
          f"{'balanced':>9} {'TPR/FPR':>11} {'safe':>9} {'FP@safe':>8}")
-    emit("-" * 118)
+    emit("-" * 123)
 
     fits = {}
     for key, label, unit in PREDICTORS:
@@ -664,12 +717,53 @@ def main():
         else:
             bal = rates = safe_s = fp_s = "n/a"
         margin_s = f"{margin:.2f}x" if np.isfinite(margin) else ("inf" if margin == np.inf else "-")
-        emit(f"{label:<30} {r2:>6.2f} {rho:>6.2f} {auc:>6.2f} {margin_s:>7} "
+        emit(f"{label:<35} {r2:>6.2f} {rho:>6.2f} {auc:>6.2f} {margin_s:>7} "
              f"{(f'{thr:.3g}' + unit) if np.isfinite(thr) else 'n/a':>9} "
              f"{bal:>9} {rates:>11} {safe_s:>9} {fp_s:>8}")
 
+    # ---------------- transferability across interface count -----------
+    n_ints = np.array([r["n_int"] for r in results], dtype=float)
+    emit()
+    emit("TRANSFERABILITY -- safe cut recomputed within each interface-count stratum")
+    emit("-" * 118)
+    emit("A threshold is only usable on a new system if it does not depend on how many")
+    emit("interfaces that system has. 'spread' is max/min of the per-N safe cut; 'rho(N)'")
+    emit("is the correlation of the predictor with N among the ACCURATE runs only, which")
+    emit("is where a predictor that merely accumulates with N gives itself away.")
+    emit()
+    strat_spread = {}
+    hdr_strata = sorted({v for v in n_ints if int(np.sum((n_ints == v) & labels)) >= 1})
+    emit(f"{'predictor':<35} {'spread':>7} {'rho(N|good)':>12}  " +
+         "  ".join(f"N={int(v):<5}" for v in hdr_strata))
+    for key, label, unit in PREDICTORS:
+        x = fits[key]["x"]
+        cuts = stratified_cuts(x, labels, n_ints)
+        vals = [c for c in cuts.values() if np.isfinite(c) and c > 0]
+        spread = max(vals) / min(vals) if len(vals) >= 2 else np.nan
+        good = ~labels
+        rho_n = (rank_metrics(n_ints[good], x[good], np.zeros(int(np.sum(good)), dtype=bool))[0]
+                 if int(np.sum(good)) >= 3 else np.nan)
+        strat_spread[key] = spread
+        cells = "  ".join(f"{cuts.get(v, np.nan):>7.3g}" if v in cuts else f"{'-':>7}"
+                          for v in hdr_strata)
+        emit(f"{label:<35} {spread:>6.1f}x {rho_n:>12.2f}  {cells}")
+    emit()
+    emit("Low spread with no N-trend => the cut is a system-independent number. High")
+    emit("spread that climbs with N => the predictor is extensive; its good AUC here is")
+    emit("an artefact of this set and the cut will not carry to a different interface count.")
+
     usable = {k: v for k, v in fits.items()
               if v["sweep"] and np.isfinite(v["auc"]) and not v["label"].startswith("[ref]")}
+    # A predictor whose cut has to be restated for every interface count is not
+    # a global threshold, however well it separates *this* set. Drop those
+    # before ranking, unless that would leave nothing to recommend.
+    transferable = {k: v for k, v in usable.items()
+                    if not np.isfinite(strat_spread.get(k, np.nan))
+                    or strat_spread[k] <= MAX_STRATUM_SPREAD}
+    dropped = sorted(set(usable) - set(transferable),
+                     key=lambda k: -strat_spread.get(k, 0.0))
+    if transferable:
+        usable = transferable
     best_key = None
     if not usable:
         emit("\nNo predictor could be calibrated (degenerate data).")
@@ -693,6 +787,10 @@ def main():
         b, s = best["sweep"]["best"], best["sweep"]["safe"]
         emit()
         emit(f"RECOMMENDATION -- best separating predictor: {best['label']}")
+        if dropped and transferable:
+            names = ", ".join(f"{fits[k]['label']} ({strat_spread[k]:.1f}x)" for k in dropped[:3])
+            emit(f"  (excluded as non-transferable, per-N cut spread > {MAX_STRATUM_SPREAD:.0f}x: {names}"
+                 f"{', ...' if len(dropped) > 3 else ''})")
         if len(tied) > 1:
             emit(f"  ({len(tied)} predictors tie at AUC {best['auc']:.2f}; chosen on gap width "
                  f"then R^2 -- see the margin column.)")

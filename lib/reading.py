@@ -1,5 +1,6 @@
 # Functions for dealing with pyretis output
 
+import re
 import numpy as np
 
 def set_flags_ACC_REJ():
@@ -1418,19 +1419,13 @@ def read_block_errors(errors_file_path, shape=None):
         if data_line_idx == -1:
             raise ValueError(f"Data line starting with '{data_line_start}' not found.")
 
-        # Process header line
-        header_parts = lines[header_line_idx].strip().split()
-        # Expecting format like: # Block-Length    component_0_0  component_0_1 ...
-        # Find the start of component headers
-        component_start_index = -1
-        for i, part in enumerate(header_parts):
-            if "component_" in part:
-                component_start_index = i
-                break
-        if component_start_index == -1:
+        # Process header line. Match the names directly instead of splitting on
+        # whitespace: files written before the column width was widened can have
+        # two names run together (e.g. "component_10_9component_10_10") when a
+        # name exactly fills its fixed-width field.
+        headers = re.findall(r"component_\d+(?:_\d+)*", lines[header_line_idx])
+        if not headers:
             raise ValueError("No 'component_i_j' headers found in the header line.")
-        
-        headers = header_parts[component_start_index:]
 
         # Process data line
         error_values_str = lines[data_line_idx].strip().split()[4:] # Skip "# Avg rel error"

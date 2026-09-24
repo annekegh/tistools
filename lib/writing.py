@@ -56,8 +56,12 @@ def write_plot_block_error(filename, running_estimate, rel_errors, interval):
         else:
             component_names.append(f"component_{flat_idx}")
     
-    # Determine column widths for better alignment
-    col_width = 15  # Standard column width
+    # Determine column widths for better alignment. The width has to exceed the
+    # longest component name, otherwise a name that exactly fills the field is
+    # written with no separating space and runs into its neighbour -- which
+    # happens from 11 interfaces on ("component_10_10" is exactly 15 chars) and
+    # makes the file unreadable by read_block_errors.
+    col_width = max(15, max((len(name) for name in component_names), default=0) + 1)
     block_width = max(col_width, len("# Block-Length") + 2)
     
     # Create a text file for all results

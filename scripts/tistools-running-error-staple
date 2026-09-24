@@ -2,52 +2,124 @@
 """
 tistools-running-error-staple: Running estimate error analysis for APPTIS (STAPLE) simulations.
 
-Computes running estimates at regular intervals using recursive formulas.
-Useful for monitoring convergence and computing error when block error is large.
+Computes running (cumulative) estimates at regular cycle intervals, then
+performs recursive block error analysis on them: the running averages are
+de-cumulated back into independent block values with
 
-Outputs:
-  - Running estimates of P_staple, Q_staple, P_cross
-  - Both MSM-based and standard REPPTIS methods
+    k_r[j] = (j + 1) k[j] - j k[j - 1]      (Vervust et al., PyRETIS3 2024)
+
+and the standard error over those blocks is evaluated for every block length
+up to n_estimates/5. The relative error is written and plotted against block
+length; read off the plateau, where the blocks have become uncorrelated.
+
+Outputs (one block_error_analysis_<label>_<interval>.{txt,png} per quantity):
+  - Pcross_repptis, Pcross_repp_MSM  (REPPTIS, direct and via its MSM)
+  - Pcross                           (APPTIS/STAPLE via the iSTAR MSM)
+  - pstaple, qstaple                 (transition and conditional-committor matrices)
 
 Usage:
     tistools-running-error-staple <simulation_dir> [options]
 
 Example:
-    tistools-running-error-staple /path/to/repptis_sim --interval 10000 --skip 25000
+    tistools-running-error-staple /path/to/staple_sim --interval 10000 --skip 25000
 """
 
 import argparse
-import sys
+import contextlib
+import io
 import os
-from pathlib import Path
+import sys
+# A sibling project (inftools) puts a directory containing its own empty
+# `tistools` namespace package on sys.path; strip it so `import tistools`
+# below resolves to the real, pip-installed (editable) tistools package
+# instead of that empty shadow.
 sys.path = [p for p in sys.path if 'inftools' not in p]
-sys.path.insert(0, os.path.abspath('..'))
+import time
+import warnings
+from pathlib import Path
 
 import numpy as np
 
 
+@contextlib.contextmanager
+def quiet(enabled=True):
+    """Silence the very chatty tistools analysis routines."""
+    if not enabled:
+        yield None
+        return
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        yield buf
+
+
+def _fmt_time(seconds):
+    if not np.isfinite(seconds) or seconds < 0:
+        return "--"
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m{seconds % 60:02d}s"
+    return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
+
+
+def make_progress(total_steps, stream=sys.stderr):
+    """
+    Progress reporter for the running-estimate loop.
+
+    The cost of each step grows with the number of cycles it covers (every
+    interval re-scans the paths from the start), so the ETA is weighted by
+    cycles done / cycles total rather than by step count -- a step-count ETA
+    would be wildly optimistic early on.
+    """
+    state = {"t0": time.time(), "done": 0.0, "total": 0.0}
+
+    def progress(idx, total, nskip):
+        if state["total"] == 0.0:
+            # Total work ~ sum of the cycle counts each step has to scan.
+            steps = np.arange(1, total + 1, dtype=float)
+            state["total"] = float(np.sum(steps)) * (nskip / max(idx + 1, 1))
+        state["done"] += nskip
+        frac = min(state["done"] / state["total"], 1.0) if state["total"] > 0 else 0.0
+        elapsed = time.time() - state["t0"]
+        eta = elapsed / frac - elapsed if frac > 1e-9 else float("inf")
+        width = 30
+        filled = int(width * frac)
+        bar = "#" * filled + "." * (width - filled)
+        stream.write(f"\r  [{bar}] {idx + 1:>4}/{total} steps  cycle {nskip:>9}  "
+                     f"elapsed {_fmt_time(elapsed):>7}  eta {_fmt_time(eta):>7}  ")
+        stream.flush()
+        if idx + 1 == total:
+            stream.write("\n")
+            stream.flush()
+
+    return progress
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Running estimate error analysis for APPTIS (STAPLE) simulations.",
+        description="Running estimate + recursive block error analysis for APPTIS (STAPLE) simulations.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     parser.add_argument(
         "simdir",
         type=str,
-        help="Path to REPPTIS simulation directory",
+        help="Path to the STAPLE/APPTIS simulation directory",
     )
     parser.add_argument(
         "--interval", "-i",
         type=int,
         default=10000,
-        help="Interval between running estimates in cycles (default: 10000)",
+        help="Interval between running estimates in cycles (default: 10000). "
+             "Cost grows as ~total_cycles^2/interval, so halving this roughly doubles the runtime.",
     )
     parser.add_argument(
         "--skip", "-s",
         type=int,
         default=0,
-        help="Cycles to skip from beginning (default: 0)",
+        help="Cycles to skip from the beginning (default: 0)",
     )
     parser.add_argument(
         "--load-orders",
@@ -55,15 +127,30 @@ def parse_args():
         help="Load order parameters from .npy files",
     )
     parser.add_argument(
+        "--load",
+        action="store_true",
+        help="Reuse a previously written running-estimate file if one exists",
+    )
+    parser.add_argument(
         "--output", "-o",
         type=str,
         default=None,
-        help="Output file for results (default: stdout)",
+        help="Output file for the report (default: stdout)",
+    )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Do not suppress the (very chatty) output of the called tistools routines",
     )
     parser.add_argument(
         "--quiet", "-q",
         action="store_true",
-        help="Only print final summary, not running estimates",
+        help="Do not show the progress bar",
+    )
+    parser.add_argument(
+        "--show",
+        action="store_true",
+        help="Use an interactive matplotlib backend (default: write figures headlessly)",
     )
     return parser.parse_args()
 
@@ -71,60 +158,94 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # Import tistools functions
+    # The block-error routines write figures; pick a non-interactive backend
+    # before tistools pulls in pyplot, or this dies on a headless machine.
+    import matplotlib
+    if not args.show:
+        matplotlib.use("Agg")
+
     try:
         from tistools import load_path_ensembles, block_error_analysis_staple
     except ImportError as e:
         print(f"Error: Could not import tistools: {e}", file=sys.stderr)
+        print("Make sure tistools is installed or in your PYTHONPATH.", file=sys.stderr)
         sys.exit(1)
 
-    # Setup paths
     simdir = Path(args.simdir).resolve()
     if not simdir.exists():
         print(f"Error: Directory {simdir} does not exist", file=sys.stderr)
         sys.exit(1)
 
-    # Output setup
     out = open(args.output, "w") if args.output else sys.stdout
 
-    def log(msg):
+    def log(msg=""):
         print(msg, file=out)
 
     log("=" * 80)
-    log("RUNNING ESTIMATE ERROR ANALYSIS")
+    log("RUNNING ESTIMATE + RECURSIVE BLOCK ERROR ANALYSIS")
     log("=" * 80)
-    log(f"Simulation: {simdir}")
-    log(f"Interval: {args.interval} cycles")
-    log(f"Skip from start: {args.skip}")
-    log("")
+    log(f"Simulation      : {simdir}")
+    log(f"Interval        : {args.interval} cycles")
+    log(f"Skip from start : {args.skip}")
+    log()
 
-    # Load path ensembles
-    log("Loading path ensembles...")
-    path_ensembles = []
-    interfaces = []
-    path_ensembles, interfaces = load_path_ensembles(str(simdir), load=args.load_orders)
-
-    # Apply initial skip
-    for pe in path_ensembles:
-        pe.prune_start_pe(args.skip)
-
+    print("Loading path ensembles...", file=sys.stderr)
+    t_load = time.time()
+    with quiet(not args.verbose):
+        path_ensembles, interfaces = load_path_ensembles(str(simdir), load=args.load_orders)
+        for pe in path_ensembles:
+            pe.prune_start_pe(args.skip)
     max_cycles = min(len(pe.flags) for pe in path_ensembles)
-    log(f"Available cycles after skip: {max_cycles}")
-    log("")
+    log(f"Ensembles       : {len(path_ensembles)}")
+    log(f"Interfaces      : {len(interfaces)}")
+    log(f"Cycles available: {max_cycles} (after skip)")
 
-    # Run block error analysis (which prints running estimates)
-    # We capture and parse the output, or run our own loop
-    # For simplicity, call the existing function with interval
-    block_error_analysis_staple(path_ensembles, interfaces, interval=args.interval, load=True)
+    n_steps = max(int(np.ceil(max_cycles / args.interval)), 1)
+    log(f"Running estimates: {n_steps} steps of {args.interval} cycles")
 
-    log("")
-    log("=" * 80)
-    log("Analysis complete. See running estimates above for convergence.")
+    # block_error_calculation sweeps block lengths up to n_estimates // 5, so
+    # fewer than 5 estimates produces no output at all and fewer than ~25
+    # leaves too few block lengths to show a plateau.
+    if n_steps < 5:
+        log()
+        log(f"!! {n_steps} running estimates is below the minimum of 5 blocks: the block")
+        log(f"!! sweep will be empty and NO output files will be written. Use")
+        log(f"!! --interval {max(max_cycles // 25, 1)} or smaller.")
+        print(f"WARNING: only {n_steps} estimates; no block-error output will be produced. "
+              f"Try --interval {max(max_cycles // 25, 1)}.", file=sys.stderr)
+    elif n_steps < 25:
+        log(f"  (note: only {n_steps} estimates; block lengths sweep to {n_steps // 5}, "
+            f"which may be too few to show a plateau)")
+    log()
+    print(f"  loaded in {_fmt_time(time.time() - t_load)}; "
+          f"{n_steps} running-estimate steps to go", file=sys.stderr)
+
+    progress = None if args.quiet else make_progress(n_steps)
+
+    t0 = time.time()
+    with quiet(not args.verbose):
+        block_error_analysis_staple(
+            path_ensembles, interfaces,
+            interval=args.interval, load=args.load, progress=progress,
+        )
+    elapsed = time.time() - t0
+
+    log(f"Completed in {_fmt_time(elapsed)}.")
+    log()
+    # load_path_ensembles chdir's into the simulation directory, so the
+    # relative filenames the writer uses end up there, not where you ran this.
+    log(f"Written to {Path.cwd()}:")
+    for label in ("Pcross_repptis", "Pcross_repp_MSM", "Pcross", "pstaple", "qstaple"):
+        log(f"  block_error_analysis_{label}_{args.interval}.txt / .png")
+    log()
+    log("Read the relative error against block length and take the plateau: short")
+    log("blocks are still correlated and underestimate the error, while very long")
+    log("blocks leave too few of them for the standard error to be meaningful.")
     log("=" * 80)
 
     if args.output:
         out.close()
-        print(f"Results written to {args.output}")
+        print(f"Report written to {args.output}", file=sys.stderr)
 
 
 if __name__ == "__main__":
