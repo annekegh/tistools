@@ -318,7 +318,8 @@ def analyse_simulation(simdir, args, tistools_ns, plt):
         qe_path = Path(simdir) / args.q_errors_name
         if qe_path.exists():
             try:
-                q_errors = tistools_ns["read_block_errors"](str(qe_path), q_probs.shape)
+                # Stored errors are relative (abs_err / estimate); scale to absolute.
+                q_errors = tistools_ns["read_block_rel_errors"](str(qe_path), q_probs.shape) * np.abs(q_probs)
             except Exception as e:
                 print(f"  ! could not read block errors ({e}); falling back to binomial floor")
 
@@ -621,7 +622,7 @@ def main():
             name: getattr(tistools, name) for name in (
                 "read_inputfile", "get_LMR_interfaces", "read_pathensemble", "get_weights",
                 "ACCFLAGS", "REJFLAGS", "display_data", "memory_analysis",
-                "ploc_memory", "read_block_errors",
+                "ploc_memory", "read_block_rel_errors",
             )
         }
     except (ImportError, AttributeError) as e:

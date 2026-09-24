@@ -1930,7 +1930,8 @@ def calculate_memory_effect_std(q_probs, q_weights, q_errors=None, min_samples=5
             # q_errors is a filepath string, try to load it.
             try:
                 # Assuming q_errors is a path to a text file loadable by np.loadtxt
-                loaded_q_errors = read_block_errors(q_errors, q_probs.shape)
+                # Stored errors are relative (abs_err / estimate); scale to absolute.
+                loaded_q_errors = read_block_rel_errors(q_errors, q_probs.shape) * np.abs(q_probs)
                 if loaded_q_errors.shape != q_probs.shape:
                     raise RuntimeWarning(
                         f"Shape of q_errors loaded from file '{q_errors}' ({loaded_q_errors.shape}) "
@@ -2117,7 +2118,8 @@ def calculate_memory_effect_index(q_probs, q_weights, q_errors=None, min_samples
     if q_errors is not None:
         if isinstance(q_errors, str):
             try:
-                loaded_q_errors = read_block_errors(q_errors, q_probs.shape)
+                # Stored errors are relative (abs_err / estimate); scale to absolute.
+                loaded_q_errors = read_block_rel_errors(q_errors, q_probs.shape) * np.abs(q_probs)
                 if loaded_q_errors.shape != q_probs.shape:
                     raise RuntimeWarning(
                         f"Shape of q_errors loaded from file '{q_errors}' ({loaded_q_errors.shape}) "
@@ -2431,7 +2433,8 @@ def calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=None, m
         if isinstance(q_errors, str):
             q_errors_path = q_errors
             try:
-                loaded = read_block_errors(q_errors_path, q_probs.shape)
+                # Stored errors are relative (abs_err / estimate); scale to absolute.
+                loaded = read_block_rel_errors(q_errors_path, q_probs.shape) * np.abs(q_probs)
                 if loaded.shape != q_probs.shape:
                     warnings.warn(
                         f"Shape of q_errors from '{q_errors_path}' ({loaded.shape}) does not "

@@ -1365,11 +1365,18 @@ def read_inputfile(filename):
 
     return interfaces,zero_left,timestep
 
-def read_block_errors(errors_file_path, shape=None):
+def read_block_rel_errors(errors_file_path, shape=None):
     """
-    Reads block errors from a file and returns them as a numpy array.
+    Reads RELATIVE block errors from a file and returns them as a numpy array.
     It specifically parses the line starting with "# Avg rel error"
     and uses the "component_i_j" headers to map values to the output array.
+
+    The values are relative: block_error_calculation writes
+    abs_err / best_estimate, not abs_err (hence the "# Avg rel error" label).
+    Anything that treats them as a standard deviation -- error bars, the noise
+    floor of the memory index -- must multiply by the estimate itself first:
+
+        sigma = read_block_rel_errors(path, q_probs.shape) * np.abs(q_probs)
 
     Parameters
     ----------
@@ -1383,7 +1390,7 @@ def read_block_errors(errors_file_path, shape=None):
     Returns
     -------
     np.ndarray
-        A numpy array containing the block errors from the "# Avg rel error" line.
+        The relative block errors from the "# Avg rel error" line.
 
     Raises
     ------

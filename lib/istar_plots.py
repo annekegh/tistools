@@ -794,7 +794,8 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
         if isinstance(q_errors, str):
             q_errors_path = q_errors
             try:
-                loaded_q_errors = read_block_errors(q_errors_path, q_probs.shape)
+                # Stored errors are relative (abs_err / estimate); scale to absolute.
+                loaded_q_errors = read_block_rel_errors(q_errors_path, q_probs.shape) * np.abs(q_probs)
                 if loaded_q_errors.shape != q_probs.shape:
                     warnings.warn(
                         f"Shape of q_errors loaded from file '{q_errors_path}' ({loaded_q_errors.shape}) "
@@ -992,6 +993,7 @@ def plot_memory_landscape(interfaces, q_tot, potential_x=None, potential_y=None,
     # 4. Formatting, Labels, and Legends
     # ---------------------------------------------------------
     ax1.set_xlabel(r'Order parameter $\lambda$', fontsize=12, labelpad=35)
+    # usetex is on in this figure (science style), so '%' must be escaped.
     ax1.set_ylabel(r'Memory index (\%)', fontsize=12, color='black')
     ax2.set_ylabel(r'Conditional committor $q_{i,k}$', fontsize=12, color='black')
     
@@ -1167,7 +1169,8 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         if isinstance(q_errors, str):
             q_errors_path = q_errors
             try:
-                loaded_q_errors = read_block_errors(q_errors_path, q_probs.shape)
+                # Stored errors are relative (abs_err / estimate); scale to absolute.
+                loaded_q_errors = read_block_rel_errors(q_errors_path, q_probs.shape) * np.abs(q_probs)
                 if loaded_q_errors.shape != q_probs.shape:
                     warnings.warn(
                         f"Shape of q_errors loaded from file '{q_errors_path}' ({loaded_q_errors.shape}) "
@@ -1403,9 +1406,13 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         
         if target_data:
             # Plot actual probabilities with physical positions on x-axis
-            ax4.errorbar(starting_positions, target_data, yerr=errs, fmt='o-', 
+            # yerr=None rather than zeros when no error file was supplied, so
+            # the absence of error bars is visible instead of being faked as 0.
+            ax4.errorbar(starting_positions, target_data,
+                    yerr=(errs if q_errors is not None else None), fmt='o-',
                     label=(f'{k-1 if k>0 else k}→{k}'), linewidth=2, markersize=8,
-                    color=forward_colors[idx])
+                    color=forward_colors[idx],
+                    capsize=4, capthick=1.2, elinewidth=1.2, ecolor=MUTED_INK, zorder=3)
             
             # Plot diffusive reference as dashed lines
             # ax4.plot(starting_positions, ref_probs, '--',
@@ -1453,9 +1460,13 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         
         if target_data:
             # Plot actual probabilities with physical positions on x-axis
-            ax5.errorbar(starting_positions, target_data, yerr=errs, fmt='o-', 
+            # yerr=None rather than zeros when no error file was supplied, so
+            # the absence of error bars is visible instead of being faked as 0.
+            ax5.errorbar(starting_positions, target_data,
+                    yerr=(errs if q_errors is not None else None), fmt='o-',
                     label=(f'{k}←{k+1}'), linewidth=2, markersize=8,
-                    color=backward_colors[idx])
+                    color=backward_colors[idx],
+                    capsize=4, capthick=1.2, elinewidth=1.2, ecolor=MUTED_INK, zorder=3)
             
             # Plot diffusive reference as dashed lines12
             # ax5.plot(starting_positions, ref_probs, '--', 
@@ -1488,7 +1499,14 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     # Prepare data for forward plot
     valid_k_fwd = [k for k in range(1, n_interfaces) if not np.isnan(memory_index['forward_variation'][k])]
     valid_variation_fwd = [memory_index['forward_variation'][k] for k in valid_k_fwd]
-    valid_error_fwd = [memory_index['forward_variation_error'][k] if not np.isnan(memory_index['forward_variation_error'][k]) else 0 for k in valid_k_fwd]
+    # The propagated error on the index is deliberately not drawn: the index is
+    # a sample spread over only a handful of starting interfaces, and the
+    # linearised propagation carries a 1/s_corr term that diverges exactly
+    # where the spread approaches the noise floor, so the bar is routinely
+    # several times the value it decorates and says nothing usable. The noise
+    # floor itself is well defined and is drawn instead: bars at or below it
+    # are consistent with sampling noise alone.
+    valid_floor_fwd = [memory_index['forward_floor'][k] if not np.isnan(memory_index['forward_floor'][k]) else 0 for k in valid_k_fwd]
     valid_positions_fwd = [interfaces[k] for k in valid_k_fwd]
     valid_colors_fwd = [forward_colors[k-1] for k in valid_k_fwd]
     valid_counts_fwd = [memory_index['forward_sample_sizes'][k] for k in valid_k_fwd]
@@ -1518,8 +1536,14 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         # ax6_twin.set_ylim(0, 100)
         
         # Create bar plot for variation
-        bars = ax6.bar(valid_positions_fwd, valid_variation_fwd, yerr=valid_error_fwd, color=valid_colors_fwd, alpha=0.7, 
+        bars = ax6.bar(valid_positions_fwd, valid_variation_fwd, color=valid_colors_fwd, alpha=0.7, 
                             width=np.mean(np.diff(interfaces))*0.7, capsize=5)  # Use average interface spacing for width
+        # Noise floor per region: the spread sampling alone would produce.
+        ax6.hlines(valid_floor_fwd,
+                  np.array(valid_positions_fwd) - np.mean(np.diff(interfaces))*0.7 / 2,
+                  np.array(valid_positions_fwd) + np.mean(np.diff(interfaces))*0.7 / 2,
+                  color=MUTED_INK, linestyle='--', linewidth=1.2, zorder=4,
+                  label='Noise floor')
         
         # Add line plot for mean differences
         # line = ax6_twin.plot(valid_positions_fwd, valid_mean_diff_fwd, 'o--', color='red', 
@@ -1533,7 +1557,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         ax6.set_xticks(interfaces)
         ax6.set_xticklabels([(f'{k-1 if k>0 else k}→{k}' if k < n_interfaces-1 else f'{k}') for k in range(n_interfaces)])
         ax6.set_xlabel('Crossing region')
-        ax6.set_ylabel(r'Memory index (\%)')
+        ax6.set_ylabel(r'Memory index (%)')
         # ax6.tick_params(axis='y', labelcolor='C0')
         ax6.set_title('Forward memory retention', fontsize=12)
         ax6.grid(axis='y', alpha=0.3, color=GRID_COLOR, zorder=0)
@@ -1558,9 +1582,9 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         # Create a combined legend
         custom_lines = [
                 Line2D([0], [0], color='black', lw=0, marker='s', markersize=10, markerfacecolor='C0', alpha=0.7),
-                Line2D([0], [0], color='red', lw=2, marker='o', markersize=6)
+                Line2D([0], [0], color=MUTED_INK, lw=1.2, linestyle='--')
         ]
-        ax6.legend(custom_lines, ['Memory index (%)'], loc='upper left')
+        ax6.legend(custom_lines, ['Memory index (%)', 'Noise floor'], loc='upper left')
         
     else:
         ax6.text(0.5, 0.5, "Insufficient data for forward memory retention analysis", 
@@ -1574,7 +1598,14 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     # Prepare data for backward plot
     valid_k_bwd = [k for k in range(n_interfaces-1) if not np.isnan(memory_index['backward_variation'][k])]
     valid_variation_bwd = [memory_index['backward_variation'][k] for k in valid_k_bwd]
-    valid_error_bwd = [memory_index['backward_variation_error'][k] if not np.isnan(memory_index['backward_variation_error'][k]) else 0 for k in valid_k_bwd]
+    # The propagated error on the index is deliberately not drawn: the index is
+    # a sample spread over only a handful of starting interfaces, and the
+    # linearised propagation carries a 1/s_corr term that diverges exactly
+    # where the spread approaches the noise floor, so the bar is routinely
+    # several times the value it decorates and says nothing usable. The noise
+    # floor itself is well defined and is drawn instead: bars at or below it
+    # are consistent with sampling noise alone.
+    valid_floor_bwd = [memory_index['backward_floor'][k] if not np.isnan(memory_index['backward_floor'][k]) else 0 for k in valid_k_bwd]
     valid_positions_bwd = [interfaces[k] for k in valid_k_bwd]
     valid_colors_bwd = [backward_colors[k] for k in valid_k_bwd]
     valid_counts_bwd = [memory_index['backward_sample_sizes'][k] for k in valid_k_bwd]
@@ -1604,8 +1635,14 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         # ax7_twin.set_ylim(0, 100)
 
         # Create bar plot using interface physical positions
-        bars = ax7.bar(valid_positions_bwd, valid_variation_bwd, yerr=valid_error_bwd, color=valid_colors_bwd, alpha=0.7,
+        bars = ax7.bar(valid_positions_bwd, valid_variation_bwd, color=valid_colors_bwd, alpha=0.7,
                             width=np.mean(np.diff(interfaces))*0.7, capsize=5)  # Use average interface spacing for width
+        # Noise floor per region: the spread sampling alone would produce.
+        ax7.hlines(valid_floor_bwd,
+                  np.array(valid_positions_bwd) - np.mean(np.diff(interfaces))*0.7 / 2,
+                  np.array(valid_positions_bwd) + np.mean(np.diff(interfaces))*0.7 / 2,
+                  color=MUTED_INK, linestyle='--', linewidth=1.2, zorder=4,
+                  label='Noise floor')
         
         # Add line plot for mean differences
         # line = ax7_twin.plot(valid_positions_bwd, valid_mean_diff_bwd, 'o--', color='red', 
@@ -1644,9 +1681,9 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         # Create a combined legend
         custom_lines = [
                 Line2D([0], [0], color='black', lw=0, marker='s', markersize=10, markerfacecolor='C0', alpha=0.7),
-                Line2D([0], [0], color='red', lw=2, marker='o', markersize=6)
+                Line2D([0], [0], color=MUTED_INK, lw=1.2, linestyle='--')
         ]
-        ax7.legend(custom_lines, ['Memory index (%)'], loc='upper left')
+        ax7.legend(custom_lines, ['Memory index (%)', 'Noise floor'], loc='upper left')
         
     else:
         ax7.text(0.5, 0.5, "Insufficient data for backward memory retention analysis", 

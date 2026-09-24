@@ -978,8 +978,14 @@ def plot_memory_analysis(q_tot, p, interfaces=None, q_errors=None):
         for i in range(k):
             if (i < k - 1 or (i == 0 and k == 1)) and not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
                 xs.append(interfaces[i]); ys.append(q_probs[i, k])
+                errs.append(q_errors[i, k] if q_errors is not None and not np.isnan(q_errors[i, k]) else 0.0)
         if xs:
-            ax4.plot(xs, ys, "o-", label=f"{k - 1 if k > 0 else k}→{k}", linewidth=2, markersize=8, color=forward_colors[idx])
+            # yerr=None rather than zeros when no error file was supplied, so the
+            # absence of error bars is visible instead of being faked as 0.
+            ax4.errorbar(xs, ys, yerr=(errs if q_errors is not None else None), fmt="o-",
+                         label=f"{k - 1 if k > 0 else k}→{k}", linewidth=2, markersize=8,
+                         color=forward_colors[idx], capsize=4, capthick=1.2,
+                         elinewidth=1.2, ecolor=MUTED_INK, zorder=3)
     ax4.set_xlabel(r"Starting position $\lambda$"); ax4.set_ylabel("q(i,k)")
     ax4.set_title("Forward crossing probabilities", fontsize=12)
     ax4.set_ylim(0, 1.05); ax4.grid(axis="y", alpha=0.3, color=GRID_COLOR, zorder=0)
@@ -987,12 +993,16 @@ def plot_memory_analysis(q_tot, p, interfaces=None, q_errors=None):
 
     ax5b = fig2.add_subplot(gs2[0, 1])
     for idx, k in enumerate(backward_targets):
-        xs, ys = [], []
+        xs, ys, errs = [], [], []
         for i in range(k + 1, n_interfaces):
             if i > k + 1 and not np.isnan(q_probs[i, k]) and q_weights[i, k] > 5:
                 xs.append(interfaces[i]); ys.append(q_probs[i, k])
+                errs.append(q_errors[i, k] if q_errors is not None and not np.isnan(q_errors[i, k]) else 0.0)
         if xs:
-            ax5b.plot(xs, ys, "o-", label=f"{k}←{k + 1}", linewidth=2, markersize=8, color=backward_colors[idx])
+            ax5b.errorbar(xs, ys, yerr=(errs if q_errors is not None else None), fmt="o-",
+                          label=f"{k}←{k + 1}", linewidth=2, markersize=8,
+                          color=backward_colors[idx], capsize=4, capthick=1.2,
+                          elinewidth=1.2, ecolor=MUTED_INK, zorder=3)
     ax5b.set_xlabel(r"Starting position $\lambda$"); ax5b.set_ylabel("q(i,k)")
     ax5b.set_title("Backward crossing probabilities", fontsize=12)
     ax5b.set_ylim(0, 1.05); ax5b.grid(axis="y", alpha=0.3, color=GRID_COLOR, zorder=0)
@@ -1005,10 +1015,18 @@ def plot_memory_analysis(q_tot, p, interfaces=None, q_errors=None):
     if valid_k_fwd:
         positions = [interfaces[k] for k in valid_k_fwd]
         values = [memory_index["forward_variation"][k] for k in valid_k_fwd]
-        errors = [memory_index["forward_variation_error"][k] if not np.isnan(memory_index["forward_variation_error"][k]) else 0 for k in valid_k_fwd]
+        floors = [memory_index["forward_floor"][k] if not np.isnan(memory_index["forward_floor"][k]) else 0 for k in valid_k_fwd]
         bar_colors = [forward_colors[k - 1] for k in valid_k_fwd]
-        ax6.bar(positions, values, yerr=errors, color=bar_colors, alpha=0.85,
-                width=np.mean(np.diff(interfaces)) * 0.7, capsize=5)
+        bar_w = np.mean(np.diff(interfaces)) * 0.7
+    # The propagated error on the index is deliberately not drawn: the index is a
+    # sample spread over only a handful of starting interfaces, and the linearised
+    # propagation carries a 1/s_corr term that diverges exactly where the spread
+    # approaches the noise floor, so the bar is routinely several times the value
+    # it decorates. The noise floor is well defined and is drawn instead.
+        ax6.bar(positions, values, color=bar_colors, alpha=0.85, width=bar_w)
+        ax6.hlines(floors, np.array(positions) - bar_w / 2, np.array(positions) + bar_w / 2,
+                  color=MUTED_INK, linestyle="--", linewidth=1.2, zorder=4, label="Noise floor")
+        ax6.legend(loc="upper left", fontsize=9)
         ax6.set_xlim(min(positions) - 0.5, max(positions) + 0.5)
     ax6.set_xlabel("Target region"); ax6.set_ylabel("Memory index (%)")
     ax6.set_title("Forward memory retention", fontsize=12)
@@ -1019,10 +1037,18 @@ def plot_memory_analysis(q_tot, p, interfaces=None, q_errors=None):
     if valid_k_bwd:
         positions = [interfaces[k] for k in valid_k_bwd]
         values = [memory_index["backward_variation"][k] for k in valid_k_bwd]
-        errors = [memory_index["backward_variation_error"][k] if not np.isnan(memory_index["backward_variation_error"][k]) else 0 for k in valid_k_bwd]
+        floors = [memory_index["backward_floor"][k] if not np.isnan(memory_index["backward_floor"][k]) else 0 for k in valid_k_bwd]
         bar_colors = [backward_colors[k] for k in valid_k_bwd]
-        ax7.bar(positions, values, yerr=errors, color=bar_colors, alpha=0.85,
-                width=np.mean(np.diff(interfaces)) * 0.7, capsize=5)
+        bar_w = np.mean(np.diff(interfaces)) * 0.7
+    # The propagated error on the index is deliberately not drawn: the index is a
+    # sample spread over only a handful of starting interfaces, and the linearised
+    # propagation carries a 1/s_corr term that diverges exactly where the spread
+    # approaches the noise floor, so the bar is routinely several times the value
+    # it decorates. The noise floor is well defined and is drawn instead.
+        ax7.bar(positions, values, color=bar_colors, alpha=0.85, width=bar_w)
+        ax7.hlines(floors, np.array(positions) - bar_w / 2, np.array(positions) + bar_w / 2,
+                  color=MUTED_INK, linestyle="--", linewidth=1.2, zorder=4, label="Noise floor")
+        ax7.legend(loc="upper left", fontsize=9)
         ax7.set_xlim(min(positions) - 0.5, max(positions) + 0.5)
     ax7.set_xlabel("Target region"); ax7.set_ylabel("Memory index (%)")
     ax7.set_title("Backward memory retention", fontsize=12)
@@ -1143,7 +1169,7 @@ def main():
             construct_M_istar,
             global_pcross_msm_star,
             plot_memory_landscape,
-            read_block_errors,
+            read_block_rel_errors,
         )
     except ImportError as e:
         print(f"Error: Could not import tistools: {e}", file=sys.stderr)
@@ -1210,7 +1236,8 @@ def main():
     q_errors = None
     if args.q_errors:
         try:
-            q_errors = read_block_errors(args.q_errors, q_tot[0].shape)
+            # Stored errors are relative (abs_err / estimate); scale to absolute.
+            q_errors = read_block_rel_errors(args.q_errors, q_tot[0].shape) * np.abs(q_tot[0])
         except Exception as e:
             print(f"Warning: could not load --q-errors '{args.q_errors}': {e}; ignoring.", file=sys.stderr)
 
