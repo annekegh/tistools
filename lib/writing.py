@@ -72,13 +72,13 @@ def write_plot_block_error(filename, running_estimate, rel_errors, interval):
         # Write header for the table with all components
         f.write(f"{'# Block-Length':<{block_width}}")
         for name in component_names:
-            f.write(f"{name:>{col_width}}")
+            f.write(f" {name:>{col_width}}")
         f.write("\n")
         
         # Write separator line
         f.write(f"{'-' * block_width}")
         for _ in range(num_components):
-            f.write(f"{'-' * col_width}")
+            f.write(f" {'-' * col_width}")
         f.write("\n")
         
         # Write the component best estimates
@@ -90,7 +90,7 @@ def write_plot_block_error(filename, running_estimate, rel_errors, interval):
             else:
                 component_estimate = running_estimate[:, flat_idx]
             best_estimate = component_estimate[-1]
-            f.write(f"{best_estimate:>{col_width}.12f}")
+            f.write(f" {best_estimate:>{col_width}.12f}")
         f.write("\n")
         
         # Write the component averaged relative errors
@@ -102,15 +102,15 @@ def write_plot_block_error(filename, running_estimate, rel_errors, interval):
             else:
                 component_data = rel_errors[:, flat_idx]
             second_half_err_avg = np.mean(component_data[len(component_data) // 2:])
-            f.write(f"{second_half_err_avg:>{col_width}.12f}")
+            f.write(f" {second_half_err_avg:>{col_width}.12f}")
         f.write("\n")
         
         # Write separator before data rows
         f.write(f"{'-' * block_width}")
         for _ in range(num_components):
-            f.write(f"{'-' * col_width}")
+            f.write(f" {'-' * col_width}")
         f.write("\n")
-        
+
         # Write data rows with all components on same row
         for i in range(len(x)):
             f.write(f"{x[i]*interval:>{block_width-1}d} ")
@@ -120,7 +120,7 @@ def write_plot_block_error(filename, running_estimate, rel_errors, interval):
                     component_data = rel_errors[(slice(None),) + indices]
                 else:
                     component_data = rel_errors[:, flat_idx]
-                f.write(f"{component_data[i]:>{col_width}.12f}")
+                f.write(f" {component_data[i]:>{col_width}.12f}")
             f.write("\n")
         
         # Create a single plot for all components
