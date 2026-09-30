@@ -1503,10 +1503,16 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     # a sample spread over only a handful of starting interfaces, and the
     # linearised propagation carries a 1/s_corr term that diverges exactly
     # where the spread approaches the noise floor, so the bar is routinely
-    # several times the value it decorates and says nothing usable. The noise
-    # floor itself is well defined and is drawn instead: bars at or below it
-    # are consistent with sampling noise alone.
-    valid_floor_fwd = [memory_index['forward_floor'][k] if not np.isnan(memory_index['forward_floor'][k]) else 0 for k in valid_k_fwd]
+    # several times the value it decorates and says nothing usable.
+    #
+    # What is drawn instead is the index BEFORE the noise floor was removed, as
+    # an open bar behind the filled one. The filled bar is already corrected
+    # (M_k = sqrt(max(raw^2 - floor^2, 0))), so the floor is not a threshold the
+    # bar has to clear -- a non-zero bar has cleared it by construction. The gap
+    # between the two bars is the correction, and a filled bar that is only a
+    # sliver of its outline is a residual left over from subtracting two similar
+    # numbers, i.e. not to be trusted.
+    valid_raw_fwd = [memory_index['forward_raw'][k] if not np.isnan(memory_index['forward_raw'][k]) else 0 for k in valid_k_fwd]
     valid_positions_fwd = [interfaces[k] for k in valid_k_fwd]
     valid_colors_fwd = [forward_colors[k-1] for k in valid_k_fwd]
     valid_counts_fwd = [memory_index['forward_sample_sizes'][k] for k in valid_k_fwd]
@@ -1538,12 +1544,11 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         # Create bar plot for variation
         bars = ax6.bar(valid_positions_fwd, valid_variation_fwd, color=valid_colors_fwd, alpha=0.7, 
                             width=np.mean(np.diff(interfaces))*0.7, capsize=5)  # Use average interface spacing for width
-        # Noise floor per region: the spread sampling alone would produce.
-        ax6.hlines(valid_floor_fwd,
-                  np.array(valid_positions_fwd) - np.mean(np.diff(interfaces))*0.7 / 2,
-                  np.array(valid_positions_fwd) + np.mean(np.diff(interfaces))*0.7 / 2,
-                  color=MUTED_INK, linestyle='--', linewidth=1.2, zorder=4,
-                  label='Noise floor')
+        # Uncorrected index behind the corrected one; the gap is the noise
+        # that was subtracted out.
+        ax6.bar(valid_positions_fwd, valid_raw_fwd, width=np.mean(np.diff(interfaces))*0.7,
+                facecolor='none', edgecolor=MUTED_INK, linewidth=1.2,
+                linestyle='--', zorder=4)
         
         # Add line plot for mean differences
         # line = ax6_twin.plot(valid_positions_fwd, valid_mean_diff_fwd, 'o--', color='red', 
@@ -1568,7 +1573,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         # ax6_twin.tick_params(axis='y', labelcolor='red')
         
         # Set reasonable y-limits
-        max_y_fwd = max(10.0, max(valid_variation_fwd) * 1.2) if valid_variation_fwd else 10.0
+        max_y_fwd = max(10.0, max(valid_raw_fwd or [0]) * 1.2) if valid_variation_fwd else 10.0
         ax6.set_ylim(0, max_y_fwd)
         
         # max_y_twin_fwd = max(10.0, max(valid_mean_diff_fwd) * 1.2) if valid_mean_diff_fwd else 10.0
@@ -1584,7 +1589,8 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 Line2D([0], [0], color='black', lw=0, marker='s', markersize=10, markerfacecolor='C0', alpha=0.7),
                 Line2D([0], [0], color=MUTED_INK, lw=1.2, linestyle='--')
         ]
-        ax6.legend(custom_lines, ['Memory index (%)', 'Noise floor'], loc='upper left')
+        ax6.legend(custom_lines, ['Memory index, noise-corrected (%)',
+                                 'Before noise subtraction'], loc='upper left')
         
     else:
         ax6.text(0.5, 0.5, "Insufficient data for forward memory retention analysis", 
@@ -1602,10 +1608,16 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     # a sample spread over only a handful of starting interfaces, and the
     # linearised propagation carries a 1/s_corr term that diverges exactly
     # where the spread approaches the noise floor, so the bar is routinely
-    # several times the value it decorates and says nothing usable. The noise
-    # floor itself is well defined and is drawn instead: bars at or below it
-    # are consistent with sampling noise alone.
-    valid_floor_bwd = [memory_index['backward_floor'][k] if not np.isnan(memory_index['backward_floor'][k]) else 0 for k in valid_k_bwd]
+    # several times the value it decorates and says nothing usable.
+    #
+    # What is drawn instead is the index BEFORE the noise floor was removed, as
+    # an open bar behind the filled one. The filled bar is already corrected
+    # (M_k = sqrt(max(raw^2 - floor^2, 0))), so the floor is not a threshold the
+    # bar has to clear -- a non-zero bar has cleared it by construction. The gap
+    # between the two bars is the correction, and a filled bar that is only a
+    # sliver of its outline is a residual left over from subtracting two similar
+    # numbers, i.e. not to be trusted.
+    valid_raw_bwd = [memory_index['backward_raw'][k] if not np.isnan(memory_index['backward_raw'][k]) else 0 for k in valid_k_bwd]
     valid_positions_bwd = [interfaces[k] for k in valid_k_bwd]
     valid_colors_bwd = [backward_colors[k] for k in valid_k_bwd]
     valid_counts_bwd = [memory_index['backward_sample_sizes'][k] for k in valid_k_bwd]
@@ -1637,12 +1649,11 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         # Create bar plot using interface physical positions
         bars = ax7.bar(valid_positions_bwd, valid_variation_bwd, color=valid_colors_bwd, alpha=0.7,
                             width=np.mean(np.diff(interfaces))*0.7, capsize=5)  # Use average interface spacing for width
-        # Noise floor per region: the spread sampling alone would produce.
-        ax7.hlines(valid_floor_bwd,
-                  np.array(valid_positions_bwd) - np.mean(np.diff(interfaces))*0.7 / 2,
-                  np.array(valid_positions_bwd) + np.mean(np.diff(interfaces))*0.7 / 2,
-                  color=MUTED_INK, linestyle='--', linewidth=1.2, zorder=4,
-                  label='Noise floor')
+        # Uncorrected index behind the corrected one; the gap is the noise
+        # that was subtracted out.
+        ax7.bar(valid_positions_bwd, valid_raw_bwd, width=np.mean(np.diff(interfaces))*0.7,
+                facecolor='none', edgecolor=MUTED_INK, linewidth=1.2,
+                linestyle='--', zorder=4)
         
         # Add line plot for mean differences
         # line = ax7_twin.plot(valid_positions_bwd, valid_mean_diff_bwd, 'o--', color='red', 
@@ -1667,7 +1678,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
         # ax7_twin.tick_params(axis='y', labelcolor='red')
         
         # Set reasonable y-limits
-        max_y_bwd = max(10.0, max(valid_variation_bwd) * 1.2) if valid_variation_bwd else 10.0
+        max_y_bwd = max(10.0, max(valid_raw_bwd or [0]) * 1.2) if valid_variation_bwd else 10.0
         ax7.set_ylim(0, max_y_bwd)
         
         # max_y_twin_bwd = max(10.0, max(valid_mean_diff_bwd) * 1.2) if valid_mean_diff_bwd else 10.0
@@ -1683,7 +1694,8 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
                 Line2D([0], [0], color='black', lw=0, marker='s', markersize=10, markerfacecolor='C0', alpha=0.7),
                 Line2D([0], [0], color=MUTED_INK, lw=1.2, linestyle='--')
         ]
-        ax7.legend(custom_lines, ['Memory index (%)', 'Noise floor'], loc='upper left')
+        ax7.legend(custom_lines, ['Memory index, noise-corrected (%)',
+                                 'Before noise subtraction'], loc='upper left')
         
     else:
         ax7.text(0.5, 0.5, "Insufficient data for backward memory retention analysis", 

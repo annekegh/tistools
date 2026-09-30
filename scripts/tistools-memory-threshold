@@ -157,9 +157,25 @@ def _stats_for_target(q_values, weights, q_errors_k):
     q_mean = np.average(q_values, weights=weights)
     var_obs = float(np.cov(q_values, aweights=weights))
 
-    # Expected variance from sampling noise alone (the floor): weighted mean
-    # of the individual variances of the q(i,k) estimates.
-    var_noise = float(np.average(sigma ** 2, weights=weights))
+    # Expected variance from sampling noise alone (the floor). This has to be
+    # E[var_obs] under the null "all q(i,k) equal, scatter is only each point's
+    # own sampling error". var_obs is a *weighted* variance, so that is NOT the
+    # weighted mean of the sigma_i^2 unless the weights are equal:
+    #
+    #   E[s_w^2] = ( sum w_i s_i^2 - (1/W) sum w_i^2 s_i^2 ) / (W - W2/W)
+    #
+    # matching numpy's aweights/ddof=1 normalisation. Path weights are wildly
+    # unequal here (the adjacent interface carries most of the sampling), so
+    # the plain weighted mean underestimates the floor by up to ~13x. Keep this
+    # identical to _memory_index_for_target in tistools/lib/istar_analysis.py.
+    W = float(np.sum(weights))
+    W2 = float(np.sum(weights ** 2))
+    denom_w = W - W2 / W
+    if denom_w <= 0:
+        return None
+    var_noise = float(
+        (np.sum(weights * sigma ** 2) - np.sum(weights ** 2 * sigma ** 2) / W) / denom_w
+    )
 
     var_binomial = q_mean * (1.0 - q_mean)
     if var_binomial <= 1e-12:

@@ -550,6 +550,7 @@ def calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=None, m
     out = {}
     for direction in ("forward", "backward"):
         eps = np.full(n_interfaces, np.nan)
+        eps_raw = np.full(n_interfaces, np.nan)
         eps_error = np.full(n_interfaces, np.nan)
         floor = np.full(n_interfaces, np.nan)
         sizes = np.zeros(n_interfaces, dtype=int)
@@ -588,11 +589,23 @@ def calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=None, m
             if not np.isfinite(q_mean) or var_binomial <= 1e-12:
                 continue
             denom = np.sqrt(var_binomial)
+            # var_noise must be E[var_obs] under the null "all q(i,k) equal,
+            # scatter is only sampling error". var_obs is a weighted variance,
+            # so that expectation is not the weighted mean of sigma_i^2 unless
+            # the weights are equal -- and path weights are wildly unequal.
+            # See _memory_index_for_target in tistools/lib/istar_analysis.py.
             var_obs = float(np.cov(q_values, aweights=weights))
-            var_noise = float(np.average(sigma ** 2, weights=weights))
+            W = float(np.sum(weights)); W2 = float(np.sum(weights ** 2))
+            denom_w = W - W2 / W
+            if denom_w <= 0:
+                continue
+            var_noise = float(
+                (np.sum(weights * sigma ** 2) - np.sum(weights ** 2 * sigma ** 2) / W) / denom_w
+            )
             s_corr = np.sqrt(max(var_obs - var_noise, 0.0))
 
             eps[k] = (s_corr / denom) * 100
+            eps_raw[k] = (np.sqrt(var_obs) / denom) * 100   # before the floor is removed
             floor[k] = (np.sqrt(var_noise) / denom) * 100
             sizes[k] = int(np.sum(weights))
             if s_corr > 0 and not np.any(np.isnan(sigma)):
@@ -603,6 +616,7 @@ def calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=None, m
                 eps_error[k] = float(np.sqrt(np.sum((partial_derivs * sigma) ** 2))) * 100
 
         out[f"{direction}_variation"] = eps
+        out[f"{direction}_raw"] = eps_raw
         out[f"{direction}_variation_error"] = eps_error
         out[f"{direction}_floor"] = floor
         out[f"{direction}_sample_sizes"] = sizes
@@ -1015,17 +1029,21 @@ def plot_memory_analysis(q_tot, p, interfaces=None, q_errors=None):
     if valid_k_fwd:
         positions = [interfaces[k] for k in valid_k_fwd]
         values = [memory_index["forward_variation"][k] for k in valid_k_fwd]
-        floors = [memory_index["forward_floor"][k] if not np.isnan(memory_index["forward_floor"][k]) else 0 for k in valid_k_fwd]
+        raws = [memory_index["forward_raw"][k] if not np.isnan(memory_index["forward_raw"][k]) else 0 for k in valid_k_fwd]
         bar_colors = [forward_colors[k - 1] for k in valid_k_fwd]
         bar_w = np.mean(np.diff(interfaces)) * 0.7
     # The propagated error on the index is deliberately not drawn: the index is a
     # sample spread over only a handful of starting interfaces, and the linearised
     # propagation carries a 1/s_corr term that diverges exactly where the spread
     # approaches the noise floor, so the bar is routinely several times the value
-    # it decorates. The noise floor is well defined and is drawn instead.
-        ax6.bar(positions, values, color=bar_colors, alpha=0.85, width=bar_w)
-        ax6.hlines(floors, np.array(positions) - bar_w / 2, np.array(positions) + bar_w / 2,
-                  color=MUTED_INK, linestyle="--", linewidth=1.2, zorder=4, label="Noise floor")
+    # it decorates. Drawn instead is the index BEFORE the floor was removed: the
+    # filled bar is already corrected, so the gap between the two is the
+    # correction, and a sliver of a bar inside a tall outline is a residual of
+    # two similar numbers and not to be trusted.
+        ax6.bar(positions, values, color=bar_colors, alpha=0.85, width=bar_w,
+                label="Memory index, noise-corrected (%)")
+        ax6.bar(positions, raws, width=bar_w, facecolor="none", edgecolor=MUTED_INK,
+                linewidth=1.2, linestyle="--", zorder=4, label="Before noise subtraction")
         ax6.legend(loc="upper left", fontsize=9)
         ax6.set_xlim(min(positions) - 0.5, max(positions) + 0.5)
     ax6.set_xlabel("Target region"); ax6.set_ylabel("Memory index (%)")
@@ -1037,17 +1055,21 @@ def plot_memory_analysis(q_tot, p, interfaces=None, q_errors=None):
     if valid_k_bwd:
         positions = [interfaces[k] for k in valid_k_bwd]
         values = [memory_index["backward_variation"][k] for k in valid_k_bwd]
-        floors = [memory_index["backward_floor"][k] if not np.isnan(memory_index["backward_floor"][k]) else 0 for k in valid_k_bwd]
+        raws = [memory_index["backward_raw"][k] if not np.isnan(memory_index["backward_raw"][k]) else 0 for k in valid_k_bwd]
         bar_colors = [backward_colors[k] for k in valid_k_bwd]
         bar_w = np.mean(np.diff(interfaces)) * 0.7
     # The propagated error on the index is deliberately not drawn: the index is a
     # sample spread over only a handful of starting interfaces, and the linearised
     # propagation carries a 1/s_corr term that diverges exactly where the spread
     # approaches the noise floor, so the bar is routinely several times the value
-    # it decorates. The noise floor is well defined and is drawn instead.
-        ax7.bar(positions, values, color=bar_colors, alpha=0.85, width=bar_w)
-        ax7.hlines(floors, np.array(positions) - bar_w / 2, np.array(positions) + bar_w / 2,
-                  color=MUTED_INK, linestyle="--", linewidth=1.2, zorder=4, label="Noise floor")
+    # it decorates. Drawn instead is the index BEFORE the floor was removed: the
+    # filled bar is already corrected, so the gap between the two is the
+    # correction, and a sliver of a bar inside a tall outline is a residual of
+    # two similar numbers and not to be trusted.
+        ax7.bar(positions, values, color=bar_colors, alpha=0.85, width=bar_w,
+                label="Memory index, noise-corrected (%)")
+        ax7.bar(positions, raws, width=bar_w, facecolor="none", edgecolor=MUTED_INK,
+                linewidth=1.2, linestyle="--", zorder=4, label="Before noise subtraction")
         ax7.legend(loc="upper left", fontsize=9)
         ax7.set_xlim(min(positions) - 0.5, max(positions) + 0.5)
     ax7.set_xlabel("Target region"); ax7.set_ylabel("Memory index (%)")

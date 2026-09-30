@@ -2279,11 +2279,33 @@ def _memory_index_for_target(q_values, weights, sigma):
     denom = np.sqrt(var_binomial)
 
     # Observed spread, and the spread expected from sampling noise alone.
+    #
+    # var_noise has to be E[var_obs] under the null "all q(i,k) are the same
+    # number, the scatter is only each point's own sampling error". Because
+    # var_obs is a *weighted* variance, that expectation is not the weighted
+    # mean of the sigma_i^2 unless the weights happen to be equal:
+    #
+    #   E[s_w^2] = ( sum w_i s_i^2 - (1/W) sum w_i^2 s_i^2 ) / (W - W2/W)
+    #
+    # with W = sum(w), W2 = sum(w^2), matching numpy's aweights/ddof=1
+    # normalisation. Here the weights are path weights and are wildly unequal
+    # (the adjacent interface carries most of the sampling), so the weighted
+    # mean underestimates the floor by up to an order of magnitude and the
+    # index comes out biased high. The expression below reduces to the plain
+    # mean of sigma^2 when the weights are equal.
     var_obs = float(np.cov(q_values, aweights=weights))
-    var_noise = float(np.average(sigma ** 2, weights=weights))
+    W = float(np.sum(weights))
+    W2 = float(np.sum(weights ** 2))
+    denom_w = W - W2 / W
+    if denom_w <= 0:
+        return None
+    var_noise = float(
+        (np.sum(weights * sigma ** 2) - np.sum(weights ** 2 * sigma ** 2) / W) / denom_w
+    )
     s_corr = np.sqrt(max(var_obs - var_noise, 0.0))
 
     index = s_corr / denom
+    index_raw = np.sqrt(var_obs) / denom   # before the noise floor is removed
     floor = np.sqrt(var_noise) / denom
 
     # Error propagation for index = s_corr / sqrt(q(1-q)), same form as in
@@ -2297,8 +2319,8 @@ def _memory_index_for_target(q_values, weights, sigma):
         index_error = np.nan
 
     return {
-        'index': index, 'index_error': index_error, 'floor': floor,
-        'q_mean': q_mean, 'n_samples': float(np.sum(weights)),
+        'index': index, 'index_raw': index_raw, 'index_error': index_error,
+        'floor': floor, 'q_mean': q_mean, 'n_samples': float(np.sum(weights)),
     }
 
 
@@ -2417,8 +2439,11 @@ def calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=None, m
     dict
         Same keys as :py:func:`calculate_memory_effect_index` so it can be used
         in its place -- 'forward_variation'/'backward_variation' hold M_k --
-        plus 'forward_floor'/'backward_floor' (the noise floor in the same
+        plus 'forward_raw'/'backward_raw' (the index BEFORE the noise floor is
+        removed), 'forward_floor'/'backward_floor' (the noise floor in the same
         units) and 'forward_total'/'backward_total' (the sum over interfaces).
+        Note that 'forward_variation'/'backward_variation' are already
+        floor-corrected: M_k = sqrt(max(raw^2 - floor^2, 0)).
 
     Notes
     -----
@@ -2452,6 +2477,7 @@ def calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=None, m
     out = {}
     for direction in ("forward", "backward"):
         eps = np.full(n_interfaces, np.nan)
+        eps_raw = np.full(n_interfaces, np.nan)
         eps_error = np.full(n_interfaces, np.nan)
         floor = np.full(n_interfaces, np.nan)
         sizes = np.zeros(n_interfaces, dtype=int)
@@ -2487,11 +2513,13 @@ def calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=None, m
             if stats is None:
                 continue
             eps[k] = stats['index'] * 100
+            eps_raw[k] = stats['index_raw'] * 100
             eps_error[k] = stats['index_error'] * 100
             floor[k] = stats['floor'] * 100
             sizes[k] = int(stats['n_samples'])
 
         out[f'{direction}_variation'] = eps
+        out[f'{direction}_raw'] = eps_raw
         out[f'{direction}_variation_error'] = eps_error
         out[f'{direction}_floor'] = floor
         out[f'{direction}_sample_sizes'] = sizes
