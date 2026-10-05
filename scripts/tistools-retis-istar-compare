@@ -1,0 +1,443 @@
+#!/usr/bin/env python
+"""
+tistools-retis-istar-compare: compare the crossing-probability profile of an
+iSTAR/StapleTIS simulation against its brute RETIS counterpart.
+
+RETIS gives the reference P_A(lambda|lambda_A): it samples every ensemble
+without any Markov-jump assumption, and PyRETIS writes the matched (stitched)
+profile to <simdir>/report/matched-probability.txt.gz. The iSTAR simulation of
+the *same* potential is analysed three ways from its path ensembles:
+
+  StapleTIS  -- the iSTAR Markov state model (resolvent over recrossings)
+  REPPTIS    -- the PPTIS recursion, one Markov jump per interface
+  Milestoning-- as REPPTIS but also forgetting the arrival direction
+
+so the plot shows directly how much each approximation drifts from RETIS, and
+where along lambda it starts.
+
+Pairs are found by swapping the word 'istar' for 'retis' in the directory
+*name*: sim_istarwell2_2108 <-> sim_retiswell2_2108. Either member may be
+given; --pair states one explicitly.
+
+Usage:
+    tistools-retis-istar-compare <simdir> [<simdir> ...] [options]
+    tistools-retis-istar-compare --discover <parent_dir> [options]
+
+Examples:
+    tistools-retis-istar-compare sim_istarwell2_2108 sim_istarz_2603
+    tistools-retis-istar-compare --discover /path/to/simulations --outdir plots
+    tistools-retis-istar-compare --pair sim_istar_g2 sim_retis_g2
+"""
+
+import argparse
+import contextlib
+import glob
+import gzip
+import io
+import os
+import re
+import sys
+# A sibling project (inftools) puts a directory containing its own empty
+# `tistools` namespace package on sys.path; strip it so `import tistools`
+# below resolves to the real, pip-installed (editable) tistools package
+# instead of that empty shadow.
+sys.path = [p for p in sys.path if 'inftools' not in p]
+from pathlib import Path
+
+import numpy as np
+
+
+# ---------------------------------------------------------------------------
+# RETIS reference profile
+# ---------------------------------------------------------------------------
+
+def read_matched_probability(path):
+    """
+    Read PyRETIS' report/matched-probability.txt.gz.
+
+    The file holds one block per [i^+] ensemble:
+
+        # Ensemble: [0^+], idetect: -0.25
+        <lambda>  <P>
+        ...
+
+    The blocks are already matched -- each is scaled so that it continues the
+    previous one at the interface where they meet (verified: the values agree
+    to ~2e-4 at the joins) -- so the full profile is their union. Each block is
+    used from its own start up to the start of the next, i.e. every lambda is
+    taken from the innermost ensemble that has yet to begin, which is the one
+    with the most paths there.
+
+    Returns
+    -------
+    (lam, pcross, blocks)
+        lam, pcross : the stitched profile, sorted by lambda.
+        blocks      : [(label, lam_i, p_i), ...] per ensemble, for plotting the
+                      individual pieces when --show-blocks is given.
+    """
+    opener = gzip.open if str(path).endswith(".gz") else open
+    blocks, label, lam, pc = [], None, [], []
+    with opener(path, "rt") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("#"):
+                if lam:
+                    blocks.append((label, np.array(lam), np.array(pc)))
+                label, lam, pc = line.lstrip("# ").strip(), [], []
+                continue
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            lam.append(float(parts[0]))
+            pc.append(float(parts[1]))
+    if lam:
+        blocks.append((label, np.array(lam), np.array(pc)))
+    if not blocks:
+        raise ValueError(f"no data blocks found in {path}")
+
+    # Stitch: block j covers [start_j, start_{j+1}), the last one runs to the end.
+    starts = [b[1][0] for b in blocks]
+    seg_lam, seg_pc = [], []
+    for j, (_, bl, bp) in enumerate(blocks):
+        hi = starts[j + 1] if j + 1 < len(blocks) else np.inf
+        m = (bl >= starts[j]) & (bl < hi)
+        seg_lam.append(bl[m])
+        seg_pc.append(bp[m])
+    lam = np.concatenate(seg_lam)
+    pcross = np.concatenate(seg_pc)
+    order = np.argsort(lam)
+    return lam[order], pcross[order], blocks
+
+
+# ---------------------------------------------------------------------------
+# iSTAR side: StapleTIS / REPPTIS / milestoning, as in tistools-memory-analysis
+# ---------------------------------------------------------------------------
+
+def repptis_mlst_pcross(ploc, ns):
+    """
+    REPPTIS and milestoning P_cross profiles, identical to tistools' ploc_memory
+    and to what tistools-memory-analysis reports.
+
+    ploc[i] holds the local probabilities of ensemble i; ploc[0] ([0-]) is unused.
+    REPPTIS comes straight from get_global_probs_from_dict (the PPTIS recursion,
+    one Markov jump per interface); milestoning is the same local probabilities
+    fed through a milestoning transition matrix, which additionally forgets the
+    side the path arrived from.
+    """
+    _, _, pc_rep = ns["get_global_probs_from_dict"](ploc)
+    pc_mlst = [1.0, ploc[1]["LMR"]]
+    for lint in range(3, len(ploc) + 1):
+        p_min = [ploc[r]["2L"] for r in range(1, lint)]
+        p_plus = [ploc[r]["2R"] for r in range(1, lint)]
+        try:
+            _, _, y1, _ = ns["global_pcross_msm"](
+                ns["construct_M_milestoning"](p_min, p_plus, lint))
+            pc_mlst.append(y1[0][0])
+        except (np.linalg.LinAlgError, ValueError):
+            pc_mlst.append(np.nan)
+    return np.array(pc_rep, dtype=float), np.array(pc_mlst, dtype=float)
+
+
+def analyse_istar(simdir, inputfile_name, zero_minus_one, ns):
+    """P_cross at every interface by StapleTIS, REPPTIS and milestoning."""
+    inputfile = str(Path(simdir) / inputfile_name)
+    if not os.path.exists(inputfile):
+        raise FileNotFoundError(f"input file not found: {inputfile}")
+    folders = sorted(glob.glob(str(Path(simdir) / "0[0-9][0-9]")))
+    if not folders:
+        raise FileNotFoundError(f"no ensemble folders (000, 001, ...) in {simdir}")
+
+    interfaces, zero_left, _ = ns["read_inputfile"](inputfile)
+    LMR_interfaces, LMR_strings = ns["get_LMR_interfaces"](interfaces, zero_left)
+    n_int = len(interfaces)
+
+    pes = []
+    for i, fol in enumerate(folders):
+        pe = ns["read_pathensemble"](os.path.join(fol, "pathensemble.txt"))
+        pe.set_name(fol)
+        pe.set_interfaces([LMR_interfaces[i], LMR_strings[i]])
+        if i == 0:
+            pe.set_zero_minus_one(zero_minus_one)
+            pe.set_in_zero_minus(True)
+        if i == 1:
+            pe.set_in_zero_plus(True)
+        w, _ = ns["get_weights"](pe.flags, ns["ACCFLAGS"], ns["REJFLAGS"], verbose=False)
+        pe.set_weights(w)
+        pes.append(pe)
+
+    # StapleTIS: same calls (and same flags) as tistools-memory-analysis, so
+    # the numbers here match the ones that script prints.
+    plocMSM = np.ones(n_int)
+    with contextlib.redirect_stdout(io.StringIO()):
+        for lint in range(2, n_int + 1):
+            wi = ns["compute_weight_matrices"](pes[:lint], interfaces[:lint], n_int,
+                                               tr=False, correct_ha=False, norm=False)
+            pi, _ = ns["get_transition_probs_weights"](wi)
+            Mi = ns["construct_M_istar"](pi, max(4, 2 * len(interfaces[:lint])),
+                                         len(interfaces[:lint]))
+            _, _, y1, _ = ns["global_pcross_msm_star"](Mi)
+            plocMSM[lint - 1] = y1[0][0]
+
+        ploc = [None] + [ns["get_local_probs"](pe, w=pe.weights, tr=False) for pe in pes[1:]]
+        pc_rep, pc_mlst = repptis_mlst_pcross(ploc, ns)
+
+    return np.asarray(interfaces, float), plocMSM, pc_rep, pc_mlst
+
+
+# ---------------------------------------------------------------------------
+# Pairing
+# ---------------------------------------------------------------------------
+
+def partner_dir(simdir, frm, to):
+    """Swap `frm` for `to` in the directory NAME only, leaving the path alone."""
+    p = Path(simdir).resolve()
+    if frm not in p.name:
+        return None
+    return p.with_name(p.name.replace(frm, to))
+
+
+def resolve_pair(simdir, istar_word, retis_word):
+    """Return (istar_dir, retis_dir) given either member of the pair."""
+    p = Path(simdir).resolve()
+    if istar_word in p.name:
+        return p, partner_dir(p, istar_word, retis_word)
+    if retis_word in p.name:
+        return partner_dir(p, retis_word, istar_word), p
+    raise ValueError(
+        f"'{p.name}' contains neither '{istar_word}' nor '{retis_word}'; "
+        f"use --pair to state the two directories explicitly")
+
+
+def discover_pairs(parent, istar_word, retis_word, report_name):
+    """Every directory under `parent` whose partner exists and has a report."""
+    pairs = []
+    for d in sorted(Path(parent).iterdir()):
+        if not d.is_dir() or istar_word not in d.name:
+            continue
+        r = partner_dir(d, istar_word, retis_word)
+        if r is not None and (r / report_name).exists():
+            pairs.append((d, r))
+    return pairs
+
+
+# ---------------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------------
+
+COLORS = {"RETIS": "#333333", "StapleTIS": "#2a78d6",
+          "REPPTIS": "#e8821a", "Milestoning": "#e34948"}
+MARKERS = {"StapleTIS": "o", "REPPTIS": "s", "Milestoning": "^"}
+
+
+def plot_pair(res, ax, axr, show_blocks=False, legend=True):
+    """One pair: profiles on `ax`, ratio to RETIS on `axr`."""
+    import matplotlib.pyplot as plt
+
+    lam_r, pc_r = res["retis_lam"], res["retis_pc"]
+    lam_i = res["interfaces"]
+
+    if show_blocks:
+        for label, bl, bp in res["retis_blocks"]:
+            ax.plot(bl, bp, lw=0.8, alpha=0.35, color=COLORS["RETIS"], zorder=1)
+    ax.plot(lam_r, pc_r, "-", lw=2.0, color=COLORS["RETIS"], label="RETIS (reference)",
+            zorder=2)
+    for name in ("StapleTIS", "REPPTIS", "Milestoning"):
+        ax.plot(lam_i, res[name], MARKERS[name] + "-", color=COLORS[name], ms=6,
+                lw=1.4, label=name, zorder=3)
+    ax.set_yscale("log")
+    ax.set_ylabel(r"$P_A(\lambda|\lambda_A)$")
+    # Padded: the secondary "interface index" axis sits above the frame.
+    ax.set_title(res["name"], fontsize=11, pad=30)
+    ax.grid(alpha=0.25, zorder=0)
+    if legend:
+        ax.legend(fontsize=8, loc="lower left")
+
+    top = ax.secondary_xaxis("top")
+    top.set_xticks(lam_i, labels=[str(i) for i in range(len(lam_i))])
+    if legend:
+        top.set_xlabel("Interface index", fontsize=8)
+    top.tick_params(labelsize=7)
+
+    axr.axhline(1.0, color=COLORS["RETIS"], lw=1.2, ls="--", zorder=1)
+    for name in ("StapleTIS", "REPPTIS", "Milestoning"):
+        axr.plot(lam_i, res["ratio"][name], MARKERS[name] + "-", color=COLORS[name],
+                 ms=4, lw=1.2, zorder=2)
+    axr.set_ylabel("/ RETIS", fontsize=9)
+    axr.set_xlabel(r"$\lambda$")
+    axr.grid(alpha=0.25, zorder=0)
+
+
+# ---------------------------------------------------------------------------
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Compare iSTAR/StapleTIS and REPPTIS crossing probabilities "
+                    "against the RETIS reference profile.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument("simdirs", nargs="*", help="Simulation directories (either member of a pair)")
+    parser.add_argument("--pair", nargs=2, action="append", metavar=("ISTAR", "RETIS"),
+                        default=[], help="State one pair explicitly; repeatable")
+    parser.add_argument("--discover", metavar="PARENT",
+                        help="Find every istar/retis pair under this directory")
+    parser.add_argument("--istar-word", default="istar",
+                        help="Substring marking the iSTAR run (default: istar)")
+    parser.add_argument("--retis-word", default="retis",
+                        help="Substring marking the RETIS run (default: retis)")
+    parser.add_argument("--report-name", default="report/matched-probability.txt.gz",
+                        help="RETIS profile, relative to its simulation directory "
+                             "(default: report/matched-probability.txt.gz)")
+    parser.add_argument("--inputfile", default="logging.log",
+                        help="Name of the iSTAR input file (default: logging.log)")
+    parser.add_argument("--zero-minus-one", action="store_true",
+                        help="Set if the lambda_-1 interface is defined")
+    parser.add_argument("--outdir", default=".", help="Where to write the figures (default: .)")
+    parser.add_argument("--prefix", default="retis_vs_istar",
+                        help="Figure filename prefix (default: retis_vs_istar)")
+    parser.add_argument("--show-blocks", action="store_true",
+                        help="Also draw the individual RETIS per-ensemble curves")
+    parser.add_argument("--no-individual", action="store_true",
+                        help="Only write the combined overview figure")
+    parser.add_argument("--show", action="store_true", help="Display the figures")
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    import matplotlib
+    if not args.show:
+        matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    try:
+        import tistools
+        ns = {n: getattr(tistools, n) for n in (
+            "read_inputfile", "get_LMR_interfaces", "read_pathensemble", "get_weights",
+            "ACCFLAGS", "REJFLAGS", "compute_weight_matrices", "get_transition_probs_weights",
+            "construct_M_istar", "global_pcross_msm_star", "get_local_probs",
+            "get_global_probs_from_dict", "construct_M_milestoning", "global_pcross_msm")}
+    except ImportError as e:
+        print(f"Error: could not import tistools: {e}", file=sys.stderr)
+        print("Make sure tistools is installed or on your PYTHONPATH.", file=sys.stderr)
+        sys.exit(1)
+
+    pairs = [(Path(a).resolve(), Path(b).resolve()) for a, b in args.pair]
+    for d in args.simdirs:
+        pairs.append(resolve_pair(d, args.istar_word, args.retis_word))
+    if args.discover:
+        pairs += discover_pairs(args.discover, args.istar_word, args.retis_word,
+                                args.report_name)
+    # Keep the order but drop repeats (a pair can arrive from several routes).
+    seen, unique = set(), []
+    for i_dir, r_dir in pairs:
+        if (str(i_dir), str(r_dir)) not in seen:
+            seen.add((str(i_dir), str(r_dir)))
+            unique.append((i_dir, r_dir))
+    pairs = unique
+
+    if not pairs:
+        print("No pairs to compare. Give simulation directories, --pair or --discover.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    results = []
+    for i_dir, r_dir in pairs:
+        name = i_dir.name
+        if r_dir is None or not r_dir.exists():
+            print(f"  ! {name}: no RETIS counterpart ({r_dir}); skipping", file=sys.stderr)
+            continue
+        prof = r_dir / args.report_name
+        if not prof.exists():
+            print(f"  ! {name}: {prof} not found; skipping", file=sys.stderr)
+            continue
+        try:
+            lam_r, pc_r, blocks = read_matched_probability(prof)
+            lam_i, stap, rep, mlst = analyse_istar(i_dir, args.inputfile,
+                                                   args.zero_minus_one, ns)
+        except Exception as e:
+            print(f"  ! {name}: {e}; skipping", file=sys.stderr)
+            continue
+
+        # RETIS interpolated onto the interface positions, for the ratio. The
+        # profile stops at the last interface, so clip rather than extrapolate.
+        retis_at_int = np.interp(np.clip(lam_i, lam_r[0], lam_r[-1]), lam_r, pc_r)
+        res = {
+            "name": name, "istar_dir": i_dir, "retis_dir": r_dir,
+            "retis_lam": lam_r, "retis_pc": pc_r, "retis_blocks": blocks,
+            "interfaces": lam_i, "retis_at_int": retis_at_int,
+            "StapleTIS": stap, "REPPTIS": rep, "Milestoning": mlst,
+        }
+        with np.errstate(divide="ignore", invalid="ignore"):
+            res["ratio"] = {k: np.where(retis_at_int > 0, res[k] / retis_at_int, np.nan)
+                            for k in ("StapleTIS", "REPPTIS", "Milestoning")}
+        results.append(res)
+        print(f"  + {name}: {len(lam_i)} interfaces, "
+              f"RETIS lambda {lam_r[0]:g}..{lam_r[-1]:g}")
+
+    if not results:
+        print("No pair could be analysed.", file=sys.stderr)
+        sys.exit(1)
+
+    # ---------------- table -------------------------------------------
+    print()
+    print("=" * 96)
+    print("P_cross AT THE LAST INTERFACE  (deviation from RETIS)")
+    print("=" * 96)
+    print(f"{'simulation':<30}{'RETIS':>11}{'StapleTIS':>12}{'dev':>8}"
+          f"{'REPPTIS':>12}{'dev':>8}{'Milestn.':>12}{'dev':>8}")
+    print("-" * 96)
+    for r in results:
+        ref = r["retis_at_int"][-1]
+        row = f"{r['name'][:30]:<30}{ref:>11.3e}"
+        for k in ("StapleTIS", "REPPTIS", "Milestoning"):
+            v = r[k][-1]
+            row += f"{v:>12.3e}{(v / ref - 1) * 100:>7.1f}%"
+        print(row)
+    print("-" * 96)
+    print("dev = (method / RETIS - 1); RETIS is the reference, so its own")
+    print("statistical error is not shown -- see report/*_pcross.txt.gz for that.")
+
+    # ---------------- figures -----------------------------------------
+    if not args.no_individual:
+        for r in results:
+            fig, (ax, axr) = plt.subplots(2, 1, sharex=True, figsize=(7, 6.5),
+                                          gridspec_kw={"height_ratios": [3, 1.4]})
+            plot_pair(r, ax, axr, show_blocks=args.show_blocks)
+            fig.tight_layout()
+            f = outdir / f"{args.prefix}_{r['name']}.png"
+            fig.savefig(f, dpi=200)
+            print(f"Saved {f}")
+
+    ncols = min(3, len(results))
+    nrows = int(np.ceil(len(results) / ncols))
+    fig = plt.figure(figsize=(5.2 * ncols, 5.6 * nrows))
+    gs = fig.add_gridspec(2 * nrows, ncols, height_ratios=[3, 1.4] * nrows, hspace=0.05)
+    for n, r in enumerate(results):
+        row, col = divmod(n, ncols)
+        ax = fig.add_subplot(gs[2 * row, col])
+        axr = fig.add_subplot(gs[2 * row + 1, col], sharex=ax)
+        plot_pair(r, ax, axr, show_blocks=args.show_blocks, legend=(n == 0))
+        ax.tick_params(labelbottom=False)
+    fig.suptitle("Crossing probability: RETIS reference vs. iSTAR-based estimates",
+                 fontsize=14, y=0.985)
+    # No tight_layout here: the secondary "interface index" axis is not
+    # compatible with it and matplotlib warns. Space the grid by hand instead.
+    fig.subplots_adjust(left=0.07, right=0.98, top=0.85, bottom=0.07,
+                        wspace=0.28, hspace=0.05)
+    f = outdir / f"{args.prefix}_overview.png"
+    fig.savefig(f, dpi=200)
+    print(f"Saved {f}")
+
+    if args.show:
+        plt.show()
+
+
+if __name__ == "__main__":
+    main()
