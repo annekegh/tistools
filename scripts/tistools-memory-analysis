@@ -5,7 +5,11 @@ analysis for iSTAR/StapleTIS simulations.
 
 Computes:
   - The crossing-probability profile P_A(lambda_i | lambda_A) as a function of
-    interface index, from the iSTAR Markov state model.
+    lambda, from the iSTAR Markov state model (StapleTIS), compared with the
+    REPPTIS and milestoning estimates built from the same ensembles' local
+    crossing probabilities, plus their ratio to StapleTIS. No time-reversal
+    reweighting is applied. Error bars: StapleTIS from --pcross-errors,
+    REPPTIS/milestoning from a block bootstrap over cycles (--error-blocks).
   - Memory-effect (non-Markovian) analysis of the conditional crossing
     probabilities between interfaces, with the associated diagnostic plots.
 
@@ -17,7 +21,9 @@ Example:
 """
 
 import argparse
+import contextlib
 import glob
+import io
 import os
 import sys
 # A sibling project (inftools) puts a directory containing its own empty
@@ -62,6 +68,27 @@ def parse_args():
              "on the memory-analysis and memory-landscape plots (default: none)",
     )
     parser.add_argument(
+        "--pcross-errors",
+        type=str,
+        default=None,
+        help="Path to the StapleTIS P_cross block-error file from tistools-running-error-staple "
+             "(block_error_analysis_Pcross_<interval>.txt), used for the StapleTIS error bars "
+             "(default: none)",
+    )
+    parser.add_argument(
+        "--error-blocks",
+        type=int,
+        default=20,
+        help="Number of cycle blocks for the REPPTIS/milestoning block bootstrap; blocks must "
+             "be longer than the correlation time. 0 disables these error bars (default: 20)",
+    )
+    parser.add_argument(
+        "--boot-samples",
+        type=int,
+        default=1000,
+        help="Number of block-bootstrap resamples (default: 1000)",
+    )
+    parser.add_argument(
         "--outdir",
         type=str,
         default=None,
@@ -73,6 +100,84 @@ def parse_args():
         help="Also display the plots interactively (in addition to saving them)",
     )
     return parser.parse_args()
+
+
+PATHTYPES = ("LMR", "LML", "RMR", "RML")
+
+
+def local_probs_from_weights(w):
+    """Same estimator as get_local_probs(tr=False), from summed path-type weights."""
+    wL, wR = w["LMR"] + w["LML"], w["RMR"] + w["RML"]
+    w_tot = wL + wR
+    ratio = lambda a, b: a / b if b != 0 else np.nan
+    return {
+        "LMR": ratio(w["LMR"], wL), "LML": ratio(w["LML"], wL),
+        "RMR": ratio(w["RMR"], wR), "RML": ratio(w["RML"], wR),
+        "2R": ratio(w["LMR"] + w["RMR"], w_tot), "2L": ratio(w["LML"] + w["RML"], w_tot),
+    }
+
+
+def repptis_mlst_pcross(ploc):
+    """REPPTIS and milestoning P_cross profiles, as in ploc_memory.
+
+    ploc[i] holds the local probabilities of ensemble i; ploc[0] ([0-]) is unused.
+    """
+    from tistools import get_global_probs_from_dict, construct_M_milestoning, global_pcross_msm
+
+    _, _, pc_rep = get_global_probs_from_dict(ploc)
+    pc_mlst = [1.0, ploc[1]["LMR"]]
+    for lint in range(3, len(ploc) + 1):
+        p_min = [ploc[r]["2L"] for r in range(1, lint)]
+        p_plus = [ploc[r]["2R"] for r in range(1, lint)]
+        try:
+            _, _, y1, _ = global_pcross_msm(construct_M_milestoning(p_min, p_plus, lint))
+            pc_mlst.append(y1[0][0])
+        except (np.linalg.LinAlgError, ValueError):
+            pc_mlst.append(np.nan)
+    return np.array(pc_rep, dtype=float), np.array(pc_mlst, dtype=float)
+
+
+def block_bootstrap_repptis_mlst(pathensembles, n_blocks, n_boot, seed=0):
+    """Block bootstrap of the REPPTIS and milestoning P_cross profiles.
+
+    Cycles are cut into n_blocks contiguous blocks, shared by all ensembles so
+    the replica-exchange coupling between them is kept. Each resample draws
+    whole blocks with replacement and re-evaluates the profiles from the summed
+    LMR/LML/RMR/RML weights (accepted, non-load paths, as get_local_probs).
+    Returns the bootstrap samples, shape (n_boot, n_int) for each method.
+    """
+    from tistools import get_lmr_masks, get_flag_mask, get_generation_mask
+
+    ens = pathensembles[1:]
+    cmin = min(np.min(pe.cyclenumbers) for pe in ens)
+    cmax = max(np.max(pe.cyclenumbers) for pe in ens)
+    edges = np.linspace(cmin, cmax + 1, n_blocks + 1)
+    W = np.zeros((len(ens), n_blocks, len(PATHTYPES)))
+    for e, pe in enumerate(ens):
+        masks = get_lmr_masks(pe)
+        use = get_flag_mask(pe, "ACC") & ~get_generation_mask(pe, "ld")
+        blk = np.clip(np.searchsorted(edges, pe.cyclenumbers, side="right") - 1, 0, n_blocks - 1)
+        w = np.asarray(pe.weights, dtype=float)
+        for k, t in enumerate(PATHTYPES):
+            m = masks[t] & use
+            W[e, :, k] = np.bincount(blk[m], weights=w[m], minlength=n_blocks)
+
+    rng = np.random.default_rng(seed)
+    rep, mlst = [], []
+    for _ in range(n_boot):
+        counts = np.bincount(rng.integers(n_blocks, size=n_blocks), minlength=n_blocks)
+        sums = np.einsum("b,ebt->et", counts, W)
+        ploc = [None] + [local_probs_from_weights(dict(zip(PATHTYPES, s))) for s in sums]
+        r, m = repptis_mlst_pcross(ploc)
+        rep.append(r)
+        mlst.append(m)
+    return np.array(rep), np.array(mlst)
+
+
+def asym_err(center, samples):
+    """16-84 percentile error bars around center (sensible on a log axis)."""
+    lo, hi = np.nanpercentile(samples, [16, 84], axis=0)
+    return np.vstack([np.clip(center - lo, 0, None), np.clip(hi - center, 0, None)])
 
 
 def main():
@@ -94,6 +199,8 @@ def main():
             construct_M_istar,
             global_pcross_msm_star,
             memory_analysis,
+            get_local_probs,
+            read_block_rel_errors,
         )
         from tistools import plot_memory_analysis, plot_memory_landscape
     except ImportError as e:
@@ -159,24 +266,75 @@ def main():
     # ---------------------------------------------------------------------
     # Crossing-probability profile
     # ---------------------------------------------------------------------
+    # Like ploc_memory: no time-reversal reweighting, no HA correction.
     plocMSM = np.ones(n_int)
     for lint in range(2, n_int + 1):
-        wi = compute_weight_matrices(pathensembles[:lint], interfaces[:lint], n_int, True)
+        wi = compute_weight_matrices(pathensembles[:lint], interfaces[:lint], n_int, tr=False,
+                                     correct_ha=False, norm=False)
         pi, _ = get_transition_probs_weights(wi)
         Mi = construct_M_istar(pi, max(4, 2 * len(interfaces[:lint])), len(interfaces[:lint]))
         _, _, y1, _ = global_pcross_msm_star(Mi)
         plocMSM[lint - 1] = y1[0][0]
         print(f"ploc till intf {lint - 1}: {y1[0][0]}")
 
-    fig, ax = plt.subplots()
+    # REPPTIS and milestoning from the same ensembles' local LMR/LML/RMR/RML
+    # probabilities: REPPTIS chains them with a Markov jump at each interface,
+    # milestoning additionally forgets the direction a path arrived from.
+    # get_local_probs prints its weights for every ensemble, so silence it.
+    with contextlib.redirect_stdout(io.StringIO()):
+        ploc_rep = [None] + [get_local_probs(pe, w=pe.weights, tr=False) for pe in pathensembles[1:]]
+        pc_rep, pc_mlst = repptis_mlst_pcross(ploc_rep)
+
+    stap_err = None
+    if args.pcross_errors:
+        # Stored errors are relative (abs_err / estimate); scale to absolute.
+        stap_err = read_block_rel_errors(args.pcross_errors, (n_int,)) * plocMSM
+    rep_err = mlst_err = None
+    if args.error_blocks > 0:
+        print(f"Block bootstrap of REPPTIS/milestoning P_cross: {args.error_blocks} blocks, "
+              f"{args.boot_samples} resamples")
+        boot_rep, boot_mlst = block_bootstrap_repptis_mlst(
+            pathensembles, args.error_blocks, args.boot_samples)
+        rep_err, mlst_err = asym_err(pc_rep, boot_rep), asym_err(pc_mlst, boot_mlst)
+
+    def fmt_err(err, i):
+        return "" if err is None else f" (-{err[0][i]:.1e}/+{err[1][i]:.1e})" if err.ndim == 2 \
+            else f" (±{err[i]:.1e})"
+
+    print("P_cross per interface: StapleTIS | REPPTIS | milestoning")
+    for i in range(n_int):
+        print(f"  intf {i} (lambda={interfaces[i]:g}): "
+              f"{plocMSM[i]:.4e}{fmt_err(stap_err, i)} | {pc_rep[i]:.4e}{fmt_err(rep_err, i)} | "
+              f"{pc_mlst[i]:.4e}{fmt_err(mlst_err, i)}")
+
+    lam = np.asarray(interfaces, dtype=float)
+    fig, (ax, axr) = plt.subplots(2, 1, sharex=True, figsize=(7, 6.5),
+                                  gridspec_kw={"height_ratios": [3, 1.4]})
     ax.set_yscale("log")
-    ax.errorbar(
-        range(n_int), plocMSM, fmt="-o", c="b", ecolor="r", capsize=6, label="StapleTIS"
-    )
-    ax.set_xlabel("Interface index")
+    curves = [("StapleTIS", plocMSM, stap_err, "-o", "b"),
+              ("REPPTIS", pc_rep, rep_err, "-s", "orange"),
+              ("Milestoning", pc_mlst, mlst_err, "-^", "r")]
+    for label, pc, err, fmt, c in curves:
+        ax.errorbar(lam, pc, yerr=err, fmt=fmt, c=c, capsize=4, label=label)
     ax.set_ylabel(r"$P_A(\lambda_i|\lambda_A)$")
-    ax.set_xticks(np.arange(n_int))
     ax.legend()
+    top = ax.secondary_xaxis("top")
+    top.set_xticks(lam, labels=[str(i) for i in range(n_int)])
+    top.set_xlabel("Interface index")
+
+    # Ratio to StapleTIS: where and how much the Markov-jump estimates drift off.
+    # Relative errors are combined in quadrature (treated as independent).
+    stap_rel = np.zeros(n_int) if stap_err is None else stap_err / plocMSM
+    axr.axhline(1.0, c="b", lw=1, ls="--")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        for label, pc, err, fmt, c in curves[1:]:
+            ratio = np.where(plocMSM > 0, pc / plocMSM, np.nan)
+            own_rel = np.zeros(n_int) if err is None else 0.5 * (err[0] + err[1]) / pc
+            ratio_err = None if err is None and stap_err is None else \
+                np.abs(ratio) * np.hypot(own_rel, stap_rel)
+            axr.errorbar(lam, ratio, yerr=ratio_err, fmt=fmt, c=c, capsize=3, ms=4, label=label)
+    axr.set_ylabel("ratio to StapleTIS")
+    axr.set_xlabel(r"$\lambda$")
     fig.tight_layout()
     crossing_plot_file = outdir / "crossing_probability_profile.png"
     fig.savefig(crossing_plot_file, dpi=200)

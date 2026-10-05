@@ -1444,12 +1444,12 @@ def display_data(pes, interfaces, n_int=None, weights=None, correct_ha=False):
     W_norm = np.zeros_like(W)
     for j in range(len(interfaces)):
         for k in range(len(interfaces)):
-            W_norm[j][k] = np.sum(X_norm[i][j][k] for i in range(n_int))
+            W_norm[j][k] = np.sum([X_norm[i][j][k] for i in range(n_int)])
     
     W_tr_norm = np.zeros_like(W)
     for j in range(len(interfaces)):
         for k in range(len(interfaces)):
-            W_tr_norm[j][k] = np.sum(X_tr_norm[i][j][k] for i in range(n_int))
+            W_tr_norm[j][k] = np.sum([X_tr_norm[i][j][k] for i in range(n_int)])
 
     # Combined weights without time-reversal symmetry
     print("\n4. Weights of all ensembles combined (sum), no TR")

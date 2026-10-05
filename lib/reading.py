@@ -1479,9 +1479,9 @@ def read_block_rel_errors(errors_file_path, shape=None):
 
             for header, val_str in zip(headers, error_values_str):
                 idx = int(header.replace("component_", ""))
-                i, j = np.unravel_index(idx, shape)
-
-                errors_array[i, j] = (
+                # row-major flat index, so this works for 1D (e.g. P_cross per
+                # interface) as well as 2D shapes
+                errors_array.flat[idx] = (
                     np.nan if val_str.lower() == "nan" else float(val_str)
                 )
 
