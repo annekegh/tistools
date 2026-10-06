@@ -1,0 +1,693 @@
+#!/usr/bin/env python
+"""
+tistools-memory-compare: compare memory behaviour across a series of iSTAR/StapleTIS
+simulations.
+
+Two kinds of series are handled, and they need different comparisons:
+
+  friction series   Same system, same interfaces, different gamma. Every region is
+                    the same region in every run, so the per-region memory profile
+                    can be overlaid directly and read region by region.
+
+  interface series  Same system, different number (or placement) of interfaces. The
+                    per-region index is NOT comparable run to run -- region k means
+                    a different slice of lambda, and is built from a different number
+                    of starting interfaces. What transfers is (a) the profile drawn
+                    against physical lambda rather than region number, and (b) the
+                    MAXIMUM index, which is the only aggregate whose threshold was
+                    found to carry across interface counts. Sums over regions are
+                    extensive: they grow with the number of regions, so they are
+                    reported in the table but deliberately not plotted against N.
+
+gamma and the interface list are read out of each simulation's logging.log, so the
+series axis does not have to be supplied by hand.
+
+Outputs (in --outdir):
+  memory_compare_profile.png   memory index against lambda, one series per simulation
+  memory_compare_summary.png   max / mean index against the series variable
+  memory_compare_heatmap.png   region x simulation, only when the interfaces align
+  memory_compare.txt           the numbers behind the plots
+
+Usage:
+    tistools-memory-compare <simdir> [<simdir> ...] [options]
+
+Example:
+    tistools-memory-compare sim_*_g* --x friction --outdir compare_gamma
+    tistools-memory-compare sim_a5 sim_a7 sim_a10 --x n_int --outdir compare_nint
+"""
+
+import argparse
+import ast
+import contextlib
+import glob
+import io
+import os
+import re
+import sys
+# A sibling project (inftools) puts a directory containing its own empty
+# `tistools` namespace package on sys.path; strip it so `import tistools`
+# below resolves to the real, pip-installed (editable) tistools package
+# instead of that empty shadow.
+sys.path = [p for p in sys.path if 'inftools' not in p]
+import time
+import warnings
+from pathlib import Path
+
+import numpy as np
+
+# Palette: the same validated hues the rest of the tistools figures use.
+BLUE, ORANGE, RED = '#2a78d6', '#eb6834', '#e34948'
+GRID_COLOR, MUTED_INK, NEUTRAL = '#e1e0d9', '#898781', '#f0efec'
+
+# Calibrated on 33 toytis simulations against the measured REPPTIS-vs-iSTAR error
+# (see tistools-memory-threshold): at a 10% tolerance on P_A(lambda_B|lambda_A)
+# the safe cut on the maximum floor-corrected index was 18.2% and the regression
+# cut 22.3%. Only the MAXIMUM transfers across interface counts -- its per-N cut
+# spread was 2.3x, against 4.9x for the coherent sum.
+WARN_BAND = (18.2, 22.3)
+
+
+@contextlib.contextmanager
+def quiet(enabled=True):
+    """Silence the very chatty tistools analysis routines."""
+    if not enabled:
+        yield None
+        return
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        yield buf
+
+
+def ordered_colors(n, cmap_name):
+    """
+    Colors for a set of series that encode an ORDERED variable (gamma, or the
+    interface count), not unrelated categories. Multi-hue perceptual maps are
+    used rather than a single-hue tint ramp because adjacent steps of a tint
+    ramp are hard to tell apart once there are more than three series -- the
+    same reason the other tistools memory figures use viridis/plasma.
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib.colors as mcolors
+    cmap = plt.get_cmap(cmap_name)
+    if n <= 1:
+        return [mcolors.to_hex(cmap(0.25))]
+    return [mcolors.to_hex(cmap(t)) for t in np.linspace(0.0, 0.88, n)]
+
+
+# ---------------------------------------------------------------------------
+# Reading one simulation
+# ---------------------------------------------------------------------------
+
+def read_settings(inputfile):
+    """
+    Pull the simulation settings dict out of logging.log.
+
+    PyRETIS3 logs the whole settings dict on one line, e.g.
+        {'interfaces': [...], 'simtype': 'i*', ..., 'friction': 5.0, ...}
+    which is a Python literal, so it can be parsed rather than regexed field by
+    field. Returns {} if no such line is present.
+    """
+    pattern = re.compile(r"\{'interfaces':.*\}")
+    try:
+        with open(inputfile, 'r') as f:
+            for line in f:
+                m = pattern.search(line)
+                if m:
+                    try:
+                        return ast.literal_eval(m.group(0))
+                    except (ValueError, SyntaxError):
+                        return {}
+    except OSError:
+        pass
+    return {}
+
+
+def discover_q_errors(simdir, pattern="block_error_analysis_qstaple_*.txt"):
+    """
+    Find the block-error file for q, whatever interval it was written at.
+
+    Hard-coding one interval in the filename silently drops the block errors for
+    every run written at a different interval, which then falls back to the
+    binomial floor without saying so. Prefer the largest interval present: longer
+    blocks are less correlated, so that estimate is the conservative one.
+    """
+    candidates = sorted(glob.glob(str(Path(simdir) / pattern)))
+    if not candidates:
+        return None
+
+    def interval(path):
+        m = re.search(r"_(\d+)\.txt$", path)
+        return int(m.group(1)) if m else -1
+
+    return max(candidates, key=interval)
+
+
+def load_pathensembles(simdir, inputfile_name, zero_minus_one, ns):
+    inputfile = str(Path(simdir) / inputfile_name)
+    if not os.path.exists(inputfile):
+        raise FileNotFoundError(f"input file not found: {inputfile}")
+    folders = sorted(glob.glob(str(Path(simdir) / "0[0-9][0-9]")))
+    if not folders:
+        raise FileNotFoundError(f"no ensemble folders in {simdir}")
+
+    interfaces, zero_left, _ = ns["read_inputfile"](inputfile)
+    LMR_interfaces, LMR_strings = ns["get_LMR_interfaces"](interfaces, zero_left)
+
+    pathensembles = []
+    for i, fol in enumerate(folders):
+        pe = ns["read_pathensemble"](os.path.join(fol, "pathensemble.txt"))
+        pe.set_name(fol)
+        pe.set_interfaces([LMR_interfaces[i], LMR_strings[i]])
+        if i == 0:
+            pe.set_zero_minus_one(zero_minus_one)
+            pe.set_in_zero_minus(True)
+        if i == 1:
+            pe.set_in_zero_plus(True)
+        w, _ = ns["get_weights"](pe.flags, ns["ACCFLAGS"], ns["REJFLAGS"], verbose=False)
+        pe.set_weights(w)
+        pathensembles.append(pe)
+
+    return pathensembles, interfaces
+
+
+def analyse(simdir, args, ns, plt):
+    """Memory index per region for one simulation, plus its series variables."""
+    pes, interfaces = load_pathensembles(simdir, args.inputfile, args.zero_minus_one, ns)
+    interfaces = np.asarray(interfaces, dtype=float)
+    n_int = len(interfaces)
+
+    with quiet():
+        wpath = ns["display_data"](pes, interfaces, n_int, correct_ha=False)[4]
+        _, q_tot = ns["memory_analysis"](wpath, False)
+    q_probs, q_weights = q_tot[0], q_tot[1]
+
+    q_errors, q_errors_file = None, None
+    if not args.no_block_errors:
+        q_errors_file = discover_q_errors(simdir, args.q_errors_name)
+        if q_errors_file:
+            try:
+                # Stored errors are relative (abs_err / estimate); scale to absolute.
+                q_errors = ns["read_block_rel_errors"](q_errors_file, q_probs.shape) * np.abs(q_probs)
+            except Exception as e:
+                print(f"  ! {Path(simdir).name}: could not read {Path(q_errors_file).name} "
+                      f"({e}); using the binomial floor", file=sys.stderr)
+                q_errors, q_errors_file = None, None
+
+    with quiet():
+        idx = ns["calculate_memory_effect_index_corrected"](
+            q_probs, q_weights, q_errors=q_errors, verbose=False)
+
+    settings = read_settings(str(Path(simdir) / args.inputfile))
+
+    record = {
+        "name": Path(simdir).name or str(simdir),
+        "path": str(simdir),
+        "interfaces": interfaces,
+        "n_int": n_int,
+        "friction": float(settings.get("friction", np.nan)),
+        "overdamped": bool(settings.get("high_friction", False)),
+        "dt": float(settings.get("dt", np.nan)),
+        "used_block_errors": q_errors is not None,
+        "q_errors_file": Path(q_errors_file).name if q_errors_file else None,
+    }
+    for d in ("forward", "backward"):
+        record[f"{d}"] = np.asarray(idx[f"{d}_variation"], dtype=float)
+        record[f"{d}_raw"] = np.asarray(idx[f"{d}_raw"], dtype=float)
+        record[f"{d}_floor"] = np.asarray(idx[f"{d}_floor"], dtype=float)
+        vals = record[f"{d}"]
+        finite = vals[np.isfinite(vals)]
+        record[f"{d}_max"] = float(np.max(finite)) if finite.size else np.nan
+        record[f"{d}_mean"] = float(np.mean(finite)) if finite.size else np.nan
+        record[f"{d}_sum"] = float(np.sum(finite)) if finite.size else np.nan
+        record[f"{d}_n_regions"] = int(finite.size)
+        # Regions whose whole spread was absorbed by the sampling-noise floor.
+        floor = record[f"{d}_floor"]
+        both = np.isfinite(vals) & np.isfinite(floor)
+        record[f"{d}_n_noise"] = int(np.sum(both & (vals <= 0)))
+    record["max_index"] = float(np.nanmax([record["forward_max"], record["backward_max"]]))
+
+    # Ground truth: how far REPPTIS actually lands from the less-approximate
+    # iSTAR value on the same paths. Optional because it roughly doubles the
+    # runtime per simulation.
+    record["rel_error"] = np.nan
+    if not args.no_crossing_error:
+        saved_usetex = plt.rcParams.get("text.usetex", False)
+        try:
+            with quiet():
+                plocs = ns["ploc_memory"](pes, interfaces, trr=False)
+            pa = float(np.asarray(plocs["apptis"], dtype=float)[-1])
+            pr = float(np.asarray(plocs["repptis"], dtype=float)[-1])
+            if np.isfinite(pa) and np.isfinite(pr) and pa > 0:
+                record["rel_error"] = abs(pr - pa) / pa
+                record["P_apptis"], record["P_repptis"] = pa, pr
+        except Exception as e:
+            print(f"  ! {record['name']}: crossing probabilities failed ({e})", file=sys.stderr)
+        finally:
+            plt.rcParams["text.usetex"] = saved_usetex
+            plt.close("all")
+
+    return record
+
+
+# ---------------------------------------------------------------------------
+# Series variable
+# ---------------------------------------------------------------------------
+
+def pick_series_variable(records, requested):
+    """
+    Decide what the simulations are a series IN.
+
+    'auto' looks at what actually varies: if every run shares the same interface
+    list, the series is in gamma; if gamma is shared but the interfaces are not,
+    the series is in the interface count. Anything else is left unordered.
+    """
+    same_interfaces = all(
+        len(r["interfaces"]) == len(records[0]["interfaces"])
+        and np.allclose(r["interfaces"], records[0]["interfaces"])
+        for r in records
+    )
+    frictions = {r["friction"] for r in records if np.isfinite(r["friction"])}
+
+    if requested != "auto":
+        key = requested
+    elif same_interfaces and len(frictions) > 1:
+        key = "friction"
+    elif not same_interfaces:
+        key = "n_int"
+    else:
+        key = "none"
+
+    labels = {
+        "friction": (r"Friction $\gamma$", True),
+        "n_int": ("Number of interfaces", False),
+        "none": ("Simulation", False),
+    }
+    axis_label, log_x = labels.get(key, (key, False))
+    return key, axis_label, log_x, same_interfaces
+
+
+def series_value(record, key):
+    if key == "none":
+        return np.nan
+    return float(record.get(key, np.nan))
+
+
+def series_label(record, key):
+    """A short label that names the series value, falling back to the run name."""
+    if key == "friction" and np.isfinite(record["friction"]):
+        tag = f"$\\gamma$={record['friction']:g}"
+        if record["overdamped"]:
+            tag += " (od)"
+        return tag
+    if key == "n_int":
+        return f"N={record['n_int']}"
+    return record["name"]
+
+
+# ---------------------------------------------------------------------------
+# Plots
+# ---------------------------------------------------------------------------
+
+def region_segments(record, direction):
+    """
+    (lambda_start, lambda_end, value, consumed_by_noise) per region.
+
+    Region k of the forward index describes crossings into target interface k,
+    i.e. the slice of lambda between interfaces k-1 and k; backward region k
+    describes the slice between k and k+1. Drawing each index as a segment over
+    its own slice -- rather than a point at a region NUMBER -- is what makes
+    runs with different interface sets comparable on one axis.
+    """
+    lam = record["interfaces"]
+    vals = record[direction]
+    n = len(lam)
+    out = []
+    k_range = range(1, n) if direction == "forward" else range(n - 1)
+    for k in k_range:
+        v = vals[k]
+        if not np.isfinite(v):
+            continue
+        if direction == "forward":
+            lo, hi = lam[k - 1], lam[k]
+        else:
+            lo, hi = lam[k], lam[k + 1]
+        out.append((lo, hi, v, v <= 0.0))
+    return out
+
+
+def plot_profile(records, key, axis_label, outdir, plt):
+    """Memory index against lambda, one series per simulation, fwd/bwd stacked."""
+    fig, axes = plt.subplots(2, 1, figsize=(12, 9), sharex=True)
+    cmaps = {"forward": "viridis", "backward": "plasma"}
+
+    for ax, direction in zip(axes, ("forward", "backward")):
+        colors = ordered_colors(len(records), cmaps[direction])
+        for color, r in zip(colors, records):
+            segs = region_segments(r, direction)
+            if not segs:
+                continue
+            label = series_label(r, key)
+            # One horizontal bar per region, at the height of its index, drawn
+            # over the lambda interval the index actually describes.
+            for j, (lo, hi, v, noise) in enumerate(segs):
+                ax.hlines(v, lo, hi, color=color, linewidth=2.4, zorder=3,
+                          label=label if j == 0 else None)
+                ax.plot([(lo + hi) / 2], [v], marker='o' if not noise else 'x',
+                        color=color, markersize=6 if not noise else 7,
+                        markerfacecolor=color if not noise else 'none',
+                        markeredgecolor=color, zorder=4)
+            mids = [(lo + hi) / 2 for lo, hi, _, _ in segs]
+            ax.plot(mids, [v for _, _, v, _ in segs], color=color,
+                    linewidth=0.9, alpha=0.5, zorder=2)
+
+        # Scale to the data. Reserving room for the warning band when the run is
+        # nowhere near it would squash every series into the bottom tenth of the
+        # axis; say so in words instead and keep the resolution.
+        peak = max((v for r in records for _, _, v, _ in region_segments(r, direction)),
+                   default=0.0)
+        top = max(peak * 1.30, 1.0)
+        if top > WARN_BAND[0]:
+            top = max(top, WARN_BAND[1] * 1.08)
+            ax.axhspan(WARN_BAND[0], WARN_BAND[1], color=RED, alpha=0.07, zorder=0)
+            ax.axhline(WARN_BAND[1], color=RED, alpha=0.45, linewidth=1.0,
+                       linestyle='--', zorder=1)
+        else:
+            # Above the axes, not inside them: 'best' legend placement moves, and
+            # anything parked in a corner of the data area eventually collides.
+            ax.annotate(f"warning band {WARN_BAND[0]:.0f}-{WARN_BAND[1]:.0f}% is off scale "
+                        f"(peak here {peak:.1f}%)",
+                        xy=(1.0, 1.01), xycoords='axes fraction', ha='right', va='bottom',
+                        fontsize=8, color=MUTED_INK)
+        ax.set_ylabel(f"{direction.capitalize()} memory index (%)")
+        ax.grid(axis='y', alpha=0.3, color=GRID_COLOR, zorder=0)
+        ax.set_ylim(0, top)
+        for side in ('top', 'right'):
+            ax.spines[side].set_visible(False)
+        ax.legend(title=axis_label, loc='best', fontsize=9, ncol=2, framealpha=0.9)
+
+    axes[-1].set_xlabel(r"Order parameter $\lambda$")
+    fig.suptitle("Where the memory sits", fontsize=13)
+    fig.text(0.01, 0.015,
+             "Each bar spans the lambda interval its index describes, so runs with different "
+             "interfaces are comparable on one axis.\n"
+             "'x' marks a region whose spread the sampling-noise floor absorbed entirely; "
+             "the shaded band is the calibrated warning range for the maximum.",
+             fontsize=8, color=MUTED_INK, linespacing=1.5)
+    fig.tight_layout(rect=[0, 0.065, 1, 0.97])
+    path = Path(outdir) / "memory_compare_profile.png"
+    fig.savefig(path, dpi=200)
+    return fig, path
+
+
+def plot_summary(records, key, axis_label, log_x, outdir, plt):
+    """
+    Max and mean index against the series variable, plus the measured REPPTIS
+    error when it was computed. One y-scale per panel -- never two.
+    """
+    have_error = any(np.isfinite(r["rel_error"]) for r in records)
+    ncols = 3 if have_error else 2
+    fig, axes = plt.subplots(2, ncols, figsize=(5.2 * ncols, 8.4), squeeze=False)
+
+    xs = np.array([series_value(r, key) for r in records], dtype=float)
+    ordered = np.argsort(xs) if np.all(np.isfinite(xs)) else np.arange(len(records))
+    if not np.all(np.isfinite(xs)):            # unordered: fall back to slots
+        xs = np.arange(len(records), dtype=float)
+
+    hue = {"forward": BLUE, "backward": ORANGE}
+    for row, direction in enumerate(("forward", "backward")):
+        panels = [
+            (f"{direction}_max", "Maximum index over regions (%)", True),
+            (f"{direction}_mean", "Mean index per region (%)", False),
+        ]
+        for col, (field, ylabel, is_max) in enumerate(panels):
+            ax = axes[row][col]
+            ys = np.array([r[field] for r in records], dtype=float)
+            od = np.array([r["overdamped"] for r in records], dtype=bool)
+            ax.plot(xs[ordered], ys[ordered], '-', color=hue[direction],
+                    linewidth=2, zorder=2)
+            # Overdamped runs are a different integrator, not just a larger
+            # gamma: mark them so they are never read as part of the trend.
+            for mask, marker, face, lab in ((~od, 'o', hue[direction], 'inertial'),
+                                            (od, 's', 'none', 'overdamped')):
+                if np.any(mask):
+                    ax.plot(xs[mask], ys[mask], marker, markersize=9,
+                            markerfacecolor=face, markeredgecolor=hue[direction],
+                            markeredgewidth=1.6, linestyle='none', zorder=3, label=lab)
+            peak = float(np.nanmax(ys)) if np.any(np.isfinite(ys)) else 0.0
+            top = max(peak * 1.30, 1.0)
+            if is_max and top > WARN_BAND[0]:
+                top = max(top, WARN_BAND[1] * 1.08)
+                ax.axhspan(WARN_BAND[0], WARN_BAND[1], color=RED, alpha=0.08, zorder=0)
+                ax.axhline(WARN_BAND[1], color=RED, alpha=0.5, linewidth=1.0,
+                           linestyle='--', zorder=1,
+                           label=f"warn $\\geq${WARN_BAND[1]:.0f}%")
+            elif is_max:
+                ax.annotate(f"warning band {WARN_BAND[0]:.0f}-{WARN_BAND[1]:.0f}% off scale",
+                            xy=(1.0, 1.01), xycoords='axes fraction', ha='right',
+                            va='bottom', fontsize=8, color=MUTED_INK)
+            ax.set_ylabel(f"{direction.capitalize()}: {ylabel}")
+            ax.set_xlabel(axis_label)
+            if log_x and np.all(xs > 0):
+                ax.set_xscale('log')
+            ax.grid(alpha=0.3, color=GRID_COLOR, zorder=0)
+            ax.set_ylim(0, top)
+            for side in ('top', 'right'):
+                ax.spines[side].set_visible(False)
+            if np.any(od) or is_max:
+                ax.legend(loc='best', fontsize=9)
+
+        if have_error:
+            ax = axes[row][2]
+            errs = np.array([r["rel_error"] for r in records], dtype=float) * 100
+            maxes = np.array([r[f"{direction}_max"] for r in records], dtype=float)
+            ax.plot(maxes, errs, 'o', markersize=9, color=hue[direction], zorder=3)
+            # Runs at the same gamma land on top of each other; alternate the
+            # label offset so the names stay readable.
+            for j, (r, mx, er) in enumerate(zip(records, maxes, errs)):
+                if np.isfinite(mx) and np.isfinite(er):
+                    dy = 6 if j % 2 == 0 else -11
+                    ax.annotate(series_label(r, key), (mx, er), fontsize=8,
+                                color=MUTED_INK, xytext=(6, dy),
+                                textcoords='offset points')
+            ax.axvspan(WARN_BAND[0], WARN_BAND[1], color=RED, alpha=0.08, zorder=0)
+            ax.axhline(10, color=MUTED_INK, linestyle=':', linewidth=1.2, zorder=1,
+                       label="10% tolerance")
+            ax.set_xlabel(f"{direction.capitalize()}: maximum index (%)")
+            ax.set_ylabel(r"measured $|P_{\rm REPPTIS}-P_{\rm iSTAR}|/P_{\rm iSTAR}$ (%)")
+            ax.grid(alpha=0.3, color=GRID_COLOR, zorder=0)
+            for side in ('top', 'right'):
+                ax.spines[side].set_visible(False)
+            ax.legend(loc='best', fontsize=9)
+
+    fig.suptitle("Memory index across the series", fontsize=14)
+    fig.text(0.01, 0.01,
+             "The maximum is the aggregate whose threshold transfers between systems; "
+             "sums over regions grow with the number of regions and are in the table only.",
+             fontsize=8, color=MUTED_INK)
+    fig.tight_layout(rect=[0, 0.03, 1, 0.96])
+    path = Path(outdir) / "memory_compare_summary.png"
+    fig.savefig(path, dpi=200)
+    return fig, path
+
+
+def plot_heatmap(records, key, outdir, plt):
+    """Region x simulation, only valid when every run shares the same regions."""
+    n_int = records[0]["n_int"]
+    lam = records[0]["interfaces"]
+    fig, axes = plt.subplots(1, 2, figsize=(max(11, 1.1 * n_int + 7), 1.0 + 0.45 * len(records) + 2.2))
+
+    for ax, direction in zip(axes, ("forward", "backward")):
+        k_range = list(range(1, n_int)) if direction == "forward" else list(range(n_int - 1))
+        data = np.array([[r[direction][k] for k in k_range] for r in records], dtype=float)
+        masked = np.ma.masked_invalid(data)
+        cmap = plt.get_cmap('viridis').copy()
+        cmap.set_bad('#d9d8d2')
+        vmax = max(np.nanmax(np.abs(data)) if np.isfinite(data).any() else 1.0, 1.0)
+        im = ax.imshow(masked, cmap=cmap, vmin=0, vmax=vmax,
+                       aspect='auto', interpolation='nearest')
+        fig.colorbar(im, ax=ax, fraction=0.04, pad=0.02, label='Memory index (%)')
+
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                if masked.mask is not np.ma.nomask and masked.mask[i, j]:
+                    continue
+                rgba = cmap(data[i, j] / vmax if vmax else 0.0)
+                lum = 0.299 * rgba[0] + 0.587 * rgba[1] + 0.114 * rgba[2]
+                ax.text(j, i, f"{data[i, j]:.0f}", ha='center', va='center',
+                        fontsize=8, color='black' if lum > 0.55 else 'white')
+
+        if direction == "forward":
+            labels = [f"{k-1}→{k}" for k in k_range]
+        else:
+            labels = [f"{k}←{k+1}" for k in k_range]
+        ax.set_xticks(range(len(k_range)))
+        ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=8)
+        ax.set_yticks(range(len(records)))
+        ax.set_yticklabels([series_label(r, key) for r in records], fontsize=9)
+        ax.set_xlabel("Crossing region")
+        ax.set_title(f"{direction.capitalize()}", fontsize=12)
+        ax.set_xticks(np.arange(-0.5, len(k_range), 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, len(records), 1), minor=True)
+        ax.grid(which='minor', color='white', linewidth=0.8)
+        ax.tick_params(which='minor', length=0)
+
+    fig.suptitle(f"Memory index per region  (interfaces "
+                 f"{np.array2string(lam, precision=2, separator=', ')})", fontsize=12)
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    path = Path(outdir) / "memory_compare_heatmap.png"
+    fig.savefig(path, dpi=200)
+    return fig, path
+
+
+# ---------------------------------------------------------------------------
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Compare memory behaviour across a series of iSTAR/StapleTIS simulations.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument("simdirs", nargs="+", help="Simulation directories to compare")
+    parser.add_argument(
+        "--x", default="auto", choices=["auto", "friction", "n_int", "none"],
+        help="What the simulations are a series in. 'auto' (default) picks friction "
+             "when the interfaces are identical and the interface count when they are not.",
+    )
+    parser.add_argument("--inputfile", default="logging.log",
+                        help="Input file name inside each simulation directory (default: logging.log)")
+    parser.add_argument("--q-errors-name", default="block_error_analysis_qstaple_*.txt",
+                        help="Glob for the block-error file used as the noise floor. The "
+                             "largest interval present is used (default: %(default)s)")
+    parser.add_argument("--no-block-errors", action="store_true",
+                        help="Always use the binomial noise floor instead of block errors")
+    parser.add_argument("--no-crossing-error", action="store_true",
+                        help="Skip the REPPTIS-vs-iSTAR crossing probabilities (about twice as fast)")
+    parser.add_argument("--zero-minus-one", action="store_true",
+                        help="Set if the lambda_-1 interface is defined")
+    parser.add_argument("--outdir", default=".", help="Where to write the figures and table")
+    parser.add_argument("--show", action="store_true", help="Also display the figures")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Do not suppress the output of the called tistools routines")
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    import matplotlib
+    if not args.show:
+        matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    try:
+        import tistools
+        ns = {name: getattr(tistools, name) for name in (
+            "read_inputfile", "get_LMR_interfaces", "read_pathensemble", "get_weights",
+            "ACCFLAGS", "REJFLAGS", "display_data", "memory_analysis", "ploc_memory",
+            "read_block_rel_errors", "calculate_memory_effect_index_corrected",
+        )}
+    except (ImportError, AttributeError) as e:
+        print(f"Error: Could not import tistools: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    simdirs = [Path(d).resolve() for d in args.simdirs]
+    missing = [d for d in simdirs if not d.exists()]
+    if missing:
+        print(f"Error: not found: {', '.join(str(m) for m in missing)}", file=sys.stderr)
+        sys.exit(1)
+    if len(simdirs) < 2:
+        print("Error: need at least two simulations to compare", file=sys.stderr)
+        sys.exit(1)
+
+    outdir = Path(args.outdir).resolve()
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    records = []
+    t0 = time.time()
+    for i, simdir in enumerate(simdirs, 1):
+        print(f"[{i}/{len(simdirs)}] {simdir.name} ...", end=" ", flush=True, file=sys.stderr)
+        try:
+            with quiet(not args.verbose):
+                records.append(analyse(str(simdir), args, ns, plt))
+            print(f"ok ({time.time() - t0:.0f}s elapsed)", file=sys.stderr)
+        except Exception as e:
+            print(f"FAILED: {e}", file=sys.stderr)
+    if len(records) < 2:
+        print("Error: fewer than two simulations could be analysed", file=sys.stderr)
+        sys.exit(1)
+
+    key, axis_label, log_x, same_interfaces = pick_series_variable(records, args.x)
+    sort_vals = [series_value(r, key) for r in records]
+    if all(np.isfinite(v) for v in sort_vals):
+        records = [r for _, r in sorted(zip(sort_vals, records), key=lambda t: t[0])]
+
+    # ---------------- table ----------------
+    lines = []
+
+    def emit(line=""):
+        print(line)
+        lines.append(line)
+
+    emit("=" * 118)
+    emit("MEMORY COMPARISON")
+    emit("=" * 118)
+    emit(f"Series variable : {key}" + ("  (auto-detected)" if args.x == "auto" else ""))
+    emit(f"Interfaces      : {'identical across all runs' if same_interfaces else 'differ between runs'}")
+    emit()
+    head = (f"{'simulation':<30} {'gamma':>6} {'od':>3} {'N':>3} {'blk':>4} "
+            f"{'fwd max':>8} {'fwd mean':>9} {'fwd sum':>8} "
+            f"{'bwd max':>8} {'bwd mean':>9} {'bwd sum':>8} {'noise':>6}")
+    if any(np.isfinite(r["rel_error"]) for r in records):
+        head += f" {'relerr':>8}"
+    emit(head)
+    emit("-" * len(head))
+    for r in records:
+        row = (f"{r['name'][:30]:<30} {r['friction']:>6g} {'y' if r['overdamped'] else 'n':>3} "
+               f"{r['n_int']:>3} {'y' if r['used_block_errors'] else 'n':>4} "
+               f"{r['forward_max']:>8.1f} {r['forward_mean']:>9.1f} {r['forward_sum']:>8.1f} "
+               f"{r['backward_max']:>8.1f} {r['backward_mean']:>9.1f} {r['backward_sum']:>8.1f} "
+               f"{r['forward_n_noise'] + r['backward_n_noise']:>3}/"
+               f"{r['forward_n_regions'] + r['backward_n_regions']:<2}")
+        if np.isfinite(r["rel_error"]):
+            row += f" {r['rel_error'] * 100:>7.1f}%"
+        emit(row)
+    emit()
+    emit("max   : largest index over regions -- the aggregate whose warning threshold was found")
+    emit("        to transfer between systems (per-N cut spread 2.3x, against 4.9x for the sum).")
+    emit("sum   : extensive. It grows with the number of regions, so it is comparable only")
+    emit("        within a fixed interface set, never across the interface series.")
+    emit("noise : regions whose entire spread was absorbed by the sampling-noise floor.")
+    emit("blk   : 'y' when a block-error file supplied the noise floor; 'n' means the binomial")
+    emit("        fallback, which is optimistic because TIS paths are correlated.")
+    emit()
+    emit(f"Warning band on the maximum: {WARN_BAND[0]:.1f}% (safe cut) to {WARN_BAND[1]:.1f}% "
+         f"(regression cut), calibrated at a 10% tolerance on P_A(lambda_B|lambda_A).")
+    emit("=" * 118)
+
+    (outdir / "memory_compare.txt").write_text("\n".join(lines) + "\n")
+
+    # ---------------- figures ----------------
+    written = []
+    _, p = plot_profile(records, key, axis_label, outdir, plt)
+    written.append(p)
+    _, p = plot_summary(records, key, axis_label, log_x, outdir, plt)
+    written.append(p)
+    if same_interfaces:
+        _, p = plot_heatmap(records, key, outdir, plt)
+        written.append(p)
+    else:
+        print("\nNote: the interfaces differ between runs, so the per-region heatmap would "
+              "compare regions that are not the same region; it was skipped. Use the profile "
+              "figure, which is drawn against lambda.", file=sys.stderr)
+
+    print(f"\nWritten to {outdir}:", file=sys.stderr)
+    for p in written + [outdir / "memory_compare.txt"]:
+        print(f"  {p.name}", file=sys.stderr)
+
+    if args.show:
+        plt.show()
+
+
+if __name__ == "__main__":
+    main()

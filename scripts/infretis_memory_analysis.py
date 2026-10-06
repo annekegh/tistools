@@ -562,11 +562,14 @@ def calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=None, m
             for i in i_range:
                 if np.isnan(q_probs[i, k]) or q_weights[i, k] < min_samples:
                     continue
-                if q_errors is not None:
-                    if np.isnan(q_errors[i, k]):
-                        continue
-                    err = q_errors[i, k]
-                else:
+                err = q_errors[i, k] if q_errors is not None else np.nan
+                if not np.isfinite(err):
+                    # No block error for this particular entry: fall back to the
+                    # binomial estimate for THIS entry rather than dropping the
+                    # point. Dropping it can leave a target with fewer than two
+                    # points, and a block-error file that is entirely NaN then
+                    # silently nans out the whole simulation.
+                    #
                     # The binomial fallback treats every MC step as an
                     # independent sample; n_eff (an effective-count array, or a
                     # scalar statistical inefficiency to divide by) corrects it.

@@ -2475,6 +2475,7 @@ def calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=None, m
             q_errors = None
 
     out = {}
+    n_block = n_fallback = 0
     for direction in ("forward", "backward"):
         eps = np.full(n_interfaces, np.nan)
         eps_raw = np.full(n_interfaces, np.nan)
@@ -2491,11 +2492,13 @@ def calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=None, m
             for i in i_range:
                 if np.isnan(q_probs[i, k]) or q_weights[i, k] < min_samples:
                     continue
-                if q_errors is not None:
-                    if np.isnan(q_errors[i, k]):
-                        continue
-                    err = q_errors[i, k]
-                else:
+                err = q_errors[i, k] if q_errors is not None else np.nan
+                if not np.isfinite(err):
+                    # No block error for this particular entry: fall back to the
+                    # binomial estimate for THIS entry rather than dropping the
+                    # point. Dropping it can leave a target with fewer than two
+                    # points, and a block-error file that is entirely NaN then
+                    # silently nans out the whole simulation.
                     if n_eff is None:
                         n_use = q_weights[i, k]
                     elif np.isscalar(n_eff):
@@ -2503,6 +2506,9 @@ def calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=None, m
                     else:
                         n_use = n_eff[i, k]
                     err = np.sqrt(q_probs[i, k] * (1 - q_probs[i, k]) / max(n_use, 1e-12))
+                    n_fallback += 1
+                else:
+                    n_block += 1
                 q_values.append(q_probs[i, k])
                 weights.append(q_weights[i, k])
                 errs.append(err)
@@ -2524,6 +2530,12 @@ def calculate_memory_effect_index_corrected(q_probs, q_weights, q_errors=None, m
         out[f'{direction}_floor'] = floor
         out[f'{direction}_sample_sizes'] = sizes
         out[f'{direction}_total'] = float(np.nansum(eps))
+
+    if q_errors is not None and n_fallback:
+        warnings.warn(
+            f"{n_fallback} of {n_block + n_fallback} q(i,k) entries had no block error "
+            f"and fell back to the binomial floor, which is optimistic because TIS paths "
+            f"are correlated.")
 
     if verbose:
         print(f"Memory index (noise-corrected, summed over interfaces): "
