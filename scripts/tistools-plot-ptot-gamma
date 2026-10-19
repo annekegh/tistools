@@ -241,6 +241,45 @@ def find_saved_error_summary(simdir, method):
     return None
 
 
+def find_block_error_file(simdir, method):
+    """Return (path, interval) of the block_error_analysis_Pcross file written by
+    tistools-running-error-staple for this method, preferring the smallest interval."""
+    method = method.lower().strip()
+    if method.startswith('repptis'):
+        pattern = re.compile(r"block_error_analysis_Pcross_repptis_(\d+)\.txt$")
+    elif method.startswith('apptis'):
+        pattern = re.compile(r"block_error_analysis_Pcross_(\d+)\.txt$")
+    else:
+        return None, None
+    matches = []
+    for f in simdir.glob("block_error_analysis_Pcross_*.txt"):
+        m = pattern.match(f.name)
+        if m:
+            matches.append((int(m.group(1)), f))
+    if not matches:
+        return None, None
+    interval, path = min(matches)
+    return path, interval
+
+
+def parse_block_error_ptot(path):
+    """Read the last component (= Ptot) of the '# Best estimate' and '# Avg rel error'
+    lines of a block_error_analysis_Pcross file. The error is RELATIVE."""
+    best, rel_err = None, None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("# Best estimate"):
+                    best = float(line.split()[-1])
+                elif line.startswith("# Avg rel error"):
+                    rel_err = float(line.split()[-1])
+                if best is not None and rel_err is not None:
+                    break
+    except (OSError, ValueError, IndexError):
+        return None, None
+    return best, rel_err
+
+
 def parse_error_summary(path):
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -336,6 +375,18 @@ def compute_running_ptot_series(pathensembles, interfaces, method, start_cyc, n_
 
 
 def get_error_for_folder_method(simdir, method, ptot, pathensembles, interfaces, settings_cache, compute_missing_errors=None):
+    block_file, interval = find_block_error_file(simdir, method)
+    if block_file is not None:
+        best, rel_err = parse_block_error_ptot(block_file)
+        if rel_err is not None:
+            logging.info(
+                "Using %s for %s in %s (rel err ~ %.3f%%, block best estimate %.6e vs ptot %.6e)",
+                block_file.name, method, simdir, rel_err * 100.0,
+                best if best is not None else float("nan"), ptot,
+            )
+            return abs(ptot) * rel_err, compute_missing_errors
+        logging.warning("Could not parse '# Avg rel error' from %s", block_file)
+
     nstep_guess = settings_cache.get("nstep", 1)
     running_file = find_saved_running_average_file(simdir, method, nstep_guess)
     if running_file is not None:
