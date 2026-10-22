@@ -368,7 +368,7 @@ def compute_running_ptot_series(pathensembles, interfaces, method, start_cyc, n_
             else:
                 wi = compute_weight_matrices(pathensembles_i, interfaces, len(interfaces), True)
                 pi, _ = get_transition_probs_weights(wi)
-                m = construct_M_istar(pi, max(4, 2 * len(interfaces)), len(interfaces))
+                m = construct_M_istar(pi, 2 * len(interfaces) - 1, len(interfaces))
                 _, _, y1, _ = global_pcross_msm_star(m)
                 values.append(float(y1[0][0]))
     return np.asarray(values, dtype=float)

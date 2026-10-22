@@ -21,7 +21,7 @@ from .repptis_analysis import get_local_probs, get_global_probs_from_dict, get_g
 # MSM functions
 from .repptis_msm import construct_M, construct_M_N3, global_pcross_msm
 from .repptis_msm import mfpt_to_first_last_state, construct_tau_vector, mfpt_to_absorbing_states
-from .istar_analysis import construct_M_istar, compute_weight_matrices, compute_weight_matrix, get_transition_probs_weights, global_pcross_msm_star
+from .istar_analysis import construct_M_istar, istar_n_states, compute_weight_matrices, compute_weight_matrix, get_transition_probs_weights, global_pcross_msm_star
 
 # Writing output
 from .writing import write_running_estimates, write_plot_block_error
@@ -598,17 +598,17 @@ def calculate_running_estimate_staple(pathensembles_original, interfaces, interv
         pcstaple_MSM_val = np.nan
         try:
             N = len(interfaces)
-            NS = 2 * N
+            NS = istar_n_states(N)
             wi = compute_weight_matrices(pathensembles, interfaces, N, tr=trr, correct_ha=False, norm=False)
             pi, q_tot = get_transition_probs_weights(wi)
-            M = construct_M_istar(pi, max(4, 2 * N), N)
+            M = construct_M_istar(pi, NS, N)
             
             plocMSM = np.ones(N)
             for lint in range(1, N):
-                Mi = M[np.r_[0:2+lint, 1+N:N+lint, -1]]
-                Mi = Mi[:, np.r_[0:2+lint, 1+N:N+lint+1]]
-                Msum = M[np.r_[0:2+lint, 1+N:N+lint+1]]
-                Mi[:, -1] = np.sum(Msum[:, N+lint:], axis=1)
+                Mi = M[np.r_[0:1+lint, N:N+lint-1, -1]]
+                Mi = Mi[:, np.r_[0:1+lint, N:N+lint]]
+                Msum = M[np.r_[0:1+lint, N:N+lint]]
+                Mi[:, -1] = np.sum(Msum[:, N-1+lint:], axis=1)
                 
                 z1, z2, y1_staple, y2 = global_pcross_msm_star(Mi)
                 plocMSM[lint] = y1_staple[0][0]
@@ -686,17 +686,17 @@ def calculate_block_values_staple(pathensembles_original, interfaces, nskip, pl=
     pcstaple_MSM_val = np.nan
     try:
         N = len(interfaces)
-        NS = 2 * N
+        NS = istar_n_states(N)
         wi = compute_weight_matrices(pathensembles, interfaces, N, tr=trr, correct_ha=False, norm=False)
         pi, q_tot = get_transition_probs_weights(wi)
-        M = construct_M_istar(pi, max(4, 2 * N), N)
+        M = construct_M_istar(pi, NS, N)
         
         plocMSM = np.ones(N)
         for lint in range(1, N):
-            Mi = M[np.r_[0:2+lint, 1+N:N+lint, -1]]
-            Mi = Mi[:, np.r_[0:2+lint, 1+N:N+lint+1]]
-            Msum = M[np.r_[0:2+lint, 1+N:N+lint+1]]
-            Mi[:, -1] = np.sum(Msum[:, N+lint:], axis=1)
+            Mi = M[np.r_[0:1+lint, N:N+lint-1, -1]]
+            Mi = Mi[:, np.r_[0:1+lint, N:N+lint]]
+            Msum = M[np.r_[0:1+lint, N:N+lint]]
+            Mi[:, -1] = np.sum(Msum[:, N-1+lint:], axis=1)
             
             z1, z2, y1_staple, y2 = global_pcross_msm_star(Mi)
             plocMSM[lint] = y1_staple[0][0]

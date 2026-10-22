@@ -71,16 +71,17 @@ def global_pcross_msm_star(M, doprint=False):
     """
     # Get number of states
     NS = len(M)
-    if NS <= 2:
+    if NS < 3:
         raise ValueError("Transition matrix must have at least 3 states for iSTAR analysis")
 
-    # Extract submatrices from the transition matrix
-    Mp = M[2:-1, 2:-1]  # Transition probabilities between intermediate states
-    a = np.identity(NS-3) - Mp  # I - Mp, used for solving linear system
+    # Boundary states are [0-] (state 0) and [B] (state NS-1); everything in
+    # between, starting with [0->] (state 1), is intermediate.
+    Mp = M[1:-1, 1:-1]  # Transition probabilities between intermediate states
+    a = np.identity(NS-2) - Mp  # I - Mp, used for solving linear system
     
     # Extract other submatrices from the transition matrix
-    D = M[2:-1, np.array([0, -1])]  # Transitions from intermediate states to boundary states
-    E = M[np.array([0, -1]), 2:-1]  # Transitions from boundary states to intermediate states
+    D = M[1:-1, np.array([0, -1])]  # Transitions from intermediate states to boundary states
+    E = M[np.array([0, -1]), 1:-1]  # Transitions from boundary states to intermediate states
     M11 = M[np.array([0, -1]), np.array([0, -1])]  # Transitions between boundary states
     
     # Compute Z vector - solve the linear system
@@ -138,6 +139,32 @@ def global_pcross_msm_star(M, doprint=False):
     
     return z1, z2, y1, y2
 
+def istar_n_states(N):
+    """
+    Number of states of the iSTAR Markov state model for N interfaces.
+
+    The states are, in this order::
+
+        0            [0-]    in A; the only way out is to leave A again
+        1            [0->]   leaving A, heading towards lambda_1
+        2 .. N-1     [i⊂]    turned at lambda_i (i = 1..N-2), heading right
+        N .. 2N-3    [i⊃]    turned at lambda_i (i = 1..N-2), heading left
+        2N-2         [B]     reached lambda_{N-1}
+
+    Paths that come back to lambda_0 (from [0->] or from any [i⊃]) go
+    straight to [0-]; there is no separate "returned to A" state.
+    """
+    return 2 * N - 1
+
+
+def istar_n_interfaces(NS):
+    """Number of interfaces N of an iSTAR MSM with NS states (inverse of :py:func:`istar_n_states`)."""
+    N = (NS + 1) // 2
+    if istar_n_states(N) != NS:
+        raise ValueError(f"{NS} is not a valid iSTAR state count (expected 2*N-1, i.e. odd)")
+    return N
+
+
 def construct_M_istar(P, NS, N):
     """
     Construct transition matrix M for the iSTAR model from interface-to-interface transition probabilities.
@@ -152,8 +179,9 @@ def construct_M_istar(P, NS, N):
         Array of probabilities for paths between interfaces. P[i,j] represents the 
         probability of a path transitioning from interface i to interface j.
     NS : int
-        Dimension of the Markov state model, typically 2*N when N>=2. This defines
-        the size of the resulting transition matrix.
+        Dimension of the Markov state model, must be 2*N-1 (see
+        :py:func:`istar_n_states`). This defines the size of the resulting
+        transition matrix.
     N : int
         Number of interfaces in the system. This determines how the transition matrix
         is structured with specific patterns for interface transitions.
@@ -165,58 +193,62 @@ def construct_M_istar(P, NS, N):
     
     Notes
     -----
-    The transition matrix follows a specific structure required for the iSTAR analysis:
-    - Special handling for states [0-] and [0*+-]
-    - Structured transitions between neighboring interfaces
-    - The matrix satisfies Markovian properties where each row sums to 1
+    The state layout is documented in :py:func:`istar_n_states`. In short:
+
+    - [0-] (state 0) always goes to [0->] (state 1).
+    - [0->] returns to [0-] with P[0, 0] or turns at lambda_k with P[0, k].
+    - [i⊃] returning to lambda_0 goes to [0-] with P[i, 0].
+    - [B] (state NS-1) goes to [0-].
+    - The matrix satisfies Markovian properties where each row sums to 1.
+
+    A path returning to lambda_0 used to pass through an extra state [0<-]
+    that went to [0-] with probability 1 and carried no time. Lumping it into
+    [0-] leaves crossing probabilities and MFPTs unchanged.
     
     Raises
     ------
     ValueError
-        If the dimensions of P do not match N, or if NS is not equal to 2*N
+        If the dimensions of P do not match N, or if NS is not equal to 2*N-1
     """
     # Validate input dimensions
     if P.shape[0] != N:
         raise ValueError(f"Number of interfaces ({N}) must match P matrix first dimension ({P.shape[0]})")
     if P.shape[1] != N:
         raise ValueError(f"Number of interfaces ({N}) must match P matrix second dimension ({P.shape[1]})")
-    if NS != 2*N:
-        raise ValueError(f"NS ({NS}) must be equal to 2*N (2*{N}={2*N})")
+    if NS != istar_n_states(N):
+        raise ValueError(f"NS ({NS}) must be equal to 2*N-1 (2*{N}-1={istar_n_states(N)})")
 
     # Construct transition matrix
     M = np.zeros((NS, NS))
     
-    # States [0-] and [0*+-]
-    M[0, 2] = 1            # Transition from state 0 to state 2
-    M[2, 1] = P[0, 0]      # Transition from state 2 to state 0
-    M[2, N+1:] = P[0, 1:]  # Transitions from state 2 to states N+1 and beyond
-    M[1, 0] = 1            # Transition from state 1 to state 0
-    M[-1, 0] = 1           # Transition from last state to state 0
-    M[N+1:-1, 1] = P[1:-1, 0]  # Transitions from states N+1 and beyond to state 2
+    # States [0-] and [0->]
+    M[0, 1] = 1                # [0-] -> [0->]
+    M[1, 0] = P[0, 0]          # [0->] -> back to A
+    M[1, N:] = P[0, 1:]        # [0->] -> [k⊃] and [B]
+    M[-1, 0] = 1               # [B] -> [0-]
+    M[N:-1, 0] = P[1:-1, 0]    # [i⊃] -> back to A
 
-    # Set up transitions for other states
-    for i in range(1, N):
-        M[2+i, N+i:2*N] = P[i, i:]  # Transitions from state 2+i to states N+i and beyond
-        if i < N-1:
-            M[N+i, 3:2+i] = P[i, 1:i]   # Transitions from state N+i to states 3 through 2+i
+    # Set up transitions for the interior states
+    for i in range(1, N-1):
+        M[1+i, N-1+i:] = P[i, i:]   # [i⊂] -> [k⊃] (k > i) and [B]
+        M[N-1+i, 2:1+i] = P[i, 1:i] # [i⊃] -> [k⊂] (0 < k < i)
 
     # Nonsampled paths
-    if not M[N, -1] >= 0:
-        M[N, -1] = 1
-    
+    if not M[N-1, -1] >= 0:
+        M[N-1, -1] = 1
+
     # Check rows that sum to zero and set diagonal to 1
     # for i in range(NS):
     #     row_sum = np.sum(M[i])
     #     if row_sum == 0:
     #         M[i, i] = 1  # Set diagonal entry to 1 for rows that sum to zero
-            
+
     # Normalize transition probabilities
         # for i in range(NS):
         #         row_sum = np.sum(M[i])
         # if row_sum > 0:
         #     M[i] = M[i] / row_sum
 
-    # return np.delete(np.delete(M, N, 0), N, 1)
     return M
 
 def get_transition_probs_weights(w_path):
@@ -1832,7 +1864,7 @@ def ploc_memory(pathensembles, interfaces, trr=False):
         if i < len(pathensembles)-1:
             wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], len(interfaces), tr=trr, correct_ha=False, norm=False)
             pi, _ = get_transition_probs_weights(wi)
-            Mi = construct_M_istar(pi, max(4, 2*len(interfaces[:i+2])), len(interfaces[:i+2]))
+            Mi = construct_M_istar(pi, istar_n_states(len(interfaces[:i+2])), len(interfaces[:i+2]))
             z1, z2, y1, y2 = global_pcross_msm_star(Mi)
             plocs["apptis"].append(y1[0][0])
         
@@ -1877,25 +1909,14 @@ def generate_state_labels(n_interfaces):
     Returns:
     --------
     list
-        List of descriptive labels for each state
+        List of descriptive labels for each of the 2*n_interfaces-1 states
+        (layout as in :py:func:`istar_n_states`)
     """
-    state_labels = []
-    middle = n_interfaces 
-    
-    for i in range(2*n_interfaces):
-        if i == 0:
-            state_labels.append("[0$^-$]")
-        elif i == 1:
-            state_labels.append("[0←]")
-        elif i == 2:
-            state_labels.append("[0→]")
-        elif i <= middle:
-            state_labels.append(f"[{i-2}$\\subset$]")
-        elif middle < i < 2*n_interfaces - 1:
-            state_labels.append(f"[{i-middle}$\\supset$]")
-        else:
-            state_labels.append(f"[{i-middle}]")
-    
+    N = n_interfaces
+    state_labels = ["[0$^-$]", "[0→]"]
+    state_labels += [f"[{i}$\\subset$]" for i in range(1, N-1)]
+    state_labels += [f"[{i}$\\supset$]" for i in range(1, N-1)]
+    state_labels.append(f"[{N-1}]")
     return state_labels
 
 def calculate_memory_effect_std(q_probs, q_weights, q_errors=None, min_samples=5):
@@ -3086,7 +3107,7 @@ def analyze_network_connectivity(M, source_state=0, sink_state=-1, max_paths=10)
     sink_idx = n_states - 1 if sink_state == -1 else sink_state
     
     # Generate state labels for the plot
-    state_labels = generate_state_labels(n_states//2)
+    state_labels = generate_state_labels(istar_n_interfaces(n_states))
     
     # Create a graph representation where edges exist if M[i,j] > 0
     graph = (M > 0).astype(int)
@@ -3267,7 +3288,7 @@ def find_network_bottlenecks(M, source_state=0, sink_state=-1):
     sink_idx = n_states - 1 if sink_state == -1 else sink_state
     
     # Generate state labels for the plot
-    state_labels = generate_state_labels(n_states//2)
+    state_labels = generate_state_labels(istar_n_interfaces(n_states))
     
     # Create weighted directed graph
     G = nx.DiGraph()
@@ -3357,7 +3378,7 @@ def calculate_effective_transitions(M, source_state=0, sink_state=-1, max_steps=
     sink_idx = n_states - 1 if sink_state == -1 else sink_state
     
     # Generate state labels for the plot
-    state_labels = generate_state_labels(n_states)
+    state_labels = generate_state_labels(istar_n_interfaces(n_states))
     
     # Initialize probability matrix for different number of steps
     P = np.zeros((max_steps+1, n_states, n_states))
@@ -3422,7 +3443,7 @@ def pcca_analysis(M, n_clusters):
     """
     # Generate state labels for printing
     n_states = M.shape[0]
-    state_labels = generate_state_labels(n_states)
+    state_labels = generate_state_labels(istar_n_interfaces(n_states))
     
     # Ensure the transition matrix is a valid stochastic matrix
     assert np.allclose(M.sum(axis=1), 1), "Rows of the transition matrix must sum to 1."

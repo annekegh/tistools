@@ -10,6 +10,7 @@ import numpy as np
 import logging
 
 from .reading import set_flags_ACC_REJ
+from .istar_analysis import istar_n_states, istar_n_interfaces
 
 # Hard-coded rejection flags found in output files
 ACCFLAGS, REJFLAGS = set_flags_ACC_REJ() 
@@ -50,7 +51,7 @@ def mfpt_to_absorbing_staple_balanced(M, tau1, taum, tau2, absor, kept, use_tau1
         Indices of non-absorbing states.
     remove_initial_m : bool or str, optional
         If truthy, subtract the initial state's taum from h1 and h2. For state 0
-        that is exactly the [0-] leg charged on the ``0 -> 2`` hop, so this turns
+        that is exactly the [0-] leg charged on the ``0 -> 1`` hop, so this turns
         ``h1[0][0]`` from the full cycle time into ``tau[0+]``. Default False,
         which is what an A -> B MFPT (``absor=[NS-1]``, read off ``h2[0][0]``)
         wants, since there the dwell in A between failed attempts must be paid.
@@ -77,7 +78,7 @@ def mfpt_to_absorbing_staple_balanced(M, tau1, taum, tau2, absor, kept, use_tau1
     - No need for remove_initial_m correction
     """
     NS = len(M)
-    N = NS // 2
+    N = istar_n_interfaces(NS)
 
     if NS < 3:
         raise ValueError(f"Transition matrix must have at least 3 states, got {NS}.")
@@ -115,7 +116,7 @@ def mfpt_to_absorbing_staple_balanced(M, tau1, taum, tau2, absor, kept, use_tau1
     h2 = np.dot(D, g1) + np.dot(Mp, g2) + tp
 
     # Remove the average time of the middle part (m) of the initial state.
-    # For state 0 this is exactly the [0-] leg charged on the 0 -> 2 hop, so
+    # For state 0 this is exactly the [0-] leg charged on the 0 -> 1 hop, so
     # with it on, h1[0][0] reports tau[0+] rather than the full cycle time.
     if remove_initial_m:
         st1 = np.sum(M[np.ix_(absor, range(NS))] * taum_msm[np.ix_(absor, range(NS))], axis=1).reshape(-1, 1)
@@ -151,20 +152,17 @@ def mfpt_to_first_last_staple_balanced(M, tau1, taum, tau2, weights=None, doprin
         rate      = flux * P_cross            # == 1 / MFPT(A -> B)
 
     ``remove_initial_m="m"`` is passed for this: the [0-] leg is charged to the
-    ``0 -> 2`` hop by :py:func:`.construct_tau_matrix_staple`, and that
+    ``0 -> 1`` hop by :py:func:`.construct_tau_matrix_staple`, and that
     correction subtracts exactly the initial hop again, so what is left is the
     excursion. ``g2[0][0]`` is the same number by a different route, since
-    ``kept[0]`` is state 2.
+    ``kept[0]`` is state 1 ([0->]).
 
-    Charging the [0-] leg to ``0 -> 2`` rather than to ``1 -> 0`` is what makes
-    ``flux * P_cross`` and ``1 / MFPT(A -> B)`` agree; it is independent of what
-    this function chooses to report.
+    Charging the [0-] leg to ``0 -> 1`` (leaving A) rather than to the hops
+    that return to A is what makes ``flux * P_cross`` and ``1 / MFPT(A -> B)``
+    agree; it is independent of what this function chooses to report.
 
-    The absorbing set is ``[0, 1, NS-1]``, the same partition that
-    :py:func:`.global_pcross_msm_star` uses (it solves on ``M[2:-1, 2:-1]``).
-    Since the ``1 -> 0`` hop carries no time, whether state 1 is absorbing no
-    longer changes the result; the partition is kept aligned with the
-    crossing-probability calculation for consistency.
+    The absorbing set is ``[0, NS-1]``, the same partition that
+    :py:func:`.global_pcross_msm_star` uses (it solves on ``M[1:-1, 1:-1]``).
 
     Parameters
     ----------
@@ -201,7 +199,7 @@ def mfpt_to_first_last_staple_balanced(M, tau1, taum, tau2, weights=None, doprin
     if NS < 3:
         raise ValueError(f"Transition matrix must have at least 3 states, got {NS}.")
 
-    absor = np.array([0, 1, NS - 1])
+    absor = np.array([0, NS - 1])
     kept = np.array([i for i in range(NS) if i not in absor])
 
     return mfpt_to_absorbing_staple_balanced(
@@ -223,7 +221,7 @@ def mfpt_istar_balanced(M, tau_interface, doprint=False):
     Parameters
     ----------
     M : np.ndarray
-        Transition matrix of shape (2N, 2N) from construct_M_istar.
+        Transition matrix of shape (2N-1, 2N-1) from construct_M_istar.
     tau_interface : dict
         Dictionary with keys 'tau1', 'tau2', and either 'taum' or 'tau'.
         Each contains an (N+1, N) matrix of path lengths indexed by (start+1, end).
@@ -243,7 +241,7 @@ def mfpt_istar_balanced(M, tau_interface, doprint=False):
     >>> # Compute tau matrices from path ensembles (already MC-weighted)
     >>> tau_data = set_taus_staple(pathensembles, interfaces)
     >>> # Build MSM transition matrix
-    >>> M = construct_M_istar(P, 2*N, N)
+    >>> M = construct_M_istar(P, 2*N-1, N)
     >>> # Compute MFPT with balanced boundary times
     >>> g1, g2, h1, h2 = mfpt_istar_balanced(M, tau_data)
     >>> print(f"MFPT from A: {h1[0]}")
@@ -456,10 +454,10 @@ def mfpt_to_first_last_staple(M, tau1, taum, tau2, doprint=False):
     - The key result is `h1[0][0]`, which is ``tau[0+]``, the excursion out of A
       on its own. The flux is ``1 / (tau[0, 0] + h1[0][0])``.
     - `remove_initial_m="m"` is what makes that so: the [0-] leg is charged to
-      the ``0 -> 2`` hop by `construct_tau_matrix_staple`, and this correction
+      the ``0 -> 1`` hop by `construct_tau_matrix_staple`, and this correction
       subtracts exactly that initial hop, leaving the excursion.
     - ``g2[0][0]`` is the same ``tau[0+]`` by a different route, since
-      ``kept[0]`` is state 2 and g2 is not touched by the correction.
+      ``kept[0]`` is state 1 ([0->]) and g2 is not touched by the correction.
     - For more accurate estimates, use matrix-valued tau created with
       `construct_tau_vector_staple(..., as_matrix=True)` or `construct_tau_matrix_staple()`.
     """
@@ -467,7 +465,7 @@ def mfpt_to_first_last_staple(M, tau1, taum, tau2, doprint=False):
     if NS < 3:
         raise ValueError(f"Transition matrix must have at least 3 states, but got {NS}.")
 
-    absor = np.array([0, 1, NS - 1])
+    absor = np.array([0, NS - 1])
     kept = np.array([i for i in range(NS) if i not in absor])
 
     return mfpt_to_absorbing_staple(M, tau1, taum, tau2, absor, kept, doprint=doprint, remove_initial_m="m")
@@ -483,7 +481,7 @@ def mfpt_istar(M, tau_interface, use_matrix_tau=True, doprint=False):
     Parameters
     ----------
     M : np.ndarray
-        Transition matrix of shape (2N, 2N) from construct_M_istar.
+        Transition matrix of shape (2N-1, 2N-1) from construct_M_istar.
     tau_interface : dict
         Dictionary with keys 'tau1', 'taum', 'tau2', each containing
         an (N, N) matrix of path lengths indexed by (start_intf, end_intf).
@@ -503,13 +501,13 @@ def mfpt_istar(M, tau_interface, use_matrix_tau=True, doprint=False):
     >>> # Compute tau matrices from path ensembles
     >>> tau_data = set_taus_staple(pathensembles, interfaces)
     >>> # Build MSM transition matrix
-    >>> M = construct_M_istar(P, 2*N, N)
+    >>> M = construct_M_istar(P, 2*N-1, N)
     >>> # Compute MFPT
     >>> g1, g2, h1, h2 = mfpt_istar(M, tau_data, use_matrix_tau=True)
     >>> print(f"MFPT from A: {h1[0]}")
     """
     NS = len(M)
-    N = NS // 2
+    N = istar_n_interfaces(NS)
     
     tau1_intf = tau_interface['tau1']
     taum_intf = tau_interface['tau'] - tau_interface['tau1'] - tau_interface['tau2']
@@ -533,12 +531,13 @@ def construct_tau_matrix_staple(tau_interface, N):
     """
     Construct a tau matrix indexed by MSM states from interface-pair tau values.
     
-    The iSTAR MSM has 2N states representing turns at N interfaces:
-    - State 0: [0-] absorbing state (returned to A)
-    - State 1: [0*+-] transition state back to A
-    - States 2 to N: left turn states at interfaces 0 to N-2 (paths going right)
-    - States N+1 to 2N-2: right turn states at interfaces 1 to N-2 (paths going left)
-    - State 2N-1: [B] absorbing state (reached B)
+    The iSTAR MSM has 2N-1 states (see :py:func:`.istar_n_states`):
+
+    - State 0: [0-], in A
+    - State 1: [0->], leaving A (turn at interface 0, heading right)
+    - States 2 to N-1: [i⊂], turn at interface i = 1..N-2, heading right
+    - States N to 2N-3: [i⊃], turn at interface i = 1..N-2, heading left
+    - State 2N-2: [B], reached interface N-1
     
     The input tau_interface[start+1, end] contains path lengths for transitions 
     from interface start to interface end. This function maps these to the MSM state space.
@@ -556,95 +555,53 @@ def construct_tau_matrix_staple(tau_interface, N):
     Returns
     -------
     np.ndarray
-        Matrix of shape (2N, 2N) where result[s1,s2] is the path length for 
+        Matrix of shape (2N-1, 2N-1) where result[s1,s2] is the path length for 
         transition from MSM state s1 to MSM state s2.
     
     Notes
     -----
-    The state mapping follows the construct_M_istar convention:
-    - State 0: [0-] (left turn at interface 0, i.e., return to A)
-    - State 1: [0+] (right turn at interface 0, leaving A)  
-    - States 2 to N-1: left turns at interfaces 1 to N-2
-    - State N: left turn at interface N-1 (at B)
-    - States N+1 to 2N-2: right turns at interfaces 1 to N-2
-    - State 2N-1: right turn at interface N-1 (reached B)
-    
-    The tau values depend on the starting interface (where the turn is) and the
-    ending interface (where the next turn will be).
+    The tau value of a hop is that of the path from the turn interface of
+    s_from to the turn interface of s_to. Paths that return to interface 0
+    (from [0->] or from an [i⊃]) land in [0-] and are charged on that hop.
 
-    The [0-] leg (``tau_interface[0, 0]``) is charged to the ``0 -> 2`` hop,
-    i.e. when the walker leaves A, and the ``1 -> 0`` hop carries no time. With
-    this convention a cycle pays for its dwell in A once, at its start, and the
-    two ways of writing the rate agree exactly::
+    The [0-] leg (``tau_interface[0, 0]``) is charged to the ``0 -> 1`` hop,
+    i.e. when the walker leaves A, and the ``[B] -> 0`` hop carries no time.
+    With this convention a cycle pays for its dwell in A once, at its start,
+    and the two ways of writing the rate agree exactly::
 
         tau_0plus = h1[0][0]                 # from mfpt_to_first_last_staple*
         flux      = 1 / (tau_interface[0, 0] + tau_0plus)
         rate      = flux * P_cross           # == 1 / MFPT(A -> B)
 
-    Charging the [0-] leg to ``1 -> 0`` instead would leave the first dwell in A
-    unpaid in ``MFPT(A -> B)``, making it short by exactly one ``tau[0-]``.
+    Charging the [0-] leg to the hops that return to A instead would leave
+    the first dwell in A unpaid in ``MFPT(A -> B)``, making it short by
+    exactly one ``tau[0-]``.
     """
-    NS = 2 * N
+    NS = istar_n_states(N)
     tau_msm = np.zeros((NS, NS))
-    
-    # Map interface transitions to MSM state transitions
-    # For each MSM state s, we need to determine which interface it represents
-    # and what direction the path is going
-    
-    for s_from in range(NS):
-        for s_to in range(NS):
-            if s_from == 0 and s_to == 2:
-                # The [0-] leg is charged on LEAVING A, not on returning to it,
-                # so that every excursion pays it exactly once at its start.
-                # Consequence: h1[0] is the full cycle time tau[0-] + tau[0+],
-                # so the flux is 1 / h1[0] and must NOT add tau[0-] again.
-                tau_msm[s_from, s_to] = tau_interface[0, 0]
+
+    def turn_interface(s):
+        # Interface at which the turn of state s >= 1 happened
+        return s - 1 if s < N else s - N + 1
+
+    # The [0-] leg is charged on LEAVING A, not on returning to it,
+    # so that every excursion pays it exactly once at its start.
+    tau_msm[0, 1] = tau_interface[0, 0]
+
+    for s_from in range(1, NS):
+        intf_from = turn_interface(s_from)
+
+        # Return to A: from [0->] (paths 0 -> 0) or from an [i⊃].
+        # [B] -> [0-] carries no time.
+        if (s_from == 1 or s_from >= N) and s_from != NS - 1:
+            tau_msm[s_from, 0] = tau_interface[intf_from + 1, 0]
+
+        # Hops between a right-heading (⊂) and a left-heading (⊃) state
+        for s_to in range(2, NS):
+            if abs(s_to - s_from) < N - 1:
                 continue
-            if s_to == 1:
-                if s_from == 2:
-                    intf_from = 0
-                    intf_to = 0
-                elif s_from > N:
-                    intf_from = s_from - N
-                    intf_to = 0
-                else: continue
-            elif (abs(s_to - s_from) < N-1 and (s_from > 1 or s_to > 1)):
-                if s_to == 1 and s_from == 2:
-                    intf_from = 0
-                    intf_to = 0
-                else: continue
-            elif (s_from < 2 and s_to < 2):
-                # The 1 -> 0 hop carries no time: state 1 only records that the
-                # walker came back to A, the dwell in A is charged on 0 -> 2.
-                continue
-            else:
-                # Determine the interface indices for source and target states
-                if 2 <= s_from < N+1:
-                    # Left turn states (0 to N-1) - turn happened at interface s_from
-                    intf_from = s_from - 2
-                elif s_from == NS-1:
-                    intf_from = -2
-                elif s_from >= N+1:
-                    # Right turn states (N to 2N-1) - turn happened at interface (s_from - N)
-                    intf_from = s_from - N
-                else:
-                    continue
-                
-                if s_to == NS-1:
-                    intf_to = -1
-                elif s_to == 1:
-                    intf_to = 0
-                elif 2 < s_to < N+1:
-                    # Target is a left turn state - next turn at interface s_to
-                    intf_to = s_to - 2
-                elif s_to >= N+1:
-                    # Target is a right turn state - next turn at interface (s_to - N)
-                    intf_to = s_to - N
-                else:
-                    continue
-                
-            tau_msm[s_from, s_to] = tau_interface[intf_from+1, intf_to]
-    
+            tau_msm[s_from, s_to] = tau_interface[intf_from + 1, turn_interface(s_to)]
+
     return tau_msm
 
 
@@ -699,7 +656,7 @@ def construct_tau_vector_staple(N, NS, tau_matrix):
     N : int
         Number of interfaces.
     NS : int
-        Number of states in the MSM (should be 2*N).
+        Number of states in the MSM (should be 2*N-1).
     tau_matrix : np.ndarray
         Matrix of path lengths for (start, end) interface pairs.
         Shape should be (N+1, N) where tau_matrix[start+1, end] is the path length
@@ -719,14 +676,14 @@ def construct_tau_vector_staple(N, NS, tau_matrix):
     -----
     The MSM state mapping follows construct_M_istar convention:
     - State 0: [0-] (special state, maps to start=-1)
-    - States 1 to N: left turn states at interfaces 0 to N-1
-    - States N+1 to 2N-1: right turn states at interfaces 1 to N-1
-    - State 2N-1: [B] (reached state B, maps to interface N-1)
+    - States 1 to N-1: right-heading states at interfaces 0 to N-2
+    - States N to 2N-3: left-heading states at interfaces 1 to N-2
+    - State 2N-2: [B] (reached state B, maps to interface N-1)
     """
     if N < 3:
         raise ValueError("N must be at least 3.")
-    if NS != 2 * N:
-        raise ValueError(f"NS must be 2 * N = {2 * N}.")
+    if NS != istar_n_states(N):
+        raise ValueError(f"NS must be 2 * N - 1 = {istar_n_states(N)}.")
     if tau_matrix.shape != (N+1, N):
         raise ValueError(f"Input tau_matrix must have shape ({N+1}, {N}), got {tau_matrix.shape}.")
     
@@ -740,23 +697,20 @@ def construct_tau_vector_staple(N, NS, tau_matrix):
         if s == 0:
             # [0-] state: start=-1, only destination is interface 0
             tau[s] = tau_matrix[0, 0]
-        elif s == 1:
-            # [0*+-] state: transition back to A, no tau
-            tau[s] = 0.0
-        elif 2 <= s < N + 1:
+        elif 1 <= s < N:
             # Left turn states at interfaces 0 to N-2 (paths going RIGHT)
             # Valid destinations: interfaces intf_from to N-1
-            intf_from = s - 2
+            intf_from = s - 1
             row = tau_matrix[intf_from + 1, intf_from:]
             valid = row[row > 0]
             tau[s] = np.mean(valid) if len(valid) > 0 else 0.0
         elif s == NS - 1:
             # [B] absorbing state: no outgoing transitions
             tau[s] = 0.0
-        elif s >= N + 1:
+        elif s >= N:
             # Right turn states at interfaces 1 to N-2 (paths going LEFT)
             # Valid destinations: interfaces 0 to intf_from
-            intf_from = s - N
+            intf_from = s - N + 1
             row = tau_matrix[intf_from + 1, :intf_from + 1]
             valid = row[row > 0]
             tau[s] = np.mean(valid) if len(valid) > 0 else 0.0
@@ -1527,14 +1481,14 @@ def construct_tau_boundary_matrix_staple(tau1_matrix, tau2_matrix, M, N, weights
         tau2 values in interface space, shape (n_intf+1, n_intf).
         These should already be MC-weighted averages per (start, end) pair.
     M : np.ndarray
-        Transition matrix of shape (2N, 2N).
+        Transition matrix of shape (2N-1, 2N-1).
     N : int
         Number of interfaces.
     
     Returns
     -------
     np.ndarray
-        Boundary time matrix of shape (2N, 2N) in MSM state space.
+        Boundary time matrix of shape (2N-1, 2N-1) in MSM state space.
     
     Notes
     -----
@@ -1553,7 +1507,7 @@ def construct_tau_boundary_matrix_staple(tau1_matrix, tau2_matrix, M, N, weights
       MC weights are used. Transition probabilities carry no information about
       statistical precision and must not be used here.
     """
-    NS = 2 * N
+    NS = istar_n_states(N)
 
     # Convert tau1 and tau2 to MSM space
     tau1_msm = construct_tau_matrix_staple(tau1_matrix, N)
@@ -1646,14 +1600,14 @@ def construct_tau_boundary_matrix_staple_fw(tau1_matrix, tau2_matrix, M, N, weig
         tau2 values in interface space, shape (n_intf+1, n_intf).
         These should already be MC-weighted averages per (start, end) pair.
     M : np.ndarray
-        Transition matrix of shape (2N, 2N).
+        Transition matrix of shape (2N-1, 2N-1).
     N : int
         Number of interfaces.
     
     Returns
     -------
     np.ndarray
-        Boundary time matrix of shape (2N, 2N) in MSM state space.
+        Boundary time matrix of shape (2N-1, 2N-1) in MSM state space.
     
     Notes
     -----
@@ -1673,7 +1627,7 @@ def construct_tau_boundary_matrix_staple_fw(tau1_matrix, tau2_matrix, M, N, weig
     --------
     construct_tau_boundary_matrix_staple : The backward-looking version (recommended).
     """
-    NS = 2 * N
+    NS = istar_n_states(N)
 
     # Convert tau1 and tau2 to MSM space
     tau1_msm = construct_tau_matrix_staple(tau1_matrix, N)

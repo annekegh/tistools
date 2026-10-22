@@ -272,7 +272,7 @@ def main():
         wi = compute_weight_matrices(pathensembles[:lint], interfaces[:lint], n_int, tr=False,
                                      correct_ha=False, norm=False)
         pi, _ = get_transition_probs_weights(wi)
-        Mi = construct_M_istar(pi, max(4, 2 * len(interfaces[:lint])), len(interfaces[:lint]))
+        Mi = construct_M_istar(pi, 2 * len(interfaces[:lint]) - 1, len(interfaces[:lint]))
         _, _, y1, _ = global_pcross_msm_star(Mi)
         plocMSM[lint - 1] = y1[0][0]
         print(f"ploc till intf {lint - 1}: {y1[0][0]}")

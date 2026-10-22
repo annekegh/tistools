@@ -26,28 +26,26 @@ state_space_0.print_states()
 
 print(f"\nNumber of states: {state_space_0.n_states}")
 print(f"Absorbing states: {state_space_0.absorbing_states}")
-print(f"Expected for base iSTAR: 2*N = 2*{n_interfaces} = {2*n_interfaces}")
+print(f"Expected for base iSTAR: 2*N-1 = 2*{n_interfaces}-1 = {2*n_interfaces-1}")
 
 # For base iSTAR:
-# NS = 2*N, states = [0-], [0←], [0→], [1⊂], [2⊂], ..., [N-2⊂], [1⊃], [2⊃], ..., [N-1⊃=B]
+# NS = 2*N-1, states = [0-], [0→], [1⊂], [2⊂], ..., [N-2⊂], [1⊃], [2⊃], ..., [N-1⊃=B]
 # State indices:
-#   0: [0-]
-#   1: [0←]
-#   2: [0→]
-#   3 to N: [i⊂] for i=1 to N-2  (N-2 states)
-#   N+1 to 2N-1: [i⊃] for i=1 to N-1 (N-1 states)
-# Total: 3 + (N-2) + (N-1) = 3 + 2N - 3 = 2N
+#   0: [0-]  (also reached by every path returning to A)
+#   1: [0→]
+#   2 to N-1: [i⊂] for i=1 to N-2  (N-2 states)
+#   N to 2N-2: [i⊃] for i=1 to N-1 (N-1 states)
+# Total: 2 + (N-2) + (N-1) = 2N - 1
 
 print("\n--- State Mapping Comparison ---")
 print("Base iSTAR states:")
 print("  0: [0-]")
-print("  1: [0←]")
-print("  2: [0→]")
+print("  1: [0→]")
 for i in range(1, n_interfaces-1):
-    print(f"  {2+i}: [{i}⊂]")
-for i in range(1, n_interfaces):
-    print(f"  {n_interfaces+i}: [{i}⊃]")
-print(f"  {2*n_interfaces-1}: [B] (last state, should go to [0-])")
+    print(f"  {1+i}: [{i}⊂]")
+for i in range(1, n_interfaces-1):
+    print(f"  {n_interfaces-1+i}: [{i}⊃]")
+print(f"  {2*n_interfaces-2}: [B] (last state, should go to [0-])")
 
 print("\nExtended memory (order 0) states:")
 for state in state_space_0.states:
@@ -60,17 +58,17 @@ q_test = np.zeros((state_space_0.n_states, state_space_0.n_states))
 # For testing, create simple probabilities
 # [0→] should go to some forward states
 # Forward states should go to backward states
-# Backward states should go back to [0←]
+# Backward states should go back to [0-]
 
 # Set up some test probabilities
 if state_space_0.n_states >= 3:
-    # [0→] goes forward to state 3 with prob 0.3, state 4 with prob 0.5, etc.
+    # [0→] goes forward to states 2..4 with prob 0.2 each
     if state_space_0.n_states > 3:
-        q_test[2, 3:min(6, state_space_0.n_states)] = 0.2
-        q_test[2, 1] = max(0, 1.0 - np.sum(q_test[2, :]))  # Rest goes to [0←]
+        q_test[1, 2:min(5, state_space_0.n_states)] = 0.2
+        q_test[1, 0] = max(0, 1.0 - np.sum(q_test[1, :]))  # Rest goes back to [0-]
 
 print(f"q_test shape: {q_test.shape}")
-print(f"q_test[2, :] (from [0→]): {q_test[2, :]}")
+print(f"q_test[1, :] (from [0→]): {q_test[1, :]}")
 
 # Construct M using extended memory function
 print("\n--- Constructing M Matrix (Extended Memory, Order 0) ---")
@@ -80,8 +78,7 @@ print("\nM_extended matrix:")
 print(f"Shape: {M_extended.shape}")
 print(f"Row sums: {np.sum(M_extended, axis=1)}")
 print(f"\nM_extended[0, :] ([0-] transitions): {M_extended[0, :]}")
-print(f"M_extended[1, :] ([0←] transitions): {M_extended[1, :]}")
-print(f"M_extended[2, :] ([0→] transitions): {M_extended[2, :]}")
+print(f"M_extended[1, :] ([0→] transitions): {M_extended[1, :]}")
 print(f"M_extended[-1, :] ([B] transitions): {M_extended[-1, :]}")
 
 # For base iSTAR, construct P matrix (interface-to-interface)
@@ -100,14 +97,13 @@ print(f"\nP_test (interface-to-interface) shape: {P_test.shape}")
 print(f"P_test:\n{P_test}")
 
 # Construct M using base iSTAR function
-NS = 2 * n_interfaces
+NS = ia.istar_n_states(n_interfaces)
 M_base = ia.construct_M_istar(P_test, NS, n_interfaces)
 
 print(f"\nM_base (base iSTAR) shape: {M_base.shape}")
 print(f"Row sums: {np.sum(M_base, axis=1)}")
 print(f"\nM_base[0, :] ([0-] transitions): {M_base[0, :]}")
-print(f"M_base[1, :] ([0←] transitions): {M_base[1, :]}")
-print(f"M_base[2, :] ([0→] transitions): {M_base[2, :]}")
+print(f"M_base[1, :] ([0→] transitions): {M_base[1, :]}")
 print(f"M_base[-1, :] ([B] transitions): {M_base[-1, :]}")
 
 print("\n--- Key Differences ---")

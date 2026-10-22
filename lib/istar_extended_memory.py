@@ -43,8 +43,9 @@ Higher memory orders extend this further by tracking additional segments.
 State Space Structure
 =====================
 For n interfaces (0 to N-1):
-- Absorbing states at 0: States 0, 1, 2 are exceptions comprising the absorbing
-  boundary at interface 0 (state A)
+- Boundary states at 0: States 0 ([0-], absorbing, also reached by every path
+  returning to A) and 1 ([0→], leaving A) make up the boundary at interface 0
+  (state A)
 - Absorbing state at N-1: The boundary at interface N-1 (state B)
 - Interior interfaces each have states for:
   - Forward-facing turns (⊂) + continuation behavior
@@ -279,8 +280,9 @@ class ExtendedStateSpace:
         """Construct the complete state space."""
         state_id = 0
 
-        # Special boundary states at interface 0 (states 0, 1, 2)
-        # State 0: 0- paths (truly absorbing, left of interface 0)
+        # Special boundary states at interface 0 (states 0, 1)
+        # State 0: [0-], in A (truly absorbing). Paths that come back to
+        # interface 0 from the forward side also land here.
         turn_0minus = CompleteTurn(turn_interface=0, facing=TurnFacing.BACKWARD, exit_interface=-1)
         state_0minus = ExtendedState(base_turn=turn_0minus, state_id=state_id, is_absorbing=True, label="[0-]")
         self.states.append(state_0minus)
@@ -288,15 +290,7 @@ class ExtendedStateSpace:
         self._add_lookup(state_0minus)
         state_id += 1
 
-        # State 1: Paths reaching interface 0 from backward direction (from B toward A)
-        turn_0_reach = CompleteTurn(turn_interface=0, facing=TurnFacing.BACKWARD, exit_interface=0)
-        state_0_reach = ExtendedState(base_turn=turn_0_reach, state_id=state_id, is_absorbing=True, label="[0←]")
-        self.states.append(state_0_reach)
-        self.absorbing_states.append(state_id)
-        self._add_lookup(state_0_reach)
-        state_id += 1
-
-        # State 2: Paths leaving interface 0 in forward direction (toward B)
+        # State 1: Paths leaving interface 0 in forward direction (toward B)
         turn_0_leave = CompleteTurn(turn_interface=0, facing=TurnFacing.FORWARD, exit_interface=1)
         state_0_leave = ExtendedState(base_turn=turn_0_leave, state_id=state_id, is_absorbing=False, label="[0→]")
         self.states.append(state_0_leave)
@@ -767,9 +761,9 @@ class PathTurnAnalyzer:
         Returns
         -------
         (start_state, end_state) : tuple
-            - start_state: State 2 [0→] if path starts from A going forward,
+            - start_state: State 1 [0→] if path starts from A going forward,
                           State B if path starts from B going backward, else None
-            - end_state: State 1 [0←] if path ends at A, State B if path ends at B, else None
+            - end_state: State 0 [0-] if path ends at A, State B if path ends at B, else None
         """
         if orders.ndim > 1:
             vals = orders[:, 0]
@@ -790,8 +784,8 @@ class PathTurnAnalyzer:
                 next_region = np.searchsorted(self.interfaces, vals[j], side='right') - 1
                 if next_region != start_region:
                     if next_region > start_region:
-                        # Starting from A, going forward -> state 2 [0→]
-                        start_state = state_space.states[2] if len(state_space.states) > 2 else None
+                        # Starting from A, going forward -> state 1 [0→]
+                        start_state = state_space.states[1] if len(state_space.states) > 1 else None
                     break
         elif start_region >= self.n_interfaces - 1:
             # Starting from B - always state B
@@ -800,8 +794,8 @@ class PathTurnAnalyzer:
         # Check end: does path reach state A or B?
         end_region = np.searchsorted(self.interfaces, vals[-1], side='right') - 1
         if end_region <= -1:
-            # Path ends at or below interface 0 -> state 1 [0←]
-            end_state = state_space.states[1] if len(state_space.states) > 1 else None
+            # Path ends at or below interface 0 -> state 0 [0-]
+            end_state = state_space.states[0] if state_space.states else None
         elif end_region >= self.n_interfaces - 1:
             # Path ends at B -> state B (last state)
             end_state = state_space.states[-1] if state_space.states else None
@@ -1588,7 +1582,7 @@ def get_transition_probs_extended(w_matrices: Dict[int, np.ndarray],
                 continue
 
             # Special case for [0→] to first interface (analogous to i=0, k=1 in base iSTAR)
-            if i == 2 and level_i == 0:  # Starting from [0→]
+            if i == 1 and level_i == 0:  # Starting from [0→]
                 # Use ensemble 1 (first ensemble)
                 if 1 in w_matrices:
                     W = w_matrices[1]
@@ -1641,10 +1635,7 @@ def get_transition_probs_extended(w_matrices: Dict[int, np.ndarray],
 
     # Handle absorbing states
     q[0, :] = 0
-    q[0, 2] = 1.0  # [0-] → [0→]
-    if n_states > 1:
-        q[1, :] = 0
-        q[1, 0] = 1.0  # [0←] → [0-]
+    q[0, 1] = 1.0  # [0-] → [0→]
     q[-1, :] = 0
     q[-1, -1] = 1.0  # [B] → [B] (absorbing)
 
@@ -1678,7 +1669,7 @@ def _get_state_level(state: ExtendedState) -> int:
     to determine which ensembles contribute to transitions between states.
     """
     if state.is_absorbing:
-        if state.label in ["[0-]", "[0←]", "[0→]"]:
+        if state.label in ["[0-]", "[0→]"]:
             return 0
         else:  # [B]
             return state.base_turn.turn_interface
@@ -1753,13 +1744,12 @@ def construct_M_extended(q: np.ndarray, state_space: ExtendedStateSpace) -> np.n
     2. **Reduced off-diagonal entries**: The probabilistic branching only occurs
        at decision points (turn vs continue), not at every interface crossing.
 
-    3. **Boundary handling**: States [0-], [0←], [0→] and [B] have specific
+    3. **Boundary handling**: States [0-], [0→] and [B] have specific
        transition rules reflecting the boundary conditions.
 
     The structure follows:
     - Row 0 [0-]: Absorbing state, M[0,0] = 1
-    - Row 1 [0←]: Goes to [0-], M[1,0] = 1
-    - Row 2 [0→]: Goes to interior states based on q
+    - Row 1 [0→]: Goes to interior states based on q
     - Interior rows: Follow q matrix with deterministic segments at 1
     - Last row [B]: Absorbing state, M[-1,0] = 1
     """
@@ -1779,12 +1769,7 @@ def construct_M_extended(q: np.ndarray, state_space: ExtendedStateSpace) -> np.n
         M[0, :] = 0
         M[0, 0] = 1.0
 
-    # State 1 [0←] transitions to [0-]
-    if n_states > 1:
-        M[1, :] = 0
-        M[1, 0] = 1.0
-
-    # State 2 [0→] transitions to interior states or [B]
+    # State 1 [0→] transitions to interior states or [B]
     # This is handled by q matrix from the data
 
     # Last state [B] behavior depends on state space
@@ -1844,37 +1829,37 @@ def global_pcross_extended(M: np.ndarray, state_space: ExtendedStateSpace,
 
     if state_space.memory_order == 0:
         # Use base iSTAR formalism: boundary states are [0-] (state 0) and [B] (state -1)
-        # Intermediate states are [0→] through second-to-last
+        # Intermediate states are [0→] (state 1) through second-to-last
         if n_states <= 2:
             if verbose:
                 print("Not enough states for crossing probability calculation")
             return 0.0, np.zeros(n_states)
 
         # Extract submatrices (same as base iSTAR)
-        Mp = M[2:-1, 2:-1]  # Intermediate-to-intermediate
-        D = M[2:-1, np.array([0, -1])]  # Intermediate-to-boundary
-        E = M[np.array([0, -1]), 2:-1]  # Boundary-to-intermediate
+        Mp = M[1:-1, 1:-1]  # Intermediate-to-intermediate
+        D = M[1:-1, np.array([0, -1])]  # Intermediate-to-boundary
+        E = M[np.array([0, -1]), 1:-1]  # Boundary-to-intermediate
         M11 = M[np.array([0, -1]), np.array([0, -1])]  # Boundary-to-boundary
 
         # Solve for crossing probability (same as base iSTAR)
         z1 = np.array([[0], [1]])  # Boundary conditions: z_[0-] = 0, z_B = 1
         try:
-            a = np.identity(n_states - 3) - Mp
+            a = np.identity(n_states - 2) - Mp
             z2 = np.linalg.solve(a, np.dot(D, z1))  # Solve (I-Mp)z2 = D·z1
         except np.linalg.LinAlgError:
             if verbose:
                 print("Warning: Singular matrix, using pseudo-inverse")
-            a = np.identity(n_states - 3) - Mp
+            a = np.identity(n_states - 2) - Mp
             z2 = np.linalg.lstsq(a, np.dot(D, z1), rcond=None)[0]
 
         # Map to full state space
         p_to_B = np.zeros(n_states)
         p_to_B[0] = 0.0  # [0-]
-        p_to_B[2:-1] = z2.flatten()  # Intermediate states
+        p_to_B[1:-1] = z2.flatten()  # Intermediate states
         p_to_B[-1] = 1.0  # [B]
 
-        # Crossing probability: start from [0→] (state 2)
-        p_cross = p_to_B[2]
+        # Crossing probability: start from [0→] (state 1)
+        p_cross = p_to_B[1]
 
     else:
         # Extended memory (order > 0): Use absorbing Markov chain formalism
@@ -1913,11 +1898,11 @@ def global_pcross_extended(M: np.ndarray, state_space: ExtendedStateSpace,
 
         # Absorbing states
         p_to_B[B_idx] = 1.0  # Already at B
-        # States [0-] and [0←] cannot reach B (stay at 0)
+        # State [0-] cannot reach B (stays at 0)
 
-        # Crossing probability: start from [0→] (state 2)
+        # Crossing probability: start from [0→] (state 1)
         if n_states > 2:
-            p_cross = p_to_B[2]
+            p_cross = p_to_B[1]
         else:
             p_cross = 0.0
 
@@ -1979,9 +1964,9 @@ def mfpt_extended(M: np.ndarray, state_space: ExtendedStateSpace,
     for i, t_idx in enumerate(transient):
         mfpt_from_each[t_idx] = mfpt_vec[i]
 
-    # MFPT from [0→] (state 2)
+    # MFPT from [0→] (state 1)
     if n_states > 2:
-        mfpt_AB = mfpt_from_each[2]
+        mfpt_AB = mfpt_from_each[1]
     else:
         mfpt_AB = 0.0
 
@@ -2074,7 +2059,7 @@ def binless_estimator_extended(w_matrices: Dict[int, np.ndarray],
 def _state_to_interface(state: ExtendedState) -> int:
     """Map an extended state to its primary interface."""
     if state.is_absorbing:
-        if state.label == "[0-]" or state.label == "[0←]" or state.label == "[0→]":
+        if state.label == "[0-]" or state.label == "[0→]":
             return 0
         else:  # [B]
             return state.base_turn.turn_interface

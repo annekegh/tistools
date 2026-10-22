@@ -373,7 +373,7 @@ def compute_plocs_efficient(weight_results, get_transition_probs_weights, constr
                 np.add.at(wm3d[ens], (jm[off], km[off]), wm[off])
 
         p, _ = get_transition_probs_weights(wm3d)
-        M = construct_M_istar(p, max(4, 2 * n_int), n_int)
+        M = construct_M_istar(p, 2 * n_int - 1, n_int)
         _, _, y1, _ = global_pcross_msm_star(M)
         plocs.append(float(y1[0][0]))
         print(f"  n_int={n_int:2d}  lambda={all_interfaces[L]:.4f}  ploc={plocs[-1]:.8f}")

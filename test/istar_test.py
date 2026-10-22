@@ -28,13 +28,13 @@ def global_pcross_msm_star(M, doprint=False):
     assert NS>2
 
     # take pieces of transition matrix
-    Mp = M[2:-1,2:-1]
-    a = np.identity(NS-3)-Mp    # 1-Mp
+    Mp = M[1:-1,1:-1]
+    a = np.identity(NS-2)-Mp    # 1-Mp
     # a1 = np.linalg.inv(a)       # (1-Mp)^(-1)  --> bad practice!
 
     # other pieces
-    D = M[2:-1, np.array([0,-1])]
-    E = M[np.array([0,-1]), 2:-1]
+    D = M[1:-1, np.array([0,-1])]
+    E = M[np.array([0,-1]), 1:-1]
     M11 = M[np.array([0,-1]),np.array([0,-1])]
 
     # compute Z vector
@@ -70,32 +70,31 @@ def global_pcross_msm_star(M, doprint=False):
 def construct_M_istar(P, NS, N):
     """Construct transition matrix M"""
     # N -- number of interfaces
-    # NS -- dimension of MSM, 4*N-5 when N>=4
+    # NS -- dimension of MSM, 2*N-1
     # P -- ndarray of probabilities for paths between end turns
     
     # assert N>=3
     assert N==P.shape[0]
     assert N==P.shape[1]
-    assert NS==max(4, 2*N)
+    assert NS==2*N-1
 
     # construct transition matrix
     M = np.zeros((NS,NS))
     
-    # states [0-] and [0*+-]
-    M[0,2] = 1
-    M[2,1] = P[0,0]
-    M[2,N+1:] = P[0, 1:]
-    M[1,0] = 1
+    # states [0-] and [0->]
+    M[0,1] = 1
+    M[1,0] = P[0,0]
+    M[1,N:] = P[0, 1:]
     M[-1,0] = 1
-    M[N+1:,1] = P[1:, 0]
+    M[N:-1,0] = P[1:-1, 0]
 
     # non-sampled paths
-    # M[N+1, -1] = 1
+    # M[N, -1] = 1
 
-    for i in range(1,N):
+    for i in range(1,N-1):
         #print("starting from state i",i)
-        M[2+i, N+i:2*N] = P[i,i:]
-        M[N+i, 3:2+i] = P[i, 1:i]
+        M[1+i, N-1+i:] = P[i,i:]
+        M[N-1+i, 2:1+i] = P[i, 1:i]
     
 
     # for i in range(NS):
@@ -105,9 +104,9 @@ def construct_M_istar(P, NS, N):
     #         M[i] = 0 
        
     # non-sampled paths
-    if not M[N, -1] >= 0:
-        M[N, -1] = 0
-    M[N+1,1] = 1
+    if not M[N-1, -1] >= 0:
+        M[N-1, -1] = 0
+    M[N,0] = 1
     # return np.delete(np.delete(M, N, 0), N, 1)
     return M
 
@@ -1854,7 +1853,7 @@ def ploc_memory(pathensembles, interfaces, trr=True):
             wi = compute_weight_matrices(pathensembles[:i+2], interfaces[:i+2], tr=trr)
             pi = get_transition_probs_weights(wi)
             # pi = get_simple_probs(wi)
-            Mi = construct_M_istar(pi, max(4, 2*len(interfaces[:i+2])), len(interfaces[:i+2]))
+            Mi = construct_M_istar(pi, 2*len(interfaces[:i+2])-1, len(interfaces[:i+2]))
             z1, z2, y1, y2 = global_pcross_msm_star(Mi)
             plocs["apptis"].append(y1[0][0])
 

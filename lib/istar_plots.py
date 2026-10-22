@@ -1196,7 +1196,7 @@ def plot_memory_analysis(pes, q_tot, p, interfaces=None, q_errors=None):
     # Generate more descriptive state labels
     state_labels = generate_state_labels(n_interfaces)
 
-    M = construct_M_istar(p, 2*n_interfaces, n_interfaces)
+    M = construct_M_istar(p, istar_n_states(n_interfaces), n_interfaces)
     
     # Calculate diffusive reference probabilities based on interface spacing
     diff_ref = calculate_diffusive_reference(interfaces, q_tot[0], q_tot[1])
@@ -1925,7 +1925,7 @@ def analyze_network_connectivity(M, source_state=0, sink_state=-1, max_paths=10)
     sink_idx = n_states - 1 if sink_state == -1 else sink_state
     
     # Generate state labels for the plot
-    state_labels = generate_state_labels(n_states//2)
+    state_labels = generate_state_labels(istar_n_interfaces(n_states))
     
     # Create a graph representation where edges exist if M[i,j] > 0
     graph = (M > 0).astype(int)
