@@ -1101,8 +1101,11 @@ def get_weights_staple(pe_i, flags, gen, ptypes, n_pes, ACCFLAGS, REJFLAGS, ha_f
                 # if ha_factors[acc_index] == 2:
                     # print(f"High acceptance factor of 2 for trajectory {acc_index} in ensemble {pe_i} with type {ptype} and generation {gg}")
             else:
-                if gg == 'sh' and \
-                    ((pe_i == 2 and ptype == "RMR") or\
+                # An LML/RMR window segment is itself a turn, and the stored staple
+                # path holds only one of its two possible extensions, whichever move
+                # (shooting or swap) produced it. So the factor 2 applies to every
+                # generation, not only to shooting moves.
+                if ((pe_i == 2 and ptype == "RMR") or\
                     (pe_i == n_pes-1 and ptype == "LML") or\
                     (2 < pe_i < n_pes-1 and ptype in ["LML", "RMR"])):
                     prev_ha = 2
